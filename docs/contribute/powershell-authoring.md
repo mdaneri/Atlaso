@@ -30,3 +30,14 @@ Run the isolated Photon build-state regression on Windows with
 `pwsh -NoProfile -File tests/powershell/Test-PhotonBuildStateRoot.ps1 -RepositoryRoot (Resolve-Path .).Path`.
 It extracts wrapper functions through the PowerShell AST without running the image build. Keep required helper
 imports synchronized with the functions under test, and reject missing or duplicate definitions during setup.
+
+For task-owned local validation, first create an empty root with the existing
+[`PytestGitFixtures` owner](completed-task-cleanup.md#disposable-pytest-git-fixtures), preserving its original receipt
+outside every removal root. Pass that root and its original native identity as `-FixtureRoot` and
+`-OriginalFixtureIdentity`, together with `-FixtureOwnerReceipt`, `-FixturePythonPath` (Python 3.14), and
+`-FixtureConfigPath` (the active supported Codex configuration). The regression immediately registers its synthetic
+Git repository and receipts each internal redirect before use. Owned mode retains the graph instead of recursively
+deleting it. After the test process is terminal, run `scripts.photon_build_state_test_fixtures seal` with the same
+`--config` and `--receipt`: it retires only the four original redirect leaves, then seals the graph through its
+existing Git owner. Preserve the manifest and digest for normal completed-task cleanup. A failed creation, changed
+link, missing receipt or incomplete seal requires retention; never reconstruct ownership from the surviving tree.

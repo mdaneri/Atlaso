@@ -50,8 +50,11 @@ then begin another commit. Do not split a known fix batch into repeated reviews.
 
 Keep the originating task active after opening the pull request and, while waiting, create or update exactly one
 current-task heartbeat that runs every fifteen minutes. Each scheduled run performs one bounded reconciliation pass
-and exits cleanly; never vary the cadence or create a duplicate automation. Once created, the current-task heartbeat is
-the exclusive routine PR
+and exits cleanly; never vary the cadence or create a duplicate automation. Generated handoffs and heartbeat prompts
+must preserve [resource-scoped VMware conflicts](agent-workflow.md#resource-scoped-vmware-coordination), including the
+exact affected operation, owners, unsafe overlap, eligible independent work, and release condition. Recheck a conflict
+on resumption without broadening its pause to unrelated PRs or the shared host. Once created, the current-task heartbeat
+is the exclusive routine PR
 monitoring mechanism. Do not run persistent GitHub polling loops or finite-but-delayed shell polling such as
 `Start-Sleep -Seconds 55; gh pr checks <pr>` or `sleep 55; gh pr view <pr>`, timeout wrappers, or equivalent delayed
 workflow or status reads alongside it, and do not occupy a terminal merely to wait for CI, review, mergeability, or

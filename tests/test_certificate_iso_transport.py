@@ -114,6 +114,42 @@ def test_admit_request_accepts_exact_digest_bound_original_identity(
     assert not Path(str(request["inspection_output"])).exists()
 
 
+def test_phase_receipts_disclose_only_fixed_progress_and_refuse_replacement(tmp_path: Path) -> None:
+    """Keep private fields out of progress and preserve the first phase observation.
+
+    Args:
+        tmp_path: Owned ordinary fixture directory for public phase records.
+    """
+    request = {"inspection_output": str(tmp_path / "live.json"), "output_root": str(tmp_path),
+               "password": _PASSWORD, "command": "private diagnostic command"}
+    transport.record_phase(request, "engine-exited", exit_code=2)
+    path = tmp_path / "deployer-phase-engine-exited.json"
+    raw = path.read_text()
+    assert json.loads(raw) == {"schema": 1, "kind": "certificate-iso-deployment-phase",
+                               "phase": "engine-exited", "exit_code": 2}
+    assert _PASSWORD not in raw and "private diagnostic" not in raw
+    with pytest.raises(FileExistsError):
+        transport.record_phase(request, "engine-exited", exit_code=0)
+    assert path.read_text() == raw
+
+
+@pytest.mark.parametrize(("phase", "code"), [(_PASSWORD, None), ("credentials-ready", 0),
+                                             ("engine-exited", True), ("engine-exited", -1),
+                                             ("engine-exited", 256)])
+def test_phase_receipts_reject_unbounded_diagnostics(tmp_path: Path, phase: str, code: object) -> None:
+    """Refuse arbitrary diagnostic names and malformed statuses before publishing.
+
+    Args:
+        tmp_path: Owned ordinary fixture directory.
+        phase: Fixed or deliberately invalid proposed phase name.
+        code: Proposed engine exit status.
+    """
+    request = {"inspection_output": str(tmp_path / "live.json"), "output_root": str(tmp_path)}
+    with pytest.raises(transport.Refusal, match="iso_transport_phase_invalid"):
+        transport.record_phase(request, phase, exit_code=code)
+    assert not list(tmp_path.iterdir())
+
+
 @pytest.mark.parametrize(
     ("defect", "category"),
     [

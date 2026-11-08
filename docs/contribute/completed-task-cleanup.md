@@ -373,6 +373,13 @@ retain them and report the missing provenance rather than generating a new recei
 nested and bare repositories. This tool removes the complete owned fixture graph, including its internal Git
 registrations, through checked Windows handles. It never prunes or removes registrations in an external repository.
 
+The Photon build-state regression's opt-in owned mode uses this owner for its Git graph and
+`scripts.photon_build_state_test_fixtures` for exactly four internal directory-symbolic-link probes. Each probe gets
+an original identity and raw-target digest receipt before use. After the regression is terminal, the helper verifies
+the original root and every probe, pins all four link objects before deleting any, and never follows a target. It then
+seals the now-ordinary graph through `PytestGitFixtures`; final graph release remains that existing owner's operation.
+Junctions, external targets, changed links, missing creation evidence and incomplete retirement remain refusals.
+
 Before validation, construct the tool with the active Codex configuration, a new durable receipt filename outside
 the task worktree and every removal root, and verified `id`, `task_id`, `repository`, `source_commit`, and absolute `path`.
 The root and receipts must be beneath the configured worktree root. Call `create()` before using the new empty

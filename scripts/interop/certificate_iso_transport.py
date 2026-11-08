@@ -21,6 +21,31 @@ class Refusal(ValueError):
     """Return a fixed public category without guest output or secret values."""
 
 
+def record_phase(request: dict[str, Any], phase: str, *, exit_code: int | None = None) -> None:
+    """Retain fixed deployment progress without commands, output or credentials.
+
+    Args:
+        request: Original public request admitted before credential access.
+        phase: Fixed phase name from the deployment child.
+        exit_code: Optional terminal engine status, never an exception message.
+    """
+    phases = {"credentials-requested", "credentials-ready", "ssh-connecting", "ssh-authenticated",
+              "preflight-passed", "uploads-verified", "engine-starting", "engine-exited", "measurement-passed"}
+    if phase not in phases or (exit_code is not None and (
+            type(exit_code) is not int or not 0 <= exit_code <= 255 or phase != "engine-exited")):
+        raise Refusal("iso_transport_phase_invalid")
+    output = Path(request["inspection_output"])
+    if output.parent.resolve() != Path(request["output_root"]).resolve():
+        raise Refusal("iso_transport_output_not_fresh")
+    value = {"schema": 1, "kind": "certificate-iso-deployment-phase", "phase": phase}
+    if exit_code is not None:
+        value["exit_code"] = exit_code
+    with (output.parent / f"deployer-phase-{phase}.json").open("x", encoding="utf-8") as stream:
+        json.dump(value, stream, sort_keys=True, separators=(",", ":"))
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
 def ordinary_bytes(path: Path, limit: int) -> bytes:
     """Read one bounded ordinary single-link input while the owner retains its pins.
 

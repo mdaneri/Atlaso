@@ -403,7 +403,11 @@ Keep `installed_inspection` unchanged: it continues to describe the original sig
 admission measures the active PR wheel again before and after rotation.
 
 On failure or an unknown outcome, preserve the fixture, exclusive claim and all process/intent records. Reconcile
-those records before any recovery; another output directory never permits redeployment. After success, stop the VM,
+those records before any recovery; another output directory never permits redeployment. New attempts publish fixed
+`deployer-phase-*.json` records for credential retrieval, pinned SSH, original-media preflight, verified uploads,
+engine start/exit and final measurement. These contain only a fixed phase and optional numeric engine exit code;
+commands, guest output and credentials are never retained. A phase record does not establish deployment success,
+and missing later phases leave the outcome unproven. After success, stop the VM,
 restore and verify the original backed-up adapter declaration through the owning procedure, then use the existing
 private-LAN rewire. The host-only phase grants no host route, NAT or bridge to the private certificate LAN.
 

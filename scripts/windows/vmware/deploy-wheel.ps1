@@ -890,7 +890,11 @@ async def load_password():
     return selected_password
 
 
+if fixture_request is not None:
+    fixture_transport.record_phase(fixture_request, "credentials-requested")
 password = asyncio.run(load_password())
+if fixture_request is not None:
+    fixture_transport.record_phase(fixture_request, "credentials-ready")
 
 uploads = [
     (pathlib.Path(args.local_wheel), args.remote_wheel),
@@ -1016,10 +1020,14 @@ client.load_system_host_keys()
 client.set_missing_host_key_policy(paramiko.RejectPolicy())
 if args.trusted_host_key:
     add_trusted_host_key(client, args.host, args.trusted_host_key)
+if fixture_request is not None:
+    fixture_transport.record_phase(fixture_request, "ssh-connecting")
 connect_password_or_keyboard_interactive(client, args.host, args.user, password, fixture_request)
 try:
     if fixture_request is not None:
+        fixture_transport.record_phase(fixture_request, "ssh-authenticated")
         fixture_transport.preflight(client, fixture_request, password, args.timeout)
+        fixture_transport.record_phase(fixture_request, "preflight-passed")
     sftp = client.open_sftp()
     try:
         if fixture_request is not None:
@@ -1036,6 +1044,7 @@ try:
         sftp.close()
     if fixture_request is not None:
         fixture_transport.verify_uploads(client, uploads, fixture_request, password, args.timeout)
+        fixture_transport.record_phase(fixture_request, "uploads-verified")
 
     remote_helper_argument = args.remote_helper if args.local_helper else ""
     remote_console_manager_argument = args.remote_console_manager if args.local_console_manager else ""
@@ -1063,12 +1072,15 @@ try:
         f"{shell_quote(remote_trust_keys_argument)} "
         f"{shell_quote('true' if args.reset_vault_entries else 'false')}"
     )
+    if fixture_request is not None:
+        fixture_transport.record_phase(fixture_request, "engine-starting")
     stdin, stdout, stderr = client.exec_command(command, get_pty=False, timeout=args.timeout)
     stdin.write(password + "\n")
     stdin.flush()
     stdin.channel.shutdown_write()
     if fixture_request is not None:
         exit_code = fixture_transport.drain_engine(stdout.channel, args.timeout)
+        fixture_transport.record_phase(fixture_request, "engine-exited", exit_code=exit_code)
         stdout_text, stderr_text = "", ""
     else:
         stdout_text, stderr_text, exit_code = read_paramiko_command_output(stdout.channel, args.timeout)
@@ -1080,6 +1092,7 @@ try:
         raise SystemExit(exit_code)
     if fixture_request is not None:
         fixture_transport.finish(client, fixture_request, password, args.timeout)
+        fixture_transport.record_phase(fixture_request, "measurement-passed")
 finally:
     client.close()
 '@
