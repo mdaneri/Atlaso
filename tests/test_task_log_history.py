@@ -1,6 +1,7 @@
 """Verify transactional, append-stable task history and bounded navigation."""
 
 import json
+import logging
 
 import pytest
 from sqlalchemy import create_engine, select, update
@@ -17,8 +18,38 @@ from atlaso.app.services.task_log_history import (
 
 
 @pytest.fixture
-def history_db():
-    """Provide isolated in-memory task storage with production capture hooks."""
+def history_db(monkeypatch):
+    """Provide isolated task storage and log redaction state for each test.
+
+    Args:
+        monkeypatch: Restore installed handler filters after the fixture ends.
+    """
+    from atlaso.app.operational_logging import (
+        _OperationalRedactionFilter,
+        _OperationalRedactionState,
+    )
+
+    shared_states = {}
+    for handler in logging.getLogger().handlers:
+        isolated_filters = []
+        for installed_filter in handler.filters:
+            if isinstance(installed_filter, _OperationalRedactionFilter):
+                installed_state = installed_filter._state
+                isolated_state = shared_states.get(id(installed_state))
+                if isolated_state is None:
+                    isolated_state = _OperationalRedactionState()
+                    with installed_state.lock:
+                        isolated_state.parser = installed_state.parser.copy()
+                        isolated_state.private = installed_state.private
+                    shared_states[id(installed_state)] = isolated_state
+                installed_filter = _OperationalRedactionFilter(
+                    installed_filter.destination_level,
+                    isolated_state,
+                )
+            isolated_filters.append(installed_filter)
+        if isolated_filters != handler.filters:
+            monkeypatch.setattr(handler, "filters", isolated_filters)
+
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     with Session(engine) as db:
