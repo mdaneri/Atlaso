@@ -136,9 +136,9 @@ NTP uses its own fixed-root Apply admission after the original routing/NAT-absen
 are admitted only when the server's selection-specific review requires them as network dependencies inside the fixed
 closure. Unrelated pending units, extra roots and unrequired dependencies are refused before POST. The existing
 certificate initializer's stricter root-only preflight is unchanged.
-If the first cold Network/CA review still contained the bootstrap DHCP address, the runner permits one separately
-reviewed and journaled baseline-convergence Apply after that cold task succeeded. It then requires two equal,
-CA/hostname-verified leaf samples containing the actual private management address. Failed tasks are never replayed.
+After the cold task succeeds, read-only sampling requires two equal leaf identities verified against the original
+HTTPS URL hostname and CA, through the receipt-bound private management transport. An IP URL requires its IP SAN;
+a DNS URL retains ordinary DNS hostname verification. This observation never submits an additional Apply.
 Later server and negative-candidate cases request only firewall, NTP and public services, preserving that applied leaf;
 WAN/NAT enforcement and NTP-owned DNS publication are admitted only when the server requires them as dependencies.
 

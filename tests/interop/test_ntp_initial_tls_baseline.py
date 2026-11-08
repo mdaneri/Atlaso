@@ -1,5 +1,6 @@
 """The initial applied leaf settles before independent NTP-only transitions."""
 
+import itertools
 import ssl
 import sys
 from pathlib import Path
@@ -17,12 +18,11 @@ BOOTSTRAP = {"sha256": "b" * 64, "ip_sans": ["192.168.167.185"]}
 
 
 @pytest.fixture
-def baseline(monkeypatch, tmp_path):
+def baseline(monkeypatch):
     """Replace TLS and Apply boundaries while retaining real convergence control.
 
     Args:
         monkeypatch: Scoped transport and monotonic-clock replacements.
-        tmp_path: Original synthetic journal root.
     """
     clock = [0.0]
     monkeypatch.setattr(fixture, "time", SimpleNamespace(monotonic=lambda: clock[0],
@@ -30,24 +30,25 @@ def baseline(monkeypatch, tmp_path):
     raw = Mock()
     client = SimpleNamespace(url="https://original.fixture.test",
                              peer=SimpleNamespace(open_socket=Mock(return_value=raw), topology_guard=Mock()))
-    probe = SimpleNamespace(tls_identity=Mock(side_effect=[BOOTSTRAP, APPLIED, APPLIED]))
+    probe = SimpleNamespace(tls_identity=Mock(side_effect=[BOOTSTRAP, BOOTSTRAP]))
     constructor = Mock(return_value=probe)
     monkeypatch.setattr(fixture, "Client", constructor)
-    apply = Mock(return_value={"job_id": "baseline-job", "status": "succeeded"})
+    apply = Mock(side_effect=AssertionError("TLS observation must never submit Apply"))
     monkeypatch.setattr(fixture, "apply_once", apply)
     return SimpleNamespace(client=client, probe=probe, constructor=constructor, apply=apply, raw=raw,
-                           clock=clock, output=tmp_path, plan={"current_address": CURRENT, "ca_path": "original-ca.pem"})
+                           clock=clock, plan={"current_address": CURRENT, "ca_path": "original-ca.pem"})
 
 
-def test_one_successful_initial_baseline_convergence_keeps_original_trust(baseline):
-    """Bootstrap-address drift permits one separately journaled setup task.
+def test_original_dns_hostname_baseline_preserves_trust_without_apply(baseline):
+    """A verified original DNS name remains bound even with a bootstrap IP SAN.
 
     Args:
         baseline: Original verified client and controlled leaf observations.
     """
-    result = fixture.initial_tls_baseline(baseline.client, baseline.plan, baseline.output, "operator", "synthetic")
-    assert result["tls"] == APPLIED and result["equal_applied_leaf_samples"] == 2
-    baseline.apply.assert_called_once_with(baseline.client, baseline.output, "ntp-native-baseline", "operator", "synthetic")
+    result = fixture.initial_tls_baseline(baseline.client, baseline.plan)
+    assert result["tls"] == BOOTSTRAP and result["equal_verified_leaf_samples"] == 2
+    assert result["no_apply_submitted"] is True
+    baseline.apply.assert_not_called()
     args, kwargs = baseline.constructor.call_args
     assert args == ("https://original.fixture.test", "original-ca.pem") and kwargs["connect_ip"] == CURRENT
     assert kwargs["peer"].open_socket(CURRENT) is baseline.raw
@@ -60,9 +61,9 @@ def test_already_applied_leaf_never_submits_an_extra_apply(baseline):
     Args:
         baseline: Original transport stand-in with an already applied leaf.
     """
-    baseline.probe.tls_identity.side_effect = [APPLIED, APPLIED, APPLIED]
-    result = fixture.initial_tls_baseline(baseline.client, baseline.plan, baseline.output, "operator", "synthetic")
-    assert result["convergence_task"] is None
+    baseline.probe.tls_identity.side_effect = [APPLIED, APPLIED]
+    result = fixture.initial_tls_baseline(baseline.client, baseline.plan)
+    assert result["no_apply_submitted"] is True and result["tls"] == APPLIED
     baseline.apply.assert_not_called()
 
 
@@ -73,27 +74,38 @@ def test_an_intermediate_leaf_cannot_be_mistaken_for_settled_identity(baseline):
         baseline: Controlled original transport and leaf sequence.
     """
     intermediate = {"sha256": "c" * 64, "ip_sans": [CURRENT]}
-    baseline.probe.tls_identity.side_effect = [BOOTSTRAP, intermediate, APPLIED, APPLIED]
-    result = fixture.initial_tls_baseline(baseline.client, baseline.plan, baseline.output, "operator", "synthetic")
+    baseline.probe.tls_identity.side_effect = [intermediate, APPLIED, APPLIED]
+    result = fixture.initial_tls_baseline(baseline.client, baseline.plan)
     assert result["tls"] == APPLIED and result["elapsed_seconds"] == 4
-    assert baseline.apply.call_count == 1
+    baseline.apply.assert_not_called()
 
 
-@pytest.mark.parametrize("failure", ["failed-task", "trust", "unsettled"])
-def test_failed_or_untrusted_baseline_is_not_replayed(baseline, failure):
-    """No failure path renews the task or downgrades CA/hostname checks.
+@pytest.mark.parametrize("failure", ["trust", "unsettled"])
+def test_untrusted_or_unsettled_baseline_never_submits_apply(baseline, failure):
+    """No failure path submits a task or downgrades CA/hostname checks.
 
     Args:
         baseline: Original setup and TLS transport stand-ins.
-        failure: Failed task, invalid certificate or missing applied-address leaf.
+        failure: Invalid certificate or continuously changing leaf identity.
     """
-    if failure == "failed-task":
-        baseline.apply.return_value = {"job_id": "baseline-job", "status": "failed"}
-    elif failure == "trust":
+    if failure == "trust":
         baseline.probe.tls_identity.side_effect = ssl.SSLCertVerificationError("synthetic mismatch")
     else:
-        baseline.probe.tls_identity.side_effect = None
-        baseline.probe.tls_identity.return_value = BOOTSTRAP
+        baseline.probe.tls_identity.side_effect = itertools.cycle([BOOTSTRAP, APPLIED])
     with pytest.raises((fixture.Refusal, ssl.SSLCertVerificationError)):
-        fixture.initial_tls_baseline(baseline.client, baseline.plan, baseline.output, "operator", "synthetic")
-    assert baseline.apply.call_count <= 1 and baseline.clock[0] <= 120
+        fixture.initial_tls_baseline(baseline.client, baseline.plan)
+    assert baseline.apply.call_count == 0 and baseline.clock[0] <= 120
+
+
+@pytest.mark.parametrize("target,port", [("192.168.77.99", 443), (CURRENT, 8443)])
+def test_tls_observation_cannot_redirect_the_original_transport(baseline, target, port):
+    """Sampling retains only the receipt-bound management address and HTTPS port.
+
+    Args:
+        baseline: Original trusted origin and controlled transport.
+        target: Altered destination to refuse.
+        port: Altered destination port to refuse.
+    """
+    fixture.initial_tls_baseline(baseline.client, baseline.plan)
+    with pytest.raises(fixture.Refusal, match="destination_changed"):
+        baseline.constructor.call_args.kwargs["peer"].open_socket(target, port)

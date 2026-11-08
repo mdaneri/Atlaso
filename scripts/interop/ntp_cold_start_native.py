@@ -435,22 +435,19 @@ def prepare_baseline(client, plan: dict) -> dict:
     return saved_fields(original)
 
 
-def initial_tls_baseline(client, plan: dict, output: Path, username: str, password: str) -> dict:
-    """Settle the first Network/CA baseline before later NTP-only transitions.
+def initial_tls_baseline(client, plan: dict) -> dict:
+    """Observe a stable original HTTPS identity before NTP-only transitions.
 
-    A cold review can still contain the bootstrap DHCP address. When needed,
-    one separately journaled successful-baseline replay converges that review;
-    it never retries a failed task. All subsequent TLS checks retain the same CA
-    and hostname verification and require two equal applied-address leaf samples.
+    Preserve the original URL hostname and CA on the receipt-bound transport.
+    Client verifies that hostname (including IP SAN matching for an IP URL).
+    Two equal verified leaves establish the baseline without another Apply.
 
     Args:
         client: Original authenticated management client.
         plan: Admitted original CA and management address.
-        output: Original append-only task journal directory.
-        username: Original web identity for exact-task reconciliation.
-        password: Web credential confined to authenticated channels.
     """
-    deadline = time.monotonic() + 16
+    started = time.monotonic()
+    deadline = started + 120
 
     def open_socket(address: str, port: int = 443):
         """Bound only the existing verified management TLS transport.
@@ -471,14 +468,6 @@ def initial_tls_baseline(client, plan: dict, output: Path, username: str, passwo
 
     probe = Client(client.url, plan["ca_path"], peer=SimpleNamespace(open_socket=open_socket),
                    connect_ip=plan["current_address"])
-    original = probe.tls_identity()
-    convergence = None
-    if plan["current_address"] not in original.get("ip_sans", []):
-        convergence = apply_once(client, output, "ntp-native-baseline", username, password)
-        if convergence["status"] != "succeeded":
-            raise Refusal("ntp_fixture_initial_baseline_convergence_failed")
-    started = time.monotonic()
-    deadline = started + 120
     previous = None
     equal_samples = 0
     while deadline - time.monotonic() >= 16:
@@ -486,13 +475,10 @@ def initial_tls_baseline(client, plan: dict, output: Path, username: str, passwo
         if guard is not None:
             guard()
         leaf = probe.tls_identity()
-        if plan["current_address"] in leaf.get("ip_sans", []):
-            equal_samples = equal_samples + 1 if leaf == previous else 1
-            if equal_samples >= 2:
-                return {"tls": leaf, "convergence_task": convergence, "equal_applied_leaf_samples": equal_samples,
-                        "elapsed_seconds": round(time.monotonic() - started, 3)}
-        else:
-            equal_samples = 0
+        equal_samples = equal_samples + 1 if leaf == previous else 1
+        if equal_samples >= 2:
+            return {"tls": leaf, "no_apply_submitted": True, "equal_verified_leaf_samples": equal_samples,
+                    "elapsed_seconds": round(time.monotonic() - started, 3)}
         previous = leaf
         time.sleep(min(2, max(0, deadline - time.monotonic())))
     raise Refusal("ntp_fixture_tls_baseline_timeout")
@@ -635,7 +621,7 @@ def submit_initialization(client, *, cold_start: bool = True) -> tuple[str, str]
 
     Args:
         client: Original CA/hostname-validated authenticated management client.
-        cold_start: Initial Network/CA setup or its single baseline convergence; false selects NTP-only roots.
+        cold_start: Initial Network/CA setup; false selects NTP-only transition roots.
     """
     roots = _NTP_APPLY_ROOTS if cold_start else _NTP_TRANSITION_ROOTS
     dependencies = _NTP_NETWORK_DEPENDENCIES if cold_start else _NTP_TRANSITION_DEPENDENCIES
@@ -692,7 +678,7 @@ def apply_once(client, output: Path, name: str, username: str, password: str) ->
     """
     started = time.monotonic()
     publish(output / (name + "-submission-intent.json"), {"case": name, "no_resubmission": True})
-    job, path = submit_initialization(client, cold_start=name in {"ntp-native-cold", "ntp-native-baseline"})
+    job, path = submit_initialization(client, cold_start=name == "ntp-native-cold")
     publish(output / (name + "-submitted.json"), {"job_id": job, "status_path": path})
     task, _ = wait_task([client], path, username, password)
     public = {"job_id": job, "status": task.get("status"), "elapsed_seconds": round(time.monotonic() - started, 3)}
@@ -817,12 +803,10 @@ def run(plan: dict, output: Path, password: str, *, appliance_password: str | No
                     result["cold_clock"] = native_clock(session, ssh_password, plan["peer_address"])
                     result["cold_acquisition"] = acquisition_observation(session, ssh_password, cold_checkpoint)
                     clean_baseline(client)
-                    baseline = initial_tls_baseline(client, plan, output, plan["username"], password)
+                    baseline = initial_tls_baseline(client, plan)
                     result["initial_tls_baseline"] = baseline
                     result["baseline_tls"] = baseline["tls"]
                     clean_baseline(client)
-                    if baseline["convergence_task"] is not None:
-                        result["baseline_clock"] = native_clock(session, ssh_password, plan["peer_address"])
                     result["client_refusal"] = packet_probe(session, peer, ssh_password, plan["current_address"], plan["peer_address"], response_expected=False)
                     result["stage"] = "server_apply"
                     save_ntp(client, plan["peer_address"], "ntp_server")
