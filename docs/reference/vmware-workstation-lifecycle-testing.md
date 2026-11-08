@@ -172,6 +172,33 @@ the successfully restored applied server remains authoritative. This is acceptan
 handoff. Retain the lab until its task and process state are reconciled, then use the ordinary receipt-bound lifecycle
 VM and LAN cleanup. Durable original receipts remain outside every removal root.
 
+## Resource-scoped coordination
+
+Apply the [canonical agent coordination rule](../contribute/agent-workflow.md#resource-scoped-vmware-coordination) before
+pausing work. Independent task-owned labs may share a VMware host; co-location alone establishes no host-wide
+exclusivity, all-other-PR acknowledgement, zero-running-VM prerequisite, or blanket PowerShell/Python pause.
+Record the exact resource or global operation, affected owners, unsafe overlap, bounded paused operations, eligible
+independent work, and release condition. Preserve that record in generated handoffs and heartbeat instructions.
+
+| Operations | Coordination boundary |
+| --- | --- |
+| Lab A and lab B use distinct owned VMs, private LANs, and independently admitted management addresses. | Both may proceed concurrently after their own ownership, fresh scoped admission, and capacity checks. |
+| Lab A performs guest validation while lab B operates on its disjoint owned VM/network without changing shared catalogs or host settings. | Both may proceed; unrelated source edits, tests, and read-only work also remain eligible. |
+| Two tasks propose power, snapshot, adapter, or guest mutations on the same VM. | Coordinate with its owner and serialize the conflicting operations until the first operation completes and fresh admission permits the next. Coordination grants no resource access by itself. |
+| Two builders allocate or release addresses from the same pool. | Use the shared atomic allocator and ledger lock for each transaction; keep each exact address reserved for its required lifetime. Distinct admitted reservations permit concurrent builds. |
+| Tasks edit the same LAN catalog, use a shared credential/staging transaction, or change genuinely host-wide configuration. | Use the supported transaction lock or a bounded owner-agreed pause until publication, verification, and any required recovery complete. |
+
+The real shared builder-address collision in [#637](https://github.com/mdaneri/Atlaso/issues/637) explains why allocator
+serialization remains required. A short ledger lock is distinct from the reservation retained while the exact builder
+is active or recovery evidence is ambiguous. Never release that reservation early to obtain concurrency.
+
+Existing tool guards still apply. LAN-segment release currently requires the Workstation UI closed and refuses any
+active `vmware-vmx` or `vmrun` process while checking shared preferences, inventory, and complete configured VM storage
+roots. This is a guard on that catalog cleanup operation, not a general VMware/plugin concurrency limitation or a
+prerequisite for independent lab validation. If blocked, retain the segment and defer its release; do not stop unrelated
+VMs or processes. Name the guard and affected operation, and separately track any proposed narrowing with its required
+safety evidence. Do not bypass it, omit scan roots, or weaken receipts, identity checks, or native acceptance gates.
+
 ## Focused reverse-proxy acceptance
 
 `invoke-lifecycle-test.ps1 -ReverseProxyOnly -PullRequestNumber <number>` uses a two-interface appliance and a
@@ -423,8 +450,11 @@ durable controller evidence surface before deleting any lifecycle result root.
 1. Independently verify the originating task, repository, creation commit, exact PR, canonical lab root, and original
    receipt hash against the task's creation evidence and lifecycle identity. Do not derive expected ownership or a new
    expected hash from the candidate receipt during cleanup.
-2. Close the Workstation UI normally and finish VMware VM/vmrun activity. The cleanup operation never closes the UI,
-   stops another VM, or terminates another task's process. Coordinate with other validation tasks before proceeding.
+2. Admit only this catalog cleanup operation under the [resource-scoped coordination boundary](#resource-scoped-coordination).
+   Its current guard requires the Workstation UI closed and no active `vmware-vmx` or `vmrun` process. Arrange a bounded
+   window with affected owners, or retain the segment and defer release while independent work continues. The cleanup
+   operation never closes the UI, stops another VM, or terminates another task's process. Never stop unrelated VMs or
+   processes to clear its guard.
 3. Supply every independently configured VM storage root in `$vmRoots`, including locations of unregistered VMX files.
    The operation additionally inspects all paths in Workstation's inventory. Missing configured roots, inaccessible
    registered directories, malformed adapter/inventory records, links, and surviving references refuse cleanup.
