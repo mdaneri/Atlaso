@@ -87,7 +87,7 @@ def host_frame_expression(method: str, fields: tuple[bytes | int, ...]) -> str:
 
 
 def run_host_frames(executable: str, script: str) -> list[str]:
-    """Run the in-memory Windows encoder fixture and return its lines.
+    """Run the in-memory Windows frame fixture and return its lines.
 
     Args:
         executable: Resolved PowerShell executable.
@@ -158,6 +158,158 @@ def test_windows_control_encoder_refuses_invalid_fields() -> None:
         for call in calls
     )
     assert run_host_frames(pwsh, script) == ["refused"] * len(calls)
+
+
+@pytest.fixture
+def windows_frame_pwsh() -> str:
+    """Resolve PowerShell 7 for the Windows DATA fixture."""
+    pwsh = shutil.which("pwsh") if os.name == "nt" else None
+    if pwsh is None:
+        pytest.skip("Windows PowerShell 7 is required for the host DATA reader")
+    return pwsh
+
+
+def test_windows_data_reader_collects_exact_fragments(windows_frame_pwsh: str) -> None:
+    """Collect every header split and fragmented body, leaving the next byte unread.
+
+    Args:
+        windows_frame_pwsh: Resolved PowerShell 7 executable.
+    """
+    body = b"opaque\x00\xff"
+    wire = frame(FrameKind.CHECKPOINT, body) + b"x"
+    assert parse_header(wire[:HEADER_BYTES], FrameKind.CHECKPOINT) == len(body)
+    script = f"""
+    $wire = [Convert]::FromHexString('{wire.hex()}')
+    foreach ($split in 1..9) {{
+        $state = @{{ offset = 0; guardCalls = 0; reads = 0 }}
+        $guard = [Action]{{ $state.guardCalls++ }}
+        $read = [Func[int, byte[]]]{{
+            param([int] $maximum)
+            $end = if ($state.offset -lt 10) {{ 10 }} else {{ $wire.Length - 1 }}
+            if ($maximum -ne ($end - $state.offset) -or $maximum -le 0 -or
+                $state.guardCalls -ne (2 * $state.reads + 1)) {{ throw 'Unexpected read request' }}
+            $count = if ($state.offset -eq 0) {{ $split }} elseif ($state.offset -lt 10) {{ $maximum }}
+                     else {{ [Math]::Min($maximum, 3) }}
+            $offset = $state.offset
+            $state.offset += $count
+            $state.reads++
+            return ,([byte[]] $wire[$offset..($state.offset - 1)])
+        }}
+        $body = [Atlaso.RestorationControlFrames]::ReadData(2, $read, $guard)
+        if ($state.offset -ne ($wire.Length - 1) -or $state.guardCalls -ne (2 * $state.reads)) {{
+            throw 'Unexpected read boundary or guard count'
+        }}
+        [Convert]::ToHexString($body)
+    }}
+    """
+    assert run_host_frames(windows_frame_pwsh, script) == [body.hex().upper()] * 9
+
+
+def test_windows_data_reader_matches_python_header_bounds(windows_frame_pwsh: str) -> None:
+    """Match Python bounds and refuse invalid headers before requesting the body.
+
+    Args:
+        windows_frame_pwsh: Resolved PowerShell 7 executable.
+    """
+    cases = [
+        struct.pack("!4sBBI", b"ARCP", 1, 4, size)
+        for size in (0, 1, 2, MAX_PUBLIC_BYTES, MAX_PUBLIC_BYTES + 1, 2**31, 2**32 - 1)
+    ]
+    cases.extend(struct.pack("!4sBBI", magic, version, kind, 2) for magic, version, kind in (
+        (b"WRNG", 1, 4), (b"ARCP", 2, 4), (b"ARCP", 1, 2), (b"ARCP", 1, 255),
+    ))
+    expected: list[str] = []
+    for header in cases:
+        try:
+            size = parse_header(header, FrameKind.COMPLETE)
+        except CaptureFrameRefusal:
+            expected.append("refused:10")
+        else:
+            expected.append(f"read:{size}:10,{size}")
+    headers = ", ".join(f"'{header.hex()}'" for header in cases)
+    script = f"""
+    foreach ($hex in @({headers})) {{
+        $header = [Convert]::FromHexString($hex)
+        $requests = [Collections.Generic.List[int]]::new()
+        $read = [Func[int, byte[]]]{{
+            param([int] $maximum)
+            $requests.Add($maximum)
+            if ($requests.Count -eq 1) {{ return ,$header }}
+            if ($maximum -gt {MAX_PUBLIC_BYTES}) {{ throw 'Body request exceeded cap' }}
+            $body = [byte[]]::new($maximum)
+            $body[$maximum - 1] = 0xFF
+            return ,$body
+        }}
+        try {{
+            $body = [Atlaso.RestorationControlFrames]::ReadData(4, $read, [Action]{{}})
+            if ($body[-1] -ne 0xFF) {{ throw 'Body was modified' }}
+            "read:$($body.Length):$($requests -join ',')"
+        }} catch {{
+            if ($_.Exception.GetBaseException() -isnot [FormatException]) {{ throw }}
+            "refused:$($requests -join ',')"
+        }}
+    }}
+    """
+    assert run_host_frames(windows_frame_pwsh, script) == expected
+
+
+def test_windows_data_reader_refuses_bad_progress_or_expiry(windows_frame_pwsh: str) -> None:
+    """Stop on short closure, invalid progress, exceptions or original budget expiry.
+
+    Args:
+        windows_frame_pwsh: Resolved PowerShell 7 executable.
+    """
+    header = frame(FrameKind.CHECKPOINT, b"abc")[:HEADER_BYTES]
+    script = f"""
+    $header = [Convert]::FromHexString('{header.hex()}')
+    foreach ($fault in 'wrong-expected', 'header-eof', 'body-eof', 'null', 'oversized',
+                       'read-error', 'expired-before', 'expired-after') {{
+        $state = @{{ reads = 0; guardCalls = 0 }}
+        $guard = [Action]{{
+            $state.guardCalls++
+            if (($fault -eq 'expired-before' -and $state.guardCalls -eq 3) -or
+                ($fault -eq 'expired-after' -and $state.guardCalls -eq 4)) {{
+                throw [TimeoutException]::new('Original budget expired')
+            }}
+        }}
+        $read = [Func[int, byte[]]]{{
+            param([int] $maximum)
+            $state.reads++
+            if ($state.reads -eq 1) {{
+                if ($fault -in 'header-eof', 'expired-before', 'expired-after') {{
+                    return ,([byte[]] $header[0..2])
+                }}
+                return ,$header
+            }}
+            if ($state.reads -gt 2) {{ throw 'Unexpected extra read' }}
+            switch ($fault) {{
+                'null' {{ return $null }}
+                'oversized' {{ return ,([byte[]]::new($maximum + 1)) }}
+                'read-error' {{ throw [IO.EndOfStreamException]::new() }}
+                'expired-after' {{ return ,([byte[]] $header[3..9]) }}
+                default {{ return ,([byte[]]::new(0)) }}
+            }}
+        }}
+        $kind = if ($fault -eq 'wrong-expected') {{ 1 }} else {{ 2 }}
+        try {{
+            $null = [Atlaso.RestorationControlFrames]::ReadData($kind, $read, $guard)
+            throw 'DATA reader accepted invalid input'
+        }} catch {{
+            $type = $_.Exception.GetBaseException().GetType().Name
+            "$($fault):$($state.reads):$($state.guardCalls):$type"
+        }}
+    }}
+    """
+    assert run_host_frames(windows_frame_pwsh, script) == [
+        "wrong-expected:0:0:ArgumentException",
+        "header-eof:2:4:IOException",
+        "body-eof:2:4:IOException",
+        "null:2:4:IOException",
+        "oversized:2:4:IOException",
+        "read-error:2:3:EndOfStreamException",
+        "expired-before:1:3:TimeoutException",
+        "expired-after:2:4:TimeoutException",
+    ]
 
 
 def test_exchange_wraps_the_original_stage1_callback_and_final_return(dns_form: str) -> None:

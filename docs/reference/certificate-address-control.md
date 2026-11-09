@@ -116,6 +116,10 @@ and permanently refuses that capture if either clock regresses, expires, or fail
 The in-memory Windows encoder is checked byte for byte against the Python GO and ACK frames. This fixture
 qualifies the fixed fields, byte order, and bounds before they are used in a live exchange.
 
+The in-memory Windows DATA reader checks the CHECKPOINT or COMPLETE header before requesting its body.
+It checks the original budget around every fragment and stops at the declared body length. Its output is
+opaque candidate bytes for a separate canonical DATA check.
+
 The source-only capture framing sends GO, CHECKPOINT, ACK, and COMPLETE in that order, followed by EOF.
 The endpoints check the original run, nonce, and receipt digests against the expected binding.
 They use the smaller remaining budget from the original raw counter and UTC deadlines. CHECKPOINT carries

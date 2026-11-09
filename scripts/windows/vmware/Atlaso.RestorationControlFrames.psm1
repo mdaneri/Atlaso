@@ -1,8 +1,9 @@
 <#
 .SYNOPSIS
-Encode the two fixed restoration control frames for host parity qualification.
+Exercise restoration frame handling for host parity qualification.
 .DESCRIPTION
-The encoder writes in-memory bytes for synthetic tests. Live capture owns identity, clock and phase checks.
+The fixture encodes fixed control frames and reads opaque DATA bodies in memory. Live capture owns
+identity, clock and phase checks.
 #>
 
 if (-not ('Atlaso.RestorationControlFrames' -as [type])) {
@@ -15,7 +16,44 @@ namespace Atlaso
     public static class RestorationControlFrames
     {
         private const int HeaderSize = 10;
+        private const int MaxDataSize = 393216;
         private const long MaxUtcMilliseconds = 253402300799999;
+
+        public static byte[] ReadData(byte expectedKind, Func<int, byte[]> read, Action requireBudget)
+        {
+            if (expectedKind != 2 && expectedKind != 4)
+                throw new ArgumentException("Expected CHECKPOINT or COMPLETE.");
+            ArgumentNullException.ThrowIfNull(read);
+            ArgumentNullException.ThrowIfNull(requireBudget);
+
+            byte[] header = ReadExact(HeaderSize, read, requireBudget);
+            if (!header.AsSpan(0, 4).SequenceEqual("ARCP"u8) || header[4] != 1 || header[5] != expectedKind)
+                throw new FormatException("Invalid restoration DATA header.");
+
+            uint bodySize = BinaryPrimitives.ReadUInt32BigEndian(header.AsSpan(6, 4));
+            if (bodySize < 2 || bodySize > MaxDataSize)
+                throw new FormatException("Invalid restoration DATA length.");
+
+            return ReadExact((int)bodySize, read, requireBudget);
+        }
+
+        private static byte[] ReadExact(int length, Func<int, byte[]> read, Action requireBudget)
+        {
+            byte[] bytes = new byte[length];
+            int offset = 0;
+            while (offset < length)
+            {
+                int remaining = length - offset;
+                requireBudget();
+                byte[] prefix = read(remaining);
+                requireBudget();
+                if (prefix == null || prefix.Length == 0 || prefix.Length > remaining)
+                    throw new System.IO.IOException("Invalid restoration DATA read progress.");
+                prefix.AsSpan().CopyTo(bytes.AsSpan(offset));
+                offset += prefix.Length;
+            }
+            return bytes;
+        }
 
         private static byte[] CreateFrame(byte kind, int bodySize)
         {
