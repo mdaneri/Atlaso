@@ -119,10 +119,29 @@ if (
 ) {
     throw "Refusing lifecycle cleanup because identity evidence does not match '$LabName': $identityPath"
 }
+# Older ordinary plans can omit the mode flags. When recorded, they must be
+# JSON booleans so a value such as "false" cannot select the private peer.
+foreach ($modeFlag in @('certificate_only', 'certificate_dhcp_peer', 'ntp_cold_start_only')) {
+    $modeProperty = $plan.PSObject.Properties[$modeFlag]
+    if ($null -ne $modeProperty -and $modeProperty.Value -isnot [bool]) {
+        throw "Refusing lifecycle cleanup because plan mode '$modeFlag' is not a boolean: $planPath"
+    }
+}
+if (
+    ($plan.certificate_dhcp_peer -and -not $plan.certificate_only) -or
+    ($plan.ntp_cold_start_only -and $plan.certificate_only)
+) {
+    throw "Refusing lifecycle cleanup because plan modes are inconsistent: $planPath"
+}
+$clientARole = if ($plan.certificate_dhcp_peer -or $plan.ntp_cold_start_only) {
+    'certificate-dhcp-peer'
+} else {
+    'client-a'
+}
 $resolvedVmrun = Resolve-VmrunPath -Path $VmrunPath
 $expectedRoles = @{
     "$LabName-Appliance" = 'appliance'
-    "$LabName-ClientA"   = 'client-a'
+    "$LabName-ClientA"   = $clientARole
     "$LabName-ClientB"   = 'client-b'
     "$LabName-ESXiPXE"   = 'esxi-pxe'
 }
