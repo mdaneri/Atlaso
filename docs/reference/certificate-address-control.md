@@ -120,6 +120,10 @@ The in-memory Windows DATA reader checks the CHECKPOINT or COMPLETE header befor
 It checks the original budget around every fragment and stops at the declared body length. Its output is
 opaque candidate bytes for a separate canonical DATA check.
 
+A separate in-memory Windows fixture checks exact JSON spelling, including member order, integer
+tokens, and escapes. Synthetic tests compare it with the Python capture oracle and the existing
+Stage2 checks for field types, original interface binding, and projection digests.
+
 The source-only capture framing sends GO, CHECKPOINT, ACK, and COMPLETE in that order, followed by EOF.
 The endpoints check the original run, nonce, and receipt digests against the expected binding.
 They use the smaller remaining budget from the original raw counter and UTC deadlines. CHECKPOINT carries

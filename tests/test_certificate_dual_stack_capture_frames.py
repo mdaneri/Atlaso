@@ -169,6 +169,116 @@ def windows_frame_pwsh() -> str:
     return pwsh
 
 
+def test_windows_canonical_data_spelling(windows_frame_pwsh: str) -> None:
+    """Check raw JSON spelling, nesting, and size at the Windows fixture.
+
+    Args:
+        windows_frame_pwsh: Resolved PowerShell 7 executable.
+    """
+    accepted = [
+        b"{}",
+        public_bytes({"a": {"items": [True, False, None, -1, 0]}, "b": {"items": []}}),
+        public_bytes({"a": '  "\\/\x00\b\f\n\r\t\x1f\x7f\u2028\U0001f680  '}),
+        public_bytes({"a": "\ud800"}),
+        b'{"a":[{"x":0},{"x":1}]}',
+    ]
+    rejected = [
+        b"", b"{", b"[]", b"{}{}", b"{}\n", b"{ }", b'{"a" :0}', b'{"a": 0}', b'{"a":0, "b":1}',
+        b'{"b":0,"a":1}', b'{"a":0,"a":1}', b'{"a":{"b":0,"a":1}}', b'{"a":{"b":0,"b":1}}',
+        b'{"a":[{"x":0,"x":1}]}', b'{"a":[{"x":0,"w":1}]}', b'{"a":[{"x":{"y":0}}]}',
+        b'{"a":0,}', b'{"a":/*note*/0}', b'{"a":-0}', b'{"a":00}', b'{"a":0.0}', b'{"a":1e0}',
+        b'{"a":"\xc3\xa9"}', b'{"a":"\x7f"}', b'{"a":"\t"}', b'{"a":"unfinished\\',
+        br'{"\u0061":0}', br'{"a":"\u0041"}', br'{"a":"\/"}', br'{"a":"\u0009"}',
+        br'{"a":"\u007F"}', br'{"a":"\u00e"}', br'{"a":"\ud83d\uDE80"}',
+    ]
+    encoded = ", ".join(f"'{sample.hex()}'" for sample in accepted + rejected)
+    script = f"""
+    $samples = [Collections.Generic.List[byte[]]]::new()
+    foreach ($hex in @({encoded})) {{
+        $samples.Add([Convert]::FromHexString($hex))
+    }}
+    foreach ($size in {MAX_PUBLIC_BYTES}, {MAX_PUBLIC_BYTES + 1}) {{
+        $samples.Add([Text.Encoding]::ASCII.GetBytes('{{"a":"' + ('x' * ($size - 8)) + '"}}'))
+    }}
+    foreach ($sample in $samples) {{
+        try {{
+            [Atlaso.RestorationControlFrames]::RequireCanonicalData($sample)
+            'accepted'
+        }} catch {{
+            $failure = $_.Exception.GetBaseException()
+            if ($failure -isnot [FormatException] -or
+                $failure.Message -cne 'Invalid canonical restoration DATA.') {{ throw }}
+            'refused'
+        }}
+    }}
+    """
+    assert run_host_frames(windows_frame_pwsh, script) == [
+        *["accepted"] * len(accepted), *["refused"] * len(rejected), "accepted", "refused",
+    ]
+
+
+def test_windows_canonical_data_and_typed_stage2(windows_frame_pwsh: str, baseline: bytes) -> None:
+    """Exercise the Python oracle and the two separate host gates on the same bytes.
+
+    Args:
+        windows_frame_pwsh: Resolved PowerShell 7 executable.
+        baseline: Exact Stage1 DATA from synthetic normal UI responses.
+    """
+    original = json.loads(baseline)
+    dns = public_bytes(original["dns_settings"])
+    respelled = b"{ " + dns[1:]
+    raw_digest = hashlib.sha256(respelled).hexdigest().encode("ascii")
+    original_digest = hashlib.sha256(dns).hexdigest().encode("ascii")
+    assert baseline.count(dns) == baseline.count(original_digest) == 1
+    digest_consistent = baseline.replace(dns, respelled).replace(original_digest, raw_digest)
+    reordered = json.dumps(dict(reversed(original.items())), ensure_ascii=True, separators=(",", ":")).encode("ascii")
+
+    typed_invalid = copy.deepcopy(original)
+    typed_invalid["dns_settings"]["cache_size"] = -1
+    typed_invalid["projection_sha256"]["dns_settings"] = hashlib.sha256(
+        public_bytes(typed_invalid["dns_settings"])
+    ).hexdigest()
+    canonical_typed_invalid = public_bytes(typed_invalid)
+    for sample in (baseline, canonical_typed_invalid):
+        controller, _ = started()
+        assert controller.accept_checkpoint(frame(FrameKind.CHECKPOINT, sample), clock(2)) == sample
+    for sample in (digest_consistent, reordered):
+        controller, _ = started()
+        with pytest.raises(CaptureFrameRefusal, match="capture_baseline_invalid"):
+            controller.accept_checkpoint(frame(FrameKind.CHECKPOINT, sample), clock(2))
+
+    encoded = ", ".join(f"'{sample.hex()}'" for sample in (
+        baseline, digest_consistent, reordered, canonical_typed_invalid,
+    ))
+    script = f"""
+    $checkpoint = Import-Module ./scripts/windows/vmware/Atlaso.RestorationCheckpoint.psm1 -PassThru
+    foreach ($hex in @({encoded})) {{
+        $sample = [Convert]::FromHexString($hex)
+        $lexical = try {{
+            [Atlaso.RestorationControlFrames]::RequireCanonicalData($sample)
+            'accepted'
+        }} catch {{
+            if ($_.Exception.GetBaseException() -isnot [FormatException]) {{ throw }}
+            'refused'
+        }}
+        $typed = try {{
+            & $checkpoint {{
+                param([byte[]] $data, [string] $mac)
+                Assert-RestorationBaseline $data @{{ interface = 'eth1'; mac_address = $mac }}
+            }} $sample '{_MAC}'
+            'accepted'
+        }} catch {{
+            if ($_.Exception.Message -cne 'Restoration DNS number refused.') {{ throw }}
+            'refused'
+        }}
+        "$($lexical):$typed"
+    }}
+    """
+    assert run_host_frames(windows_frame_pwsh, script) == [
+        "accepted:accepted", "refused:accepted", "refused:accepted", "accepted:refused",
+    ]
+
+
 def test_windows_data_reader_collects_exact_fragments(windows_frame_pwsh: str) -> None:
     """Collect every header split and fragmented body, leaving the next byte unread.
 
