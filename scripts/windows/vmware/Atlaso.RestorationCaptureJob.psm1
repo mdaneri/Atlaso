@@ -543,6 +543,32 @@ namespace Atlaso
             return IsSignaled(process, 0) && Active(job) == 0;
         }
 
+        private void RequireRunning()
+        {
+            lock (gate)
+            {
+                if (phase != Phase.Running)
+                    throw new InvalidOperationException("The original child is not available for exchange.");
+                WaitBudget();
+            }
+        }
+
+        public void VerifyOriginalRunningChild()
+        {
+            RequireOwner();
+            try
+            {
+                RequireRunning();
+                VerifySecurity(job, security);
+                if (GetProcessId(process) != ProcessId ||
+                    !GetProcessTimes(process, out long created, out _, out _, out _) || created != CreationFileTimeUtc ||
+                    !IsProcessInJob(process, job, out bool member) || !member || IsSignaled(process, 0))
+                    throw new InvalidOperationException("The original running child identity differs.");
+                RequireRunning();
+            }
+            catch { ForceFailure(); throw; }
+        }
+
         public void PublishAndResume(Action<RestorationCaptureChild> publish)
         {
             RequireOwner();

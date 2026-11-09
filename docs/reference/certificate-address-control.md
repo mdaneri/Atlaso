@@ -121,7 +121,9 @@ The private Windows job primitives assign the original child to a job at suspend
 watchdog starts before the controller publishes the suspended child receipt. It can terminate the original job
 while the controller is blocked, although it cannot interrupt that controller call. Natural completion requires
 a successful root exit, an empty original job, and time left on the original counter and UTC deadlines.
-The local synthetic child fixtures exercise this lifecycle separately from the pipe and restoration framing bridge.
+The local synthetic child fixtures exercise this lifecycle. A cross-process fixture exchanges fixed bytes with the
+original job child after suspended ownership publication and verifies both kernel pipe peers. A mismatched peer
+refuses before transfer. This fixture does not use the restoration frame protocol or the checkpoint bridge.
 
 The credential terminal adapter deliberately refuses until the controller can prove the bounded SDK child has
 stopped before restoring terminal settings. A guest input deadline alone cannot provide that guarantee: remaining
