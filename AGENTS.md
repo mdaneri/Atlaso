@@ -28,7 +28,7 @@ If policy is missing, conflicting, or unclear, stop the affected operation for m
   suspected sensitive vulnerabilities require the security route before any public issue or finding.
 - Run focused local tests and applicable repository/documentation/static checks. Canonical CI owns ordinary full
   Python-suite coverage; private remediation defines its own local-validation exception.
-- Enforce [appliance time-source safety](docs/services/ntp.md).
+- Enforce [NTP startup and time-source safety](docs/services/ntp.md).
 - Follow CONTRIBUTING for issue/type, documentation, synchronized next patch, and ready-PR requirements. Read the PR
   workflow before delivery, including default merge authority and explicit holds. Automation must never use or request
   a ruleset or administrative bypass. Auto-merge requires explicit selection.
@@ -37,6 +37,8 @@ If policy is missing, conflicting, or unclear, stop the affected operation for m
   capabilities never justify substitutes.
 - VM receipts and [trusted-host certificate admission](docs/reference/certificate-address-control.md) precede mutation;
   see the [VMware procedure](docs/reference/vmware-workstation-lifecycle-testing.md).
+- Follow [resource-scoped coordination](docs/contribute/agent-workflow.md#resource-scoped-vmware-coordination) for VMware
+  conflicts and preserve that scope in delegation, handoffs, and heartbeats.
 
 ## Conditional policy routes
 

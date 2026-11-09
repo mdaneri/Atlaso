@@ -101,6 +101,9 @@ def test_existing_vm_rejection_follows_receipt_bound_pending_recovery(tmp_path, 
         template.write_text("public template fixture", encoding="utf-8")
     setup += f"$repoRoot={ps_literal(ROOT)}; $resolvedOutputDirectory={ps_literal(output)}; $targetVmx={ps_literal(vmx)}; $ApplianceVmxPath={ps_literal(template)}; "
     setup += "$ownershipContext=[pscustomobject]@{Enabled=$true}; $LocalBuilder=$false; $NoStart=$false; $Redeploy=$false; $TimeoutSeconds=10; "
+    # The extracted preflight also initializes the hostname before template admission.
+    setup += f". {ps_literal(VMWARE / 'Atlaso.WorkstationFirstBoot.ps1')}; "
+    setup += "$Name='Atlaso-PR-946-test-vm'; $FirstBootFqdn=''; "
     setup += f"$WhatIfPreference=${str(recovery == 'whatif').lower()}; "
     setup += "function Assert-AtlasoTestVmOriginalOwnership { param($Context) $events.Add('receipt'); "
     setup += "throw 'Original receipt missing' }; " if recovery == "missing_receipt" else "[pscustomobject]@{} }; "
@@ -375,6 +378,8 @@ def test_owned_marker_callback_publishes_original_binding_before_marker(tmp_path
     command += f"Import-Module {ps_literal(VMWARE / 'Atlaso.VmwarePayload.psm1')};$repoRoot={ps_literal(ROOT)};$ApplianceVmxPath={ps_literal(source_vmx)};"
     command += "$ctx.InvocationId='';$ownershipContext=$ctx;$RestoredDirectoryReceiptPath=$ctx.RestoredDirectoryReceiptPath;$RestoredDirectoryReceiptSha256=$ctx.RestoredDirectoryReceiptSha256;"
     command += "$CleanupRecoveryReceiptPath='';$CleanupRecoveryReceiptSha256='';$Redeploy=$false;$NoStart=$false;$WhatIfPreference=$false;$TimeoutSeconds=5;$RecoverPreparedDirectory=$false;$PreparedDirectoryReceiptPath='';$PreparedDirectoryReceiptSha256='';$resolvedOutputDirectory=$output;$targetVmx=$vmx;"
+    # Reuse the receipt-bound public VM name when the extracted parent derives its hostname.
+    command += "$Name=$ctx.Name;$FirstBootFqdn='';"
     command += f"function Get-AtlasoDevelopmentCaCleanupMarkerRoot {{ {ps_literal(markers)} }};function Resolve-TestVmVmrunPath {{'provider-must-not-run'}};function Assert-AtlasoTestVmCheckoutSource {{param($Context)}};"
     command += parent + ";"
     late_start = source.index("if ((Test-Path -LiteralPath $targetVmx) -and -not $Redeploy) {")

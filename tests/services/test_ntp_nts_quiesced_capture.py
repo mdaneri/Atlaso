@@ -363,15 +363,16 @@ def test_candidate_start_persists_exact_hash_before_systemctl_start(monkeypatch,
     expected_hash = helper.hashlib.sha256(config.read_bytes()).hexdigest()
     operations = []
 
-    def record_checked(command, _action):
+    def record_checked(command, _action, *, timeout=5):
         """Record the journal hash visible before each systemd operation.
 
         Args:
             command: Systemd command issued by the helper.
             _action: Human-readable operation description supplied by the helper.
+            timeout: Bound for enabling or initializing the selected service.
         """
         transaction = helper._ntpd_read_transaction()
-        operations.append((command, transaction.get("nts_start_authorized_sha256")))
+        operations.append((command, transaction.get("nts_start_authorized_sha256"), timeout))
 
     monkeypatch.setattr(helper, "_ntpd_run_checked", record_checked)
     monkeypatch.setattr(helper, "_ntpd_service_state", lambda _unit: {"active": True, "enabled": True})
@@ -379,8 +380,8 @@ def test_candidate_start_persists_exact_hash_before_systemctl_start(monkeypatch,
     helper._ntpd_start_service("ntpd.service")
 
     assert operations == [
-        (["systemctl", "enable", "ntpd.service"], expected_hash),
-        (["systemctl", "start", "ntpd.service"], expected_hash),
+        (["systemctl", "enable", "ntpd.service"], expected_hash, 5),
+        (["systemctl", "start", "ntpd.service"], expected_hash, 35),
     ]
 
 

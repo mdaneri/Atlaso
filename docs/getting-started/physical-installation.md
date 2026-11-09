@@ -9,10 +9,17 @@ status: roadmap
 # Physical installation
 
 This guide describes the planned x86-64 physical installation path tracked by
-[issue #542](https://github.com/mdaneri/Atlaso/issues/542). The ISO and installer workflow remain in development. The
-supported VMware path has not yet recorded a blank-disk install-ISO boot and installer-console smoke test; native VM
-validation and physical acceptance on real SATA or NVMe storage and wired Ethernet remain pending. This guide does not
-establish installer acceptance or hardware support. See the
+[issue #542](https://github.com/mdaneri/Atlaso/issues/542). The ISO and installer workflow remain in development.
+VMware virtual CD/DVD validation has recorded a fresh disconnected blank-disk ISO installation, strict installed-content
+verification, and media-free boot. The immutable
+[merge `51c7190`](https://github.com/mdaneri/Atlaso/commit/51c719000fa1444a976ab1ddcc47222fd6ccd586) and
+[PR #1083](https://github.com/mdaneri/Atlaso/pull/1083) record the completed run; the earlier installation evidence and
+corrected service/protocol database defect are retained in [issue #1087](https://github.com/mdaneri/Atlaso/issues/1087).
+
+This virtual CD/DVD evidence does not establish USB-source acceptance, tracked separately in
+[issue #1069](https://github.com/mdaneri/Atlaso/issues/1069). Physical SATA/NVMe and wired-Ethernet acceptance, a production
+installation ISO release, and the remaining parent #542 acceptance are still pending. This guide does not establish
+complete installer acceptance or physical hardware support. See the
 [installation ISO build and verification reference](../reference/installation-iso.md) for the release workflow and
 verifier.
 
