@@ -695,6 +695,73 @@ function Invoke-RestorationCheckpointCapture([object]$Scope, [scriptblock]$Captu
 
 <#
 .SYNOPSIS
+Exercise CHECKPOINT through end-of-buffer on an original synthetic Stage2 scope.
+.PARAMETER Scope
+Original opaque test scope created with the shared clock.
+.PARAMETER Transcript
+Stable fixture-owned bytes containing CHECKPOINT followed by COMPLETE.
+#>
+function Invoke-RestorationCheckpointFrameTest([object]$Scope, [byte[]]$Transcript) {
+    $ErrorActionPreference = 'Stop'
+    $authority = $null
+    if (-not $script:RestorationScopes.TryGetValue($Scope, [ref]$authority) -or
+        $authority.Phase -cne 'Ready' -or $null -eq $authority.SharedClock -or
+        $authority.Thread -ne [Threading.Thread]::CurrentThread.ManagedThreadId) {
+        throw 'Original restoration frame fixture is unavailable.'
+    }
+    $run = [Convert]::FromHexString($authority.Binding.run_id)
+    $nonce = [Convert]::FromHexString($authority.Binding.receiver_nonce)
+    $limit = 2 * (10 + $script:MaximumBaselineBytes) + 1
+    $codec = Join-Path $PSScriptRoot 'Atlaso.RestorationControlFrames.psm1'
+    $observation = [pscustomobject]@{ Ack = $null }
+    $capture = {
+        param([Action[byte[]]]$Save, [Func[double]]$Remaining, [Func[string]]$ReadIntent, [Func[string]]$ReadCheckpoint)
+
+        $intent = [Convert]::FromHexString($ReadIntent.Invoke())
+        $null = $Remaining.Invoke()
+        if ($null -eq $Transcript -or $Transcript.Length -gt $limit) {
+            throw 'Restoration transcript size refused.'
+        }
+        $snapshot = [byte[]]$Transcript.Clone()
+        Import-Module -Name $codec -Scope Local
+        $cursor = [pscustomobject]@{ Offset = 0 }
+        $read = [Func[int,byte[]]]({
+            param([int]$Count)
+            $size = [Math]::Min([Math]::Min($Count, 4096), $snapshot.Length - $cursor.Offset)
+            $fragment = [byte[]]::new($size)
+            [Buffer]::BlockCopy($snapshot, $cursor.Offset, $fragment, 0, $size)
+            $cursor.Offset += $size
+            return ,$fragment
+        }.GetNewClosure())
+        $budget = [Action]({ $null = $Remaining.Invoke() }.GetNewClosure())
+
+        $baseline = [Atlaso.RestorationControlFrames]::ReadData(2, $read, $budget)
+        $budget.Invoke()
+        [Atlaso.RestorationControlFrames]::RequirePublicData($baseline)
+        $budget.Invoke()
+        $Save.Invoke($baseline)
+
+        $checkpoint = [Convert]::FromHexString($ReadCheckpoint.Invoke())
+        $budget.Invoke()
+        $observation.Ack = [Atlaso.RestorationControlFrames]::EncodeAck(
+            $run, $nonce, $intent, [Security.Cryptography.SHA256]::HashData($baseline), $checkpoint)
+        $budget.Invoke()
+
+        $complete = [Atlaso.RestorationControlFrames]::ReadData(4, $read, $budget)
+        $budget.Invoke()
+        if (-not [Linq.Enumerable]::SequenceEqual[byte]($baseline, $complete) -or
+            $cursor.Offset -ne $snapshot.Length) {
+            throw 'Restoration transcript completion refused.'
+        }
+        $budget.Invoke()
+        return ,([byte[]]$baseline.Clone())
+    }.GetNewClosure()
+    $journal = Invoke-RestorationCheckpointCapture -Scope $Scope -Capture $capture -SyntheticReceiptDigests
+    return [pscustomobject]@{ Journal = $journal; Ack = [byte[]]$observation.Ack.Clone() }
+}
+
+<#
+.SYNOPSIS
 Revoke the original scope before disposing its read pins.
 .PARAMETER Scope
 Original opaque scope from the internal test admission.

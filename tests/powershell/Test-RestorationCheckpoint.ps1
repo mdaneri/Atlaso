@@ -118,8 +118,12 @@ function Get-TestDigestBytes([byte[]]$Bytes) {
 <#
 .SYNOPSIS
 Create the exact synthetic stage1 baseline used by lifecycle tests.
+.PARAMETER UpstreamServers
+Synthetic free-form DNS field used to exercise decoded values and large fragments.
+.PARAMETER CacheSize
+Synthetic cache size, which can be invalid for the typed validator.
 #>
-function New-TestBaselineBytes {
+function New-TestBaselineBytes([string]$UpstreamServers = "192.0.2.53`nfd00:1084::53", [int]$CacheSize = 150) {
     $review = [ordered]@{
         active_task = $null
         execution_count = 0
@@ -135,8 +139,8 @@ function New-TestBaselineBytes {
         check_duplicate_ip_addresses = $true
         gateway = $null
         id = 13
-        ipv4_method = 'static'
         ip_cidr = '192.0.2.20/24'
+        ipv4_method = 'static'
         ipv6_cidr = 'fd00:1084::20/64'
         ipv6_enabled = $true
         ipv6_gateway = ''
@@ -151,8 +155,8 @@ function New-TestBaselineBytes {
         admin_state = 'up'
         check_duplicate_ip_addresses = $true
         gateway = ''
-        ipv4_method = 'static'
         ip_cidr = '192.0.2.20/24'
+        ipv4_method = 'static'
         ipv6_cidr = 'fd00:1084::20/64'
         ipv6_enabled = $true
         ipv6_gateway = ''
@@ -168,7 +172,7 @@ function New-TestBaselineBytes {
         authoritative_retry = 60
         authoritative_server = 'ns.example'
         authoritative_ttl = 120
-        cache_size = 150
+        cache_size = $CacheSize
         conditional_forwarders = 'corp.example=192.0.2.54'
         dnssec_enabled = $true
         enabled = $true
@@ -178,13 +182,13 @@ function New-TestBaselineBytes {
         query_logging_mode = 'off'
         rebind_domain_exemptions = 'example'
         rebind_protection_enabled = $false
-        upstream_servers = "192.0.2.53`nfd00:1084::53"
+        upstream_servers = $UpstreamServers
     }
     $parts = [ordered]@{
-        review = $review
-        original_row = $row
         browser_fields = $browser
         dns_settings = $dns
+        original_row = $row
+        review = $review
     }
     $digests = [ordered]@{}
     foreach ($name in $parts.Keys) {
@@ -259,6 +263,35 @@ function Invoke-TestCapture([object]$Scope, [scriptblock]$Capture, [switch]$Synt
         param($OriginalScope, $Runner, $EnableDigests)
         Invoke-RestorationCheckpointCapture -Scope $OriginalScope -Capture $Runner -SyntheticReceiptDigests:$EnableDigests
     } $Scope $Capture $SyntheticReceiptDigests.IsPresent
+}
+
+<#
+.SYNOPSIS
+Build an independent synthetic DATA frame.
+.PARAMETER Kind
+One-byte frame kind.
+.PARAMETER Data
+Exact body supplied by the test.
+#>
+function New-TestDataFrame([byte]$Kind, [byte[]]$Data) {
+    $header = [byte[]]@(0x41, 0x52, 0x43, 0x50, 1, $Kind)
+    $length = [BitConverter]::GetBytes([Net.IPAddress]::HostToNetworkOrder([int]$Data.Length))
+    return ,([byte[]]($header + $length + $Data))
+}
+
+<#
+.SYNOPSIS
+Exercise the private transcript entry in the checkpoint module.
+.PARAMETER Scope
+Original opaque scope returned by New-TestScope.
+.PARAMETER Transcript
+Bounded synthetic frames and any deliberate trailing bytes.
+#>
+function Invoke-TestFrameTranscript([object]$Scope, [byte[]]$Transcript) {
+    return & $checkpointModule {
+        param($OriginalScope, $Frames)
+        Invoke-RestorationCheckpointFrameTest -Scope $OriginalScope -Transcript $Frames
+    } $Scope $Transcript
 }
 
 <#
@@ -736,6 +769,90 @@ try {
     } 'The absolute counter deadline cannot overflow.'
 }
 finally { $clockState.Counter = [long]100 }
+
+$frameData = New-TestBaselineBytes -UpstreamServers ('x' * 5000)
+$checkpointFrame = New-TestDataFrame 2 $frameData
+$completeFrame = New-TestDataFrame 4 $frameData
+$transcript = [byte[]]($checkpointFrame + $completeFrame)
+$frameRun = '0102030405060708090a0b0c0d0e0f10'
+$frameNonce = New-TestCaseNonce
+$frameStem = Join-Path $resolvedTestRoot "atlaso-restoration-$frameNonce"
+$mutateTranscript = {
+    if ([IO.File]::Exists("$frameStem.checkpoint.json")) { $transcript[-1] = 0 }
+    $true
+}.GetNewClosure()
+$frameScope = New-TestScope $frameNonce $frameRun $mutateTranscript $null $clockDeadline $sampleClock
+try {
+    $frameResult = Invoke-TestFrameTranscript $frameScope $transcript
+    $intentSha = (Get-FileHash -LiteralPath "$frameStem.intent.json").Hash.ToLowerInvariant()
+    $checkpointSha = (Get-FileHash -LiteralPath "$frameStem.checkpoint.json").Hash.ToLowerInvariant()
+    $dataSha = Get-TestDigestBytes $frameData
+    $expectedAck = "41524350010300000080$frameRun$frameNonce$intentSha$dataSha$checkpointSha"
+    Assert-RestorationTest ([Convert]::ToHexString($frameResult.Ack).ToLowerInvariant() -ceq $expectedAck) `
+        'ACK must bind the exact original receipts, run, nonce and framed bytes in wire order.'
+    $stored = [IO.File]::ReadAllText("$frameStem.checkpoint.json")
+    Assert-RestorationTest ($frameResult.Journal.BaselineSha256 -ceq $dataSha -and $transcript[-1] -eq 0 -and
+        $stored.EndsWith(',"baseline":' + [Text.Encoding]::ASCII.GetString($frameData) + "}`n",
+            [StringComparison]::Ordinal)) 'The journal and COMPLETE must use the frozen DATA despite caller mutation.'
+    Assert-Throws { Invoke-TestFrameTranscript $frameScope $transcript } 'A completed frame scope cannot be reused.'
+}
+finally { Close-TestScope $frameScope }
+
+$nonCanonical = [Text.Encoding]::ASCII.GetBytes(' ' + [Text.Encoding]::ASCII.GetString($frameData))
+# Change a projection without updating its digest, while keeping its shape and JSON spelling.
+$badDigest = [Text.Encoding]::ASCII.GetBytes([Text.Encoding]::ASCII.GetString($frameData).Replace(
+    ('x' * 5000), ('y' * 5000)))
+$frameCases = @(
+    @{ Name='partial-header'; Bytes=$checkpointFrame[0..8]; Published=$false }
+    @{ Name='wrong-kind'; Bytes=$completeFrame; Published=$false }
+    @{ Name='undersized-data'; Bytes=(New-TestDataFrame 2 ([byte[]]@(123))); Published=$false }
+    @{ Name='oversized-data'; Bytes=[Convert]::FromHexString('41524350010200060001'); Published=$false }
+    @{ Name='oversized-transcript'; Bytes=[byte[]]::new(2 * (10 + 393216) + 2); Published=$false }
+    @{ Name='canonical'; Bytes=(New-TestDataFrame 2 $nonCanonical); Published=$false }
+    @{ Name='decoded'; Bytes=(New-TestDataFrame 2 (New-TestBaselineBytes -UpstreamServers 'https://fixture@host')); Published=$false }
+    @{ Name='typed'; Bytes=(New-TestDataFrame 2 (New-TestBaselineBytes -CacheSize -1)); Published=$false }
+    @{ Name='projection-digest'; Bytes=(New-TestDataFrame 2 $badDigest); Published=$false }
+    @{ Name='partial-complete'; Bytes=($checkpointFrame + $completeFrame[0..10]); Published=$true }
+    @{ Name='different-complete'; Bytes=($checkpointFrame + (New-TestDataFrame 4 $baselineBytes)); Published=$true }
+    @{ Name='trailing'; Bytes=($checkpointFrame + $completeFrame + [byte]0); Published=$true }
+)
+foreach ($case in $frameCases) {
+    $nonce = New-TestCaseNonce
+    $stem = Join-Path $resolvedTestRoot "atlaso-restoration-$nonce"
+    $scope = New-TestScope $nonce $frameRun { $true } $null $clockDeadline $sampleClock
+    try {
+        Assert-Throws { Invoke-TestFrameTranscript $scope $case.Bytes } "The transcript must refuse $($case.Name)."
+        Assert-RestorationTest ([IO.File]::Exists("$stem.intent.json") -and
+            [IO.File]::Exists("$stem.checkpoint.json") -eq $case.Published) "Wrong receipt outcome for $($case.Name)."
+        Assert-Throws { Invoke-TestFrameTranscript $scope $transcript } 'A refused frame scope cannot be retried.'
+    }
+    finally { Close-TestScope $scope }
+}
+
+foreach ($expireAt in 1, 3, 4) {
+    $nonce = New-TestCaseNonce
+    $stem = Join-Path $resolvedTestRoot "atlaso-restoration-$nonce"
+    $checks = @{ AfterPublication = 0 }
+    $expire = {
+        if ([IO.File]::Exists("$stem.checkpoint.json")) {
+            $checks.AfterPublication++
+            if ($checks.AfterPublication -eq $expireAt) { $clockState.Counter = [long]2099 }
+        }
+        $true
+    }.GetNewClosure()
+    $scope = New-TestScope $nonce $frameRun $expire $null $clockDeadline $sampleClock
+    try {
+        $frames = [byte[]]($checkpointFrame + $completeFrame)
+        Assert-Throws { Invoke-TestFrameTranscript $scope $frames } 'Late expiry must prevent a fixture result.'
+        Assert-RestorationTest ($checks.AfterPublication -eq $expireAt -and
+            [IO.File]::Exists("$stem.checkpoint.json")) 'Expiry must preserve the original published receipt.'
+    }
+    finally {
+        $clockState.Counter = [long]100
+        Close-TestScope $scope
+    }
+}
+Write-Output 'Synthetic Stage2 transcript tests passed.'
 
 $nativeClockBinding = Get-TestBinding -Nonce (New-TestCaseNonce) -RunId (New-TestCaseNonce)
 $nativeClockScope = & $checkpointModule {

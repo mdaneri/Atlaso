@@ -130,6 +130,12 @@ The in-memory public-pattern check first requires canonical JSON, then decodes e
 and string value independently. Synthetic fixtures compare its private-key marker and URL userinfo
 checks with the Python capture oracle. The fixture has no session markers or live capture authority.
 
+A private Stage2 fixture reads a preloaded CHECKPOINT and COMPLETE transcript under the original shared
+clock. The existing journal validates and retains the exact CHECKPOINT before the fixture constructs ACK
+from the original receipt digests. ACK bytes are available to the test after matching COMPLETE,
+end-of-buffer, and final journal checks succeed. The transcript exercises journal ordering and ACK encoding.
+Live peer authentication, delivery, and native EOF require separate proof.
+
 The source-only capture framing sends GO, CHECKPOINT, ACK, and COMPLETE in that order, followed by EOF.
 The endpoints check the original run, nonce, and receipt digests against the expected binding.
 They use the smaller remaining budget from the original raw counter and UTC deadlines. CHECKPOINT carries
