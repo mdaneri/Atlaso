@@ -225,9 +225,11 @@ Synthetic current-admission verifier used by the private test seam.
 Optional synthetic hook invoked between file publication and final read pin.
 .PARAMETER Deadline
 Original absolute deadline for the scope.
+.PARAMETER SyntheticClockSample
+Optional deterministic sample source for an opt-in synthetic clock.
 #>
 function New-TestScope([string]$Nonce, [string]$RunId, [scriptblock]$Verify,
-    [scriptblock]$BeforeReadPin, [Nullable[DateTimeOffset]]$Deadline) {
+    [scriptblock]$BeforeReadPin, [Nullable[DateTimeOffset]]$Deadline, [scriptblock]$SyntheticClockSample) {
     [DateTimeOffset]$effectiveDeadline = if ($null -eq $Deadline) {
         [DateTimeOffset]::UtcNow.AddSeconds(120)
     } else {
@@ -235,10 +237,11 @@ function New-TestScope([string]$Nonce, [string]$RunId, [scriptblock]$Verify,
     }
     $binding = Get-TestBinding -Nonce $Nonce -RunId $RunId
     return & $checkpointModule {
-        param($Root, $Identity, $Bound, $Expires, $Verifier, $Hook)
+        param($Root, $Identity, $Bound, $Expires, $Verifier, $Hook, $Sample)
         New-RestorationCheckpointTestScope -EvidenceDirectory $Root -EvidenceIdentity $Identity `
-            -Binding $Bound -Deadline $Expires -Verify $Verifier -BeforeReadPin $Hook
-    } $resolvedTestRoot $TestRootIdentity $binding $effectiveDeadline $Verify $BeforeReadPin
+            -Binding $Bound -Deadline $Expires -Verify $Verifier -BeforeReadPin $Hook `
+            -SyntheticClock:($null -ne $Sample) -SyntheticClockSample $Sample
+    } $resolvedTestRoot $TestRootIdentity $binding $effectiveDeadline $Verify $BeforeReadPin $SyntheticClockSample
 }
 
 <#
@@ -644,6 +647,104 @@ try {
         'The second guard must refuse before returning a checkpoint digest.'
 }
 finally { Close-TestScope $digestDriftScope }
+
+$clockUtc = [DateTimeOffset]::FromUnixTimeMilliseconds(1700000000000)
+$clockDeadline = $clockUtc.AddSeconds(2).AddTicks(9900)
+$clockState = @{
+    Counter=[long]100; Utc=$clockUtc.AddTicks(2500); Frequency=[long]1000
+    Boot='638982378001234567'; Reads=0; Remaining=$null
+}
+$sampleClock = {
+    $clockState.Reads++
+    [pscustomobject]@{
+        Counter=$clockState.Counter; Frequency=$clockState.Frequency
+        Utc=$clockState.Utc; BootIdentity=$clockState.Boot
+    }
+}.GetNewClosure()
+$clockNonce = New-TestCaseNonce
+$clockScope = New-TestScope $clockNonce (New-TestCaseNonce) { $true } $null $clockDeadline $sampleClock
+$clockCapture = {
+    param($Save, $Remaining, $ReadIntent, $ReadCheckpoint)
+    $clockState.Remaining = $Remaining
+    Assert-RestorationTest ($Remaining.Invoke() -eq 1.999) 'The raw counter must round down from the exact UTC birth.'
+    $null = $ReadIntent.Invoke()
+    $Save.Invoke($baselineBytes)
+    $null = $ReadCheckpoint.Invoke()
+    return ,$baselineBytes
+}.GetNewClosure()
+try {
+    $clockResult = Invoke-TestCapture $clockScope $clockCapture -SyntheticReceiptDigests
+    $intentPath = Join-Path $resolvedTestRoot "atlaso-restoration-$clockNonce.intent.json"
+    $clockIntent = Get-Content -LiteralPath $intentPath -Raw | ConvertFrom-Json
+    $bootDigest = [Convert]::ToHexString(
+        [Security.Cryptography.SHA256]::HashData([Text.Encoding]::ASCII.GetBytes($clockState.Boot))).ToLowerInvariant()
+    Assert-RestorationTest ($clockIntent.schema -eq 2 -and $clockIntent.clock.deadline_counter -eq 2099 -and
+        $clockIntent.clock.frequency -eq 1000 -and $clockIntent.clock.deadline_utc_ms -eq 1700000002000 -and
+        $clockIntent.clock.boot_sha256 -ceq $bootDigest -and
+        $clockResult.IntentSha256 -ceq (Get-FileHash -LiteralPath $intentPath).Hash.ToLowerInvariant()) `
+        'The frozen boot and deadline must be part of the original intent digest.'
+    $beforeStale = $clockState.Reads
+    Assert-Throws { $null = $clockState.Remaining.Invoke() } 'The original clock callback expires with its invocation.'
+    Assert-RestorationTest ($clockState.Reads -eq $beforeStale) 'A stale callback cannot sample or mutate the clock.'
+}
+finally { Close-TestScope $clockScope }
+
+foreach ($clockFault in @(
+    @{ Key='Counter'; Value=[long]99 }, @{ Key='Utc'; Value=$clockUtc },
+    @{ Key='Frequency'; Value=[long]999 }, @{ Key='Boot'; Value='different-boot' },
+    @{ Key='Counter'; Value=[long]2099 }, @{ Key='Utc'; Value=$clockUtc.AddSeconds(2) }
+)) {
+    $scope = New-TestScope (New-TestCaseNonce) (New-TestCaseNonce) { $true } $null $clockDeadline $sampleClock
+    $faultState = @{ Rejected=$false; Sticky=$false }
+    $faultCapture = {
+        param($Save, $Remaining, $ReadIntent, $ReadCheckpoint)
+        $null = $ReadIntent.Invoke()
+        $Save.Invoke($baselineBytes)
+        $old = $clockState[$clockFault.Key]
+        try {
+            $clockState[$clockFault.Key] = $clockFault.Value
+            try { $null = $Remaining.Invoke() }
+            catch { $faultState.Rejected = $true }
+        }
+        finally { $clockState[$clockFault.Key] = $old }
+        try { $null = $ReadCheckpoint.Invoke() }
+        catch { $faultState.Sticky = $true }
+        return ,$baselineBytes
+    }.GetNewClosure()
+    try {
+        Assert-Throws { Invoke-TestCapture $scope $faultCapture -SyntheticReceiptDigests } `
+            'A caught clock fault must prevent successful capture.'
+        Assert-RestorationTest ($faultState.Rejected -and $faultState.Sticky) 'The original clock refusal must be sticky.'
+    }
+    finally { Close-TestScope $scope }
+}
+
+$verifyClock = { $clockState.Counter = [long]2099; $true }.GetNewClosure()
+try {
+    Assert-Throws {
+        New-TestScope (New-TestCaseNonce) (New-TestCaseNonce) $verifyClock $null $clockDeadline $sampleClock
+    } 'The original cap must include time spent in admission.'
+}
+finally { $clockState.Counter = [long]100 }
+Assert-Throws {
+    New-TestScope (New-TestCaseNonce) (New-TestCaseNonce) { $true } $null $clockUtc.AddTicks(9000) $sampleClock
+} 'The rounded UTC deadline must be after the exact birth sample.'
+$clockState.Counter = [long]::MaxValue
+try {
+    Assert-Throws {
+        New-TestScope (New-TestCaseNonce) (New-TestCaseNonce) { $true } $null $clockDeadline $sampleClock
+    } 'The absolute counter deadline cannot overflow.'
+}
+finally { $clockState.Counter = [long]100 }
+
+$nativeClockBinding = Get-TestBinding -Nonce (New-TestCaseNonce) -RunId (New-TestCaseNonce)
+$nativeClockScope = & $checkpointModule {
+    param($Root, $Identity, $Bound)
+    $Bound.host_boot_identity = Get-AtlasoWindowsBootIdentity
+    New-RestorationCheckpointTestScope -EvidenceDirectory $Root -EvidenceIdentity $Identity -Binding $Bound `
+        -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(30)) -Verify { $true } -SyntheticClock
+} $resolvedTestRoot $TestRootIdentity $nativeClockBinding
+Close-TestScope $nativeClockScope
 
 $raceNonce = New-TestCaseNonce
 $barrier = Join-Path $resolvedTestRoot ("restoration-claim-$raceNonce.release")

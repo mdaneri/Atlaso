@@ -109,6 +109,10 @@ durable publication. Each read is available once on the original controller thre
 retained file identity, exact bytes, current admission and original deadline before returning the digest.
 The callbacks expire when capture returns and are limited to the synthetic journal fixture.
 
+The private clock fixture freezes one boot-bound performance-counter deadline and one UTC deadline when the
+scope opens. The original intent records both bounds. Every journal check uses the smaller remaining budget
+and permanently refuses that capture if either clock regresses, expires, or fails validation.
+
 The source-only capture framing sends GO, CHECKPOINT, ACK, and COMPLETE in that order, followed by EOF.
 The endpoints check the original run, nonce, and receipt digests against the expected binding.
 They use the smaller remaining budget from the original raw counter and UTC deadlines. CHECKPOINT carries

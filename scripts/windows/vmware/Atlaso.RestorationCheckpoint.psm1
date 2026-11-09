@@ -241,14 +241,108 @@ function Get-RestorationBinding([System.Collections.IDictionary]$Binding) {
 
 <#
 .SYNOPSIS
+Sample the Windows boot, raw performance counter and UTC for the private clock fixture.
+#>
+function Get-RestorationWindowsClockSample {
+    if (-not [Diagnostics.Stopwatch]::IsHighResolution) { throw 'Restoration performance counter unavailable.' }
+    $boot = Get-AtlasoWindowsBootIdentity
+    $counter = [Diagnostics.Stopwatch]::GetTimestamp()
+    return [pscustomobject]@{
+        BootIdentity=$boot; Counter=$counter; Frequency=[Diagnostics.Stopwatch]::Frequency
+        Utc=[DateTimeOffset]::UtcNow
+    }
+}
+
+<#
+.SYNOPSIS
+Copy and validate a sample from the original synthetic clock source.
+.PARAMETER Source
+Original module-owned or fixture-only sampler.
+.PARAMETER BootIdentity
+Exact boot identity bound by the original journal scope.
+#>
+function Read-RestorationClockSample([scriptblock]$Source, [string]$BootIdentity) {
+    $sample = & $Source
+    if ($sample -isnot [pscustomobject] -or
+        $sample.BootIdentity -isnot [string] -or $sample.BootIdentity -cne $BootIdentity -or
+        $sample.Counter -isnot [long] -or $sample.Counter -lt 0 -or
+        $sample.Frequency -isnot [long] -or $sample.Frequency -le 0 -or
+        $sample.Utc -isnot [DateTimeOffset] -or $sample.Utc -lt [DateTimeOffset]::UnixEpoch) {
+        throw 'Original restoration clock sample refused.'
+    }
+    return [pscustomobject]@{
+        Counter=$sample.Counter; Frequency=$sample.Frequency; Utc=$sample.Utc
+    }
+}
+
+<#
+.SYNOPSIS
+Freeze the original synthetic dual deadline before the first admission or pin.
+.PARAMETER Deadline
+Requested original absolute UTC bound.
+.PARAMETER Source
+Original clock sampler, retained for the same scope.
+.PARAMETER BootIdentity
+Exact boot identity bound by the original journal scope.
+#>
+function New-RestorationSharedClock([DateTimeOffset]$Deadline, [scriptblock]$Source, [string]$BootIdentity) {
+    $birth = Read-RestorationClockSample $Source $BootIdentity
+    $utcMs = $Deadline.ToUnixTimeMilliseconds()
+    $utcEnd = [DateTimeOffset]::FromUnixTimeMilliseconds($utcMs)
+    $wallTicks = ($utcEnd - $birth.Utc).Ticks
+    if ($wallTicks -le 0 -or $wallTicks -gt 420 * [TimeSpan]::TicksPerSecond) {
+        throw 'Original restoration clock budget refused.'
+    }
+    # The bounded product fits in a decimal. Dividing by ticks per second before flooring
+    # preserves the exact counter-tick boundary without rounding the absolute endpoint.
+    $delta = [decimal]::Floor(([decimal]$wallTicks * $birth.Frequency) / [TimeSpan]::TicksPerSecond)
+    if ($delta -lt 1 -or $delta -gt ([long]::MaxValue - $birth.Counter)) {
+        throw 'Original restoration counter deadline refused.'
+    }
+    return [pscustomobject]@{
+        Source=$Source; Previous=$birth; Sampling=$false; UtcEnd=$utcEnd; UtcMilliseconds=$utcMs
+        EndCounter=($birth.Counter + [long]$delta); Frequency=$birth.Frequency
+        BootSha256=(Get-RestorationDigest ([Text.Encoding]::ASCII.GetBytes($BootIdentity)))
+    }
+}
+
+<#
+.SYNOPSIS
 Return the remaining original time budget without refreshing the deadline.
 .PARAMETER Authority
 Private original capture state.
+.PARAMETER Activation
+Original invocation token required when the synthetic capture calls back.
 #>
-function Get-RestorationRemaining([object]$Authority) {
+function Get-RestorationRemaining([object]$Authority, [object]$Activation) {
     if ($Authority.Phase -in @('Closed','Failed') -or
         $Authority.Thread -ne [Threading.Thread]::CurrentThread.ManagedThreadId) {
         throw 'Original restoration scope is not active on this controller.'
+    }
+    $shared = $Authority.SharedClock
+    if ($null -ne $shared) {
+        if ($Authority.Phase -ceq 'Completed' -or $shared.Sampling -or
+            ($null -ne $Activation -and -not [object]::ReferenceEquals($Activation, $Authority.ReceiptActivation))) {
+            throw 'Original restoration clock is not active for this invocation.'
+        }
+        $shared.Sampling = $true
+        try {
+            $sample = Read-RestorationClockSample $shared.Source $Authority.Binding.host_boot_identity
+            if ($sample.Frequency -ne $shared.Frequency -or $sample.Counter -lt $shared.Previous.Counter -or
+                $sample.Utc -lt $shared.Previous.Utc -or $sample.Counter -ge $shared.EndCounter -or
+                $sample.Utc -ge $shared.UtcEnd) {
+                throw 'Original restoration clock regressed, changed or elapsed.'
+            }
+            $shared.Previous = $sample
+            return [Math]::Min(
+                ($shared.EndCounter - $sample.Counter) / [double]$shared.Frequency,
+                ($shared.UtcEnd - $sample.Utc).TotalSeconds)
+        }
+        catch {
+            $Authority.Phase = 'Failed'
+            throw
+        }
+        finally { $shared.Sampling = $false }
     }
     $remaining = [Math]::Min(
         $Authority.Budget - $Authority.Clock.Elapsed.TotalSeconds,
@@ -290,26 +384,39 @@ Original bounded absolute capture deadline.
 Internal synthetic current-admission predicate.
 .PARAMETER BeforeReadPin
 Internal synthetic observer for the close-to-pin handoff.
+.PARAMETER SyntheticClock
+Opt in at scope creation to a shared counter and UTC deadline for synthetic qualification.
+.PARAMETER SyntheticClockSample
+Optional deterministic clock sampler for the private fixture.
 #>
 function New-RestorationCheckpointTestScope {
     param([string]$EvidenceDirectory, [string]$EvidenceIdentity, [System.Collections.IDictionary]$Binding,
-        [DateTimeOffset]$Deadline, [scriptblock]$Verify, [scriptblock]$BeforeReadPin)
+        [DateTimeOffset]$Deadline, [scriptblock]$Verify, [scriptblock]$BeforeReadPin,
+        [switch]$SyntheticClock, [scriptblock]$SyntheticClockSample)
 
     $ErrorActionPreference = 'Stop'
     # Internal tests supply a synthetic origin and capture. No production verifier exists.
     $clock = [Diagnostics.Stopwatch]::StartNew()
     $budget = ($Deadline - [DateTimeOffset]::UtcNow).TotalSeconds
-    if (-not $IsWindows -or $budget -le 0 -or $budget -gt 420 -or $null -eq $Verify -or
+    if (-not $IsWindows -or (-not $SyntheticClock -and ($budget -le 0 -or $budget -gt 420 -or $SyntheticClockSample)) -or
+        $null -eq $Verify -or
         [IO.Path]::GetFullPath($EvidenceDirectory) -cne $EvidenceDirectory) {
         throw 'Synthetic restoration scope refused.'
     }
     $snapshot = Get-RestorationBinding $Binding
+    $sharedClock = $null
+    if ($SyntheticClock) {
+        if ($null -eq $SyntheticClockSample) {
+            $SyntheticClockSample = (Get-Command Get-RestorationWindowsClockSample -CommandType Function).ScriptBlock
+        }
+        $sharedClock = New-RestorationSharedClock $Deadline $SyntheticClockSample $snapshot.host_boot_identity
+    }
     $pin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($EvidenceDirectory, $true)
     try {
         $authority = [pscustomobject]@{
             Root=$EvidenceDirectory; RootIdentity=$EvidenceIdentity; RootPin=$pin; Binding=$snapshot
             Thread=[Threading.Thread]::CurrentThread.ManagedThreadId; Phase='Ready'; Clock=$clock
-            Deadline=$Deadline; Budget=$budget; Verify=$Verify; BeforeReadPin=$BeforeReadPin
+            Deadline=$Deadline; Budget=$budget; Verify=$Verify; BeforeReadPin=$BeforeReadPin; SharedClock=$sharedClock
             Intent=$null; Checkpoint=$null; Baseline=$null; IntentClaimCollision=$false
             UseReceiptDigests=$false; ReceiptActivation=$null; Verifying=$false
             IntentDigestRead=$false; CheckpointDigestRead=$false; CheckpointBaselineSha256=$null
@@ -496,6 +603,9 @@ function Invoke-RestorationCheckpointCapture([object]$Scope, [scriptblock]$Captu
         $authority.Thread -ne [Threading.Thread]::CurrentThread.ManagedThreadId) {
         throw 'Original restoration capture is unavailable.'
     }
+    if ($null -ne $authority.SharedClock -and -not $SyntheticReceiptDigests) {
+        throw 'Original synthetic clock requires receipt digest capture.'
+    }
     $authority.UseReceiptDigests = $SyntheticReceiptDigests.IsPresent
     $authority.Phase = 'Claiming'
     try {
@@ -511,10 +621,20 @@ function Invoke-RestorationCheckpointCapture([object]$Scope, [scriptblock]$Captu
             }
             throw 'Original restoration checkpoint already exists.'
         }
-        $intent = [ordered]@{
+        $intentFields = [ordered]@{
             schema=1; kind='restoration-capture-intent'; binding=$authority.Binding
             evidence_identity=$authority.RootIdentity; deadline_utc=$authority.Deadline.ToUniversalTime().ToString('O')
-        } | ConvertTo-Json -Depth 4 -Compress
+        }
+        if ($null -ne $authority.SharedClock) {
+            $shared = $authority.SharedClock
+            $intentFields.schema = 2
+            $intentFields.deadline_utc = $shared.UtcEnd.ToString('O')
+            $intentFields.clock = [ordered]@{
+                boot_sha256=$shared.BootSha256; deadline_counter=$shared.EndCounter
+                frequency=$shared.Frequency; deadline_utc_ms=$shared.UtcMilliseconds
+            }
+        }
+        $intent = $intentFields | ConvertTo-Json -Depth 4 -Compress
         $authority.Intent = Publish-RestorationRecord $authority 'intent' ([Text.Encoding]::UTF8.GetBytes($intent + [char]10))
         $authority.Phase = 'Capturing'
         $save = (Get-Command Save-RestorationCheckpoint -CommandType Function).ScriptBlock
@@ -524,6 +644,9 @@ function Invoke-RestorationCheckpointCapture([object]$Scope, [scriptblock]$Captu
         if ($SyntheticReceiptDigests) {
             $activation = [object]::new()
             $authority.ReceiptActivation = $activation
+            if ($null -ne $authority.SharedClock) {
+                $remainingCallback = [Func[double]]({ & $remaining $authority $activation }.GetNewClosure())
+            }
             $readDigest = (Get-Command Read-RestorationReceiptDigest -CommandType Function).ScriptBlock
             $readIntent = [Func[string]]({ & $readDigest $authority $activation }.GetNewClosure())
             $readCheckpoint = [Func[string]]({ & $readDigest $authority $activation -Checkpoint }.GetNewClosure())
