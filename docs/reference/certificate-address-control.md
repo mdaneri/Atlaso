@@ -113,6 +113,9 @@ The private clock fixture freezes one boot-bound performance-counter deadline an
 scope opens. The original intent records both bounds. Every journal check uses the smaller remaining budget
 and permanently refuses that capture if either clock regresses, expires, or fails validation.
 
+The in-memory Windows encoder is checked byte for byte against the Python GO and ACK frames. This fixture
+qualifies the fixed fields, byte order, and bounds before they are used in a live exchange.
+
 The source-only capture framing sends GO, CHECKPOINT, ACK, and COMPLETE in that order, followed by EOF.
 The endpoints check the original run, nonce, and receipt digests against the expected binding.
 They use the smaller remaining budget from the original raw counter and UTC deadlines. CHECKPOINT carries

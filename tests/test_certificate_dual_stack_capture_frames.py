@@ -5,9 +5,13 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
+import shutil
 import struct
+import subprocess
 import threading
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -66,6 +70,94 @@ def baseline(dns_form: str) -> bytes:
         dns_form: Rendered current normal DNS settings form.
     """
     return public_bytes(capture_restoration_baseline(_Transport(dns_form).client, "eth1", _MAC, lambda _: None))
+
+
+def host_frame_expression(method: str, fields: tuple[bytes | int, ...]) -> str:
+    """Build a PowerShell call using only fixture bytes and exact integer literals.
+
+    Args:
+        method: The fixed host encoder method selected by the test.
+        fields: Synthetic fixed-width fields in wire order.
+    """
+    arguments = [
+        f"[Convert]::FromHexString('{field.hex()}')" if isinstance(field, bytes) else f"[long]({field})"
+        for field in fields
+    ]
+    return f"[Atlaso.RestorationControlFrames]::{method}({', '.join(arguments)})"
+
+
+def run_host_frames(executable: str, script: str) -> list[str]:
+    """Run the in-memory Windows encoder fixture and return its lines.
+
+    Args:
+        executable: Resolved PowerShell executable.
+        script: Test-only calls built from fixed synthetic fields.
+    """
+    result = subprocess.run(
+        [executable, "-NoProfile", "-NonInteractive", "-Command",
+         "$ErrorActionPreference = 'Stop'; "
+         "Import-Module ./scripts/windows/vmware/Atlaso.RestorationControlFrames.psm1; " + script],
+        cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True, timeout=30, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout.splitlines()
+
+
+@pytest.mark.parametrize("high", [False, True], ids=["asymmetric", "signed-maximum"])
+def test_windows_control_frames_match_python_oracle(high: bool, baseline: bytes) -> None:
+    """Compare every host byte with the normative controller's real GO and ACK.
+
+    Args:
+        high: Use the maximum signed counter and maximum UTC deadline.
+        baseline: Exact stage1 DATA from the synthetic normal UI fixture.
+    """
+    pwsh = shutil.which("pwsh") if os.name == "nt" else None
+    if pwsh is None:
+        pytest.skip("Windows PowerShell 7 is required for the host encoder")
+
+    deadline = (1 << 63) - 1 if high else 0x0102030405060708
+    utc_ms = 253_402_300_799_999 if high else 0x010203040506
+    original = tuple(bytes(range(start, start + width)) for start, width in (
+        (1, 16), (25, 16), (42, 32), (76, 32), (111, 32), (147, 32),
+    ))
+    binding = CaptureBinding(*original, deadline, 1_000_003, utc_ms)
+    sample = ClockSample(binding.boot_sha256, deadline - 1_000_004, binding.frequency, utc_ms - 1_002)
+    receipt = bytes(range(185, 217))
+    controller = CaptureControllerFrames(binding)
+    expected_go = controller.go(sample)
+    controller.accept_checkpoint(frame(FrameKind.CHECKPOINT, baseline), sample)
+    expected_ack = controller.acknowledge(receipt, sample)
+    go = host_frame_expression("EncodeGo", (
+        *original, deadline, binding.frequency, utc_ms, sample.counter, sample.utc_ms,
+    ))
+    ack_fields = (*original[:3], hashlib.sha256(baseline).digest(), receipt)
+    ack = host_frame_expression("EncodeAck", ack_fields)
+    changed_ack = host_frame_expression("EncodeAck", (*ack_fields[:3], receipt, ack_fields[3]))
+    observed = run_host_frames(pwsh, f"[Convert]::ToHexString({go}); [Convert]::ToHexString({ack}); "
+                                    f"[Convert]::ToHexString({changed_ack})")
+    assert len(observed) == 3
+    assert [bytes.fromhex(value) for value in observed[:2]] == [expected_go, expected_ack]
+    assert bytes.fromhex(observed[2]) != expected_ack
+
+
+def test_windows_control_encoder_refuses_invalid_fields() -> None:
+    """Keep width and numeric refusal in the host encoder itself."""
+    pwsh = shutil.which("pwsh") if os.name == "nt" else None
+    if pwsh is None:
+        pytest.skip("Windows PowerShell 7 is required for the host encoder")
+    binding = (b"r" * 16, b"n" * 16, b"i" * 32, b"l" * 32, b"p" * 32, b"b" * 32)
+    calls = (
+        host_frame_expression("EncodeGo", (*binding, 2000, 0, 2000, 1000, 1000)),
+        host_frame_expression("EncodeGo", (*binding, 2000, 1000, 253_402_300_800_000, 1000, 1000)),
+        host_frame_expression("EncodeGo", (*binding, 2000, 1000, 2000, -1, 1000)),
+        host_frame_expression("EncodeAck", (*binding[:3], b"d" * 32, b"j" * 33)),
+    )
+    script = "; ".join(
+        f"try {{ $null = {call}; throw 'Encoder accepted invalid input' }} catch {{ "
+        "if ($_.Exception.GetBaseException() -isnot [ArgumentException]) { throw }; 'refused' }"
+        for call in calls
+    )
+    assert run_host_frames(pwsh, script) == ["refused"] * len(calls)
 
 
 def test_exchange_wraps_the_original_stage1_callback_and_final_return(dns_form: str) -> None:
