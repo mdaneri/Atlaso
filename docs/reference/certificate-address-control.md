@@ -115,8 +115,13 @@ the controller can accept capture completion.
 The private Windows pipe primitives reserve a single local byte-stream instance, verify the endpoint ACL and
 read the kernel-reported peer PID on each handle. Each overlapped operation retains its buffer and event until
 the operating system reports completion, including after a cancellation request. Closure requires a native
-broken-pipe result after the final byte. The fixture uses both endpoints in one process. Original child
-identity, owned-job termination, the independent watchdog, and the framing bridge still require qualification.
+broken-pipe result after the final byte. The pipe fixture uses both endpoints in one process.
+
+The private Windows job primitives assign the original child to a job at suspended creation. A separate
+watchdog starts before the controller publishes the suspended child receipt. It can terminate the original job
+while the controller is blocked, although it cannot interrupt that controller call. Natural completion requires
+a successful root exit, an empty original job, and time left on the original counter and UTC deadlines.
+The local synthetic child fixtures exercise this lifecycle separately from the pipe and restoration framing bridge.
 
 The credential terminal adapter deliberately refuses until the controller can prove the bounded SDK child has
 stopped before restoring terminal settings. A guest input deadline alone cannot provide that guarantee: remaining
