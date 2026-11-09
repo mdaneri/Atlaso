@@ -233,11 +233,20 @@ if ($null -eq $processLookupFailure -or
 
 $standaloneScript = Join-Path $repositoryRoot `
     'scripts\windows\vmware\reset-atlaso-onepassword-credential-bridge.ps1'
+$escapedStandaloneScript = $standaloneScript.Replace("'", "''")
+$standaloneCommand = @"
+& '$escapedStandaloneScript' -Inspect | ConvertTo-Json -Compress
+exit `$LASTEXITCODE
+"@
 $standaloneOutput = & (Get-Process -Id $PID).Path `
-    -NoLogo -NoProfile -NonInteractive -File $standaloneScript -Inspect 2>&1 | Out-String
-if ($LASTEXITCODE -ne 0 -or
-    $standaloneOutput -notmatch 'MarkerState\s*:\s*absent' -or
-    $standaloneOutput -match [regex]::Escape($repositoryRoot)) {
+    -NoLogo -NoProfile -NonInteractive -Command $standaloneCommand 2>&1 | Out-String
+if ($LASTEXITCODE -ne 0) {
+    throw "The standalone inspection command failed (exit $LASTEXITCODE)."
+}
+$standaloneStatus = ConvertFrom-Json -InputObject $standaloneOutput -AsHashtable -ErrorAction Stop
+if ($standaloneStatus.MarkerState -cne 'absent' -or
+    $standaloneStatus.Result -cne 'inspection' -or
+    ($standaloneStatus.Values -join "`n") -match [regex]::Escape($repositoryRoot)) {
     throw 'The standalone inspection command did not return sanitized missing-marker state.'
 }
 
