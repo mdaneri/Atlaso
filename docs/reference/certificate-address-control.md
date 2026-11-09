@@ -136,6 +136,10 @@ from the original receipt digests. ACK bytes are available to the test after mat
 end-of-buffer, and final journal checks succeed. The transcript exercises journal ordering and ACK encoding.
 Live peer authentication, delivery, and native EOF require separate proof.
 
+The fixture can also observe the GO bytes using explicit synthetic launch and process digests.
+It encodes the original clock cap and a fresh validated sample and refuses a wire budget
+that rounds down to zero nanoseconds. The test receives the bytes after the journal succeeds.
+
 The source-only capture framing sends GO, CHECKPOINT, ACK, and COMPLETE in that order, followed by EOF.
 The endpoints check the original run, nonce, and receipt digests against the expected binding.
 They use the smaller remaining budget from the original raw counter and UTC deadlines. CHECKPOINT carries

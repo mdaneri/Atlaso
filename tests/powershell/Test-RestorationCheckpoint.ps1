@@ -286,12 +286,14 @@ Exercise the private transcript entry in the checkpoint module.
 Original opaque scope returned by New-TestScope.
 .PARAMETER Transcript
 Bounded synthetic frames and any deliberate trailing bytes.
+.PARAMETER Go
+Optional synthetic launch and process digest arguments.
 #>
-function Invoke-TestFrameTranscript([object]$Scope, [byte[]]$Transcript) {
+function Invoke-TestFrameTranscript([object]$Scope, [byte[]]$Transcript, [hashtable]$Go = @{}) {
     return & $checkpointModule {
-        param($OriginalScope, $Frames)
-        Invoke-RestorationCheckpointFrameTest -Scope $OriginalScope -Transcript $Frames
-    } $Scope $Transcript
+        param($OriginalScope, $Frames, $Selectors)
+        Invoke-RestorationCheckpointFrameTest -Scope $OriginalScope -Transcript $Frames @Selectors
+    } $Scope $Transcript $Go
 }
 
 <#
@@ -784,6 +786,8 @@ $mutateTranscript = {
 $frameScope = New-TestScope $frameNonce $frameRun $mutateTranscript $null $clockDeadline $sampleClock
 try {
     $frameResult = Invoke-TestFrameTranscript $frameScope $transcript
+    Assert-RestorationTest ($null -eq $frameResult.PSObject.Properties['Go']) `
+        'The original transcript call has no GO observation.'
     $intentSha = (Get-FileHash -LiteralPath "$frameStem.intent.json").Hash.ToLowerInvariant()
     $checkpointSha = (Get-FileHash -LiteralPath "$frameStem.checkpoint.json").Hash.ToLowerInvariant()
     $dataSha = Get-TestDigestBytes $frameData
@@ -853,6 +857,88 @@ foreach ($expireAt in 1, 3, 4) {
     }
 }
 Write-Output 'Synthetic Stage2 transcript tests passed.'
+
+$go = @{ SyntheticLaunchIntentSha256 = ('3a' * 32); SyntheticProcessReceiptSha256 = ('7b' * 32) }
+$goState = @{ Reads = 0 }
+$goBirthBase = [long]0x0102030405060708
+$goClock = {
+    $goState.Reads++
+    [pscustomobject]@{
+        Counter = $goBirthBase + $goState.Reads; Frequency = [long]1000003
+        Utc = $clockUtc.AddTicks(1670 * $goState.Reads); BootIdentity = $clockState.Boot
+    }
+}.GetNewClosure()
+$goNonce = New-TestCaseNonce
+$goStem = Join-Path $resolvedTestRoot "atlaso-restoration-$goNonce"
+$goScope = New-TestScope $goNonce $frameRun { $true } $null $clockDeadline $goClock
+try {
+    $frames = [byte[]]($checkpointFrame + $completeFrame)
+    foreach ($invalid in @(
+        @{ SyntheticLaunchIntentSha256 = $go.SyntheticLaunchIntentSha256 }
+        @{ SyntheticProcessReceiptSha256 = $go.SyntheticProcessReceiptSha256 }
+        @{ SyntheticLaunchIntentSha256 = ('3A' * 32); SyntheticProcessReceiptSha256 = $go.SyntheticProcessReceiptSha256 }
+        @{ SyntheticLaunchIntentSha256 = $go.SyntheticLaunchIntentSha256; SyntheticProcessReceiptSha256 = (0..31) }
+    )) {
+        Assert-Throws { Invoke-TestFrameTranscript $goScope $frames $invalid } 'Malformed GO input must refuse.'
+    }
+    Assert-RestorationTest (-not [IO.File]::Exists("$goStem.intent.json") -and $goState.Reads -eq 3) `
+        'GO input refusal must occur before claiming or sampling the scope.'
+    $goResult = Invoke-TestFrameTranscript $goScope $frames $go
+    $intentSha = (Get-FileHash -LiteralPath "$goStem.intent.json").Hash.ToLowerInvariant()
+    $bootSha = Get-TestDigest $clockState.Boot
+    # Birth is sample 1. Sample 15 is the first wire guard, and sample 16 must not replace it.
+    $words = @($goBirthBase + 1999839; 1000003; 1700000002000; $goBirthBase + 15; 1700000000002)
+    $clockHex = ($words | ForEach-Object { ([long]$_).ToString('x16') }) -join ''
+    $goHex = "415243500101000000c8$frameRun$goNonce$intentSha" +
+        $go.SyntheticLaunchIntentSha256 + $go.SyntheticProcessReceiptSha256 + $bootSha + $clockHex
+    Assert-RestorationTest ([Convert]::ToHexString($goResult.Go).ToLowerInvariant() -ceq $goHex) `
+        'GO must bind the original receipt, independently expected clock words and both synthetic digest slots.'
+}
+finally { Close-TestScope $goScope }
+
+foreach ($fault in @(
+    @{ At=15; Key='Counter'; Value=[long]4000000100 }
+    @{ At=15; Key='Counter'; Value=[long]99 }
+    @{ At=15; Key='Frequency'; Value=[long]2000000001 }
+    @{ At=15; Key='BootIdentity'; Value='different-boot' }
+    @{ At=15; Key='Counter'; Value=[long]4000000099 }
+    @{ At=16; Key='Counter'; Value=[long]4000000099 }
+    @{ At=16; Key='Utc'; Value=$clockUtc.AddSeconds(2) }
+    @{ At=15; Key='Counter'; Value=[long]4000000098; Success=$true }
+)) {
+    $goState = @{ Reads = 0 }
+    $goClock = {
+        $goState.Reads++
+        $sample = @{ Counter=[long]100; Frequency=[long]2000000000; Utc=$clockUtc; BootIdentity=$clockState.Boot }
+        if ($goState.Reads -ge $fault.At) { $sample[$fault.Key] = $fault.Value }
+        [pscustomobject]$sample
+    }.GetNewClosure()
+    $nonce = New-TestCaseNonce
+    $stem = Join-Path $resolvedTestRoot "atlaso-restoration-$nonce"
+    $scope = New-TestScope $nonce $frameRun { $true } $null $clockDeadline $goClock
+    try {
+        if ($fault.Success) {
+            $result = Invoke-TestFrameTranscript $scope $frames $go
+            Assert-RestorationTest ($result.Go.Length -eq 210) 'Exactly one nanosecond must remain representable.'
+        }
+        else {
+            Assert-Throws { Invoke-TestFrameTranscript $scope $frames $go } 'The GO wire guard must refuse.'
+            Assert-RestorationTest ($goState.Reads -eq $fault.At -and [IO.File]::Exists("$stem.intent.json") -and
+                -not [IO.File]::Exists("$stem.checkpoint.json")) 'A failed GO guard must stop before CHECKPOINT.'
+        }
+    }
+    finally { Close-TestScope $scope }
+}
+$nonce = New-TestCaseNonce
+$stem = Join-Path $resolvedTestRoot "atlaso-restoration-$nonce"
+$scope = New-TestScope $nonce $frameRun { $true } $null $clockDeadline $sampleClock
+try {
+    Assert-Throws { Invoke-TestFrameTranscript $scope ([byte[]]($frames + [byte]0)) $go } `
+        'A trailing byte must prevent a GO observation after staging.'
+    Assert-RestorationTest ([IO.File]::Exists("$stem.checkpoint.json")) 'The original checkpoint must remain.'
+}
+finally { Close-TestScope $scope }
+Write-Output 'Synthetic Stage2 GO observation tests passed.'
 
 $nativeClockBinding = Get-TestBinding -Nonce (New-TestCaseNonce) -RunId (New-TestCaseNonce)
 $nativeClockScope = & $checkpointModule {

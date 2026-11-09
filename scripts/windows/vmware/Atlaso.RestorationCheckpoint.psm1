@@ -700,8 +700,13 @@ Exercise CHECKPOINT through end-of-buffer on an original synthetic Stage2 scope.
 Original opaque test scope created with the shared clock.
 .PARAMETER Transcript
 Stable fixture-owned bytes containing CHECKPOINT followed by COMPLETE.
+.PARAMETER SyntheticLaunchIntentSha256
+Optional synthetic launch digest for the GO observation, paired with SyntheticProcessReceiptSha256.
+.PARAMETER SyntheticProcessReceiptSha256
+Optional synthetic process digest for the GO observation, paired with SyntheticLaunchIntentSha256.
 #>
-function Invoke-RestorationCheckpointFrameTest([object]$Scope, [byte[]]$Transcript) {
+function Invoke-RestorationCheckpointFrameTest([object]$Scope, [byte[]]$Transcript,
+    [object]$SyntheticLaunchIntentSha256, [object]$SyntheticProcessReceiptSha256) {
     $ErrorActionPreference = 'Stop'
     $authority = $null
     if (-not $script:RestorationScopes.TryGetValue($Scope, [ref]$authority) -or
@@ -711,9 +716,23 @@ function Invoke-RestorationCheckpointFrameTest([object]$Scope, [byte[]]$Transcri
     }
     $run = [Convert]::FromHexString($authority.Binding.run_id)
     $nonce = [Convert]::FromHexString($authority.Binding.receiver_nonce)
+    $includeGo = $PSBoundParameters.ContainsKey('SyntheticLaunchIntentSha256') -or
+        $PSBoundParameters.ContainsKey('SyntheticProcessReceiptSha256')
+    $launch = $null
+    $process = $null
+    if ($includeGo) {
+        if ($SyntheticLaunchIntentSha256 -isnot [string] -or $SyntheticProcessReceiptSha256 -isnot [string] -or
+            $SyntheticLaunchIntentSha256 -cnotmatch '\A[0-9a-f]{64}\z' -or
+            $SyntheticProcessReceiptSha256 -cnotmatch '\A[0-9a-f]{64}\z') {
+            throw 'Synthetic restoration GO digests refused.'
+        }
+        $launch = [Convert]::FromHexString($SyntheticLaunchIntentSha256)
+        $process = [Convert]::FromHexString($SyntheticProcessReceiptSha256)
+    }
+    $shared = $authority.SharedClock
     $limit = 2 * (10 + $script:MaximumBaselineBytes) + 1
     $codec = Join-Path $PSScriptRoot 'Atlaso.RestorationControlFrames.psm1'
-    $observation = [pscustomobject]@{ Ack = $null }
+    $observation = [pscustomobject]@{ Ack = $null; Go = $null }
     $capture = {
         param([Action[byte[]]]$Save, [Func[double]]$Remaining, [Func[string]]$ReadIntent, [Func[string]]$ReadCheckpoint)
 
@@ -734,6 +753,29 @@ function Invoke-RestorationCheckpointFrameTest([object]$Scope, [byte[]]$Transcri
             return ,$fragment
         }.GetNewClosure())
         $budget = [Action]({ $null = $Remaining.Invoke() }.GetNewClosure())
+
+        if ($includeGo) {
+            $readWireClock = {
+                $budget.Invoke()
+                $counter = $shared.Previous.Counter
+                $utcMs = $shared.Previous.Utc.ToUnixTimeMilliseconds()
+                $ticks = $shared.EndCounter - $counter
+                $milliseconds = $shared.UtcMilliseconds - $utcMs
+                # The original guard already checked integer widths, boot and monotonicity.
+                # A positive counter delta can still round to zero nanoseconds on the wire.
+                if ($ticks -le 0 -or $milliseconds -le 0 -or $milliseconds -gt 420000 -or
+                    [decimal]$ticks -gt [decimal]$shared.Frequency * 420 -or
+                    [decimal]$ticks * 1000000000 -lt $shared.Frequency) {
+                    throw 'Synthetic restoration GO clock budget refused.'
+                }
+                return [pscustomobject]@{ Counter = $counter; UtcMilliseconds = $utcMs }
+            }
+            $sample = & $readWireClock
+            $observation.Go = [Atlaso.RestorationControlFrames]::EncodeGo(
+                $run, $nonce, $intent, $launch, $process, [Convert]::FromHexString($shared.BootSha256),
+                $shared.EndCounter, $shared.Frequency, $shared.UtcMilliseconds, $sample.Counter, $sample.UtcMilliseconds)
+            $null = & $readWireClock
+        }
 
         $baseline = [Atlaso.RestorationControlFrames]::ReadData(2, $read, $budget)
         $budget.Invoke()
@@ -757,7 +799,9 @@ function Invoke-RestorationCheckpointFrameTest([object]$Scope, [byte[]]$Transcri
         return ,([byte[]]$baseline.Clone())
     }.GetNewClosure()
     $journal = Invoke-RestorationCheckpointCapture -Scope $Scope -Capture $capture -SyntheticReceiptDigests
-    return [pscustomobject]@{ Journal = $journal; Ack = [byte[]]$observation.Ack.Clone() }
+    $result = [ordered]@{ Journal = $journal; Ack = [byte[]]$observation.Ack.Clone() }
+    if ($includeGo) { $result.Go = [byte[]]$observation.Go.Clone() }
+    return [pscustomobject]$result
 }
 
 <#
