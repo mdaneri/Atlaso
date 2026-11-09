@@ -492,7 +492,7 @@ def test_oidc_readiness_requires_oidc_service_certificate(client):
         ]
 
 
-@pytest.mark.parametrize("version,accepted", [("1.9.1", True), ("1.8.0", False), ("1.9.2", False)])
+@pytest.mark.parametrize("version,accepted", [("1.9.2", True), ("1.9.1", False), ("1.9.3", False)])
 def test_oidc_readiness_requires_reviewed_authlib_version(client, monkeypatch, version, accepted):
     """Admit the upgraded runtime while rejecting an unreviewed protocol dependency.
 
@@ -510,7 +510,7 @@ def test_oidc_readiness_requires_reviewed_authlib_version(client, monkeypatch, v
         _set_oidc_service_ready(db)
         provider = oidc.ensure_provider_settings(db)
         errors = oidc.provider_validation_errors(db, provider, require_active_key=False)
-    assert errors == ([] if accepted else ["OIDC protocol readiness requires Authlib 1.9.1."])
+    assert errors == ([] if accepted else ["OIDC protocol readiness requires Authlib 1.9.2."])
 
 
 def test_oidc_readiness_rejects_missing_listener(client):
