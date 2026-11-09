@@ -117,6 +117,7 @@ files = [
   "scripts/interop/certificate_dual_stack_inventory.py",
   "scripts/interop/certificate_dual_stack_retirement.py",
   "scripts/interop/certificate_dual_stack_restore.py",
+  "scripts/interop/certificate_dual_stack_capture_frames.py",
   "scripts/interop/certificate_dual_stack_stop.py",
   "atlaso/app/services/routing_permissions.py",
   "atlaso/app/routers/api_v1/routing_permissions.py",

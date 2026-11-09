@@ -104,6 +104,14 @@ to return matching baseline data after the final reads. Uncertain attempts retai
 under that receiver. This path has synthetic coverage for the controller and Windows file operations. The
 production entry point refuses until a live controller, receiver, and capture transport are admitted.
 
+The source-only capture framing sends GO, CHECKPOINT, ACK, and COMPLETE in that order, followed by EOF.
+The endpoints check the original run, nonce, and receipt digests against the expected binding.
+They use the smaller remaining budget from the original raw counter and UTC deadlines. CHECKPOINT carries
+canonical baseline bytes, ACK binds the verified checkpoint receipt digest, and COMPLETE must return the exact
+checkpoint bytes. After EOF those bytes are provisional data. A separate Windows transport must verify the
+original process and both pipe peers, enforce the deadline, and prove natural exit of the entire owned job before
+the controller can accept capture completion.
+
 The credential terminal adapter deliberately refuses until the controller can prove the bounded SDK child has
 stopped before restoring terminal settings. A guest input deadline alone cannot provide that guarantee: remaining
 SDK keystrokes could reach a restored shell. The byte-reader tests exercise synthetic sentinel input only.

@@ -347,6 +347,14 @@ preserved with their affected subsystem below. Keep new requirements at their to
 
 - Follow [resource-scoped VMware coordination](agent-workflow.md#resource-scoped-vmware-coordination) for shared-resource
   conflicts; use the [lifecycle examples and guard limitations](../reference/vmware-workstation-lifecycle-testing.md#resource-scoped-coordination).
+- Reuse the [trusted-host certificate test procedure](../reference/certificate-address-control.md#trusted-host-and-admission)
+  for functional Workstation testing within its supported scenario. [PR #1085](https://github.com/mdaneri/Atlaso/pull/1085)
+  exercised static IPv4 handoff, DHCP rejection, and restoration with that procedure. Bind the task-owned appliance,
+  peer, and private LAN to their original creation receipts. Verify the VMX adapter assignments, MACs, membership,
+  and address plan before and after each Apply. Preserve evidence and stop on drift.
+  If the task requires independent enforcement, verify a separate control that continuously restricts attachments
+  and address use. The private segment, inventory checks, and address reservations establish bounded observations.
+  Keep the independent-enforcement evidence and merge authority separate from trusted-host test results.
 - Canonical image builds and live appliance testing use VMware Workstation. VMware Workstation is installed by default at
   `C:\Program Files\VMware\VMware Workstation`; use `vmrun.exe` there with the helpers under `scripts/windows/vmware/`.
 - The Photon OS 5.0 canonical template lives under `image/vmware-workstation/`. Hyper-V, KVM, and Proxmox VE are
