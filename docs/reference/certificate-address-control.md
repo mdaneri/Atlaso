@@ -126,6 +126,10 @@ Stage2 checks for field types, original interface binding, and projection digest
 Stage2 compares exact field names, fixed values, and digests ordinally, so extra characters
 cannot compare equal to an expected value.
 
+The in-memory public-pattern check first requires canonical JSON, then decodes each property name
+and string value independently. Synthetic fixtures compare its private-key marker and URL userinfo
+checks with the Python capture oracle. The fixture has no session markers or live capture authority.
+
 The source-only capture framing sends GO, CHECKPOINT, ACK, and COMPLETE in that order, followed by EOF.
 The endpoints check the original run, nonce, and receipt digests against the expected binding.
 They use the smaller remaining budget from the original raw counter and UTC deadlines. CHECKPOINT carries

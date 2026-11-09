@@ -3,7 +3,7 @@
 Exercise restoration frame handling for host parity qualification.
 .DESCRIPTION
 The fixture encodes fixed control frames, reads opaque DATA bodies, and checks canonical JSON
-spelling in memory. Live capture owns identity, clock and phase checks.
+spelling and decoded public patterns in memory. Live capture owns identity, clock and phase checks.
 #>
 
 if (-not ('Atlaso.RestorationControlFrames' -as [type])) {
@@ -11,6 +11,7 @@ if (-not ('Atlaso.RestorationControlFrames' -as [type])) {
 using System;
 using System.Buffers.Binary;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace Atlaso
 {
@@ -20,6 +21,13 @@ namespace Atlaso
         private const int MaxDataSize = 393216;
         private const int MaxDataDepth = 3;
         private const long MaxUtcMilliseconds = 253402300799999;
+
+        // Python's unanchored scheme search only needs the last scheme letter.
+        // Include its four extra case-insensitive ASCII range matches and exact whitespace set.
+        private static readonly Regex PrivatePattern = new Regex(
+            @"-----BEGIN [^-]*PRIVATE KEY-----|" +
+            @"[A-Za-z\u0130\u0131\u017f\u212a]://[^/\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*@",
+            RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);
 
         public static void RequireCanonicalData(byte[] data)
         {
@@ -36,6 +44,31 @@ namespace Atlaso
                 }
             }
             throw new FormatException("Invalid canonical restoration DATA.");
+        }
+
+        public static void RequirePublicData(byte[] data)
+        {
+            RequireCanonicalData(data);
+            try
+            {
+                var reader = new Utf8JsonReader(data, new JsonReaderOptions { MaxDepth = MaxDataDepth });
+                while (reader.Read())
+                {
+                    if ((reader.TokenType == JsonTokenType.String || reader.TokenType == JsonTokenType.PropertyName) &&
+                        PrivatePattern.IsMatch(reader.GetString()))
+                        throw new FormatException("Restoration DATA contains a private pattern.");
+                }
+                return;
+            }
+            catch (JsonException)
+            {
+                // Do not retain candidate data from parser diagnostics.
+            }
+            catch (InvalidOperationException)
+            {
+                // GetString can fail on invalid surrogate escapes.
+            }
+            throw new FormatException("Invalid decoded restoration DATA.");
         }
 
         private static bool HasCompactAscii(ReadOnlySpan<byte> data)

@@ -218,6 +218,100 @@ def test_windows_canonical_data_spelling(windows_frame_pwsh: str) -> None:
     ]
 
 
+def test_windows_decoded_public_patterns_match_python(windows_frame_pwsh: str, baseline: bytes) -> None:
+    """Compare the two public-pattern checks on canonical Stage1 fixtures.
+
+    Args:
+        windows_frame_pwsh: Resolved PowerShell 7 executable.
+        baseline: Exact Stage1 DATA from synthetic normal UI responses.
+    """
+    cases = [
+        ("-----BEGIN SYNTHETIC PRIVATE KEY-----", False),
+        ("-----begin SYNTHETIC PRIVATE KEY-----", True),
+        ("-----BEGIN SYNTHETIC-PRIVATE KEY-----", True),
+        ('prefix "HTTPS://fixture@host"', False),
+        ("x://@", False),
+        ("x://fixture/path@host", True),
+        ("x://fixture\t@host", True),
+        ("x://fixture\x1c@host", True),
+        ("x://fixture\u00a0@host", True),
+        ("x://fixture\u200b@host", False),
+        ("x://fixture\x00@host", False),
+        ("x://fixture\U0001f680@host", False),
+        ("é://fixture@host", True),
+        ("-----BEGIN " + "x" * 32768 + " PRIVATE KEY----", True),
+        ("x://" + "x" * 32768 + "/@host", True),
+        *((f"{letter}://fixture@host", False) for letter in "\u0130\u0131\u017f\u212a"),
+    ]
+    value = json.loads(baseline)
+    samples = []
+    for candidate, accepted in cases:
+        value["dns_settings"]["upstream_servers"] = candidate
+        value["projection_sha256"]["dns_settings"] = hashlib.sha256(public_bytes(value["dns_settings"])).hexdigest()
+        data = public_bytes(value)
+        controller, _ = started()
+        if accepted:
+            assert controller.accept_checkpoint(frame(FrameKind.CHECKPOINT, data), clock(2)) == data
+        else:
+            with pytest.raises(CaptureFrameRefusal, match="capture_baseline_invalid"):
+                controller.accept_checkpoint(frame(FrameKind.CHECKPOINT, data), clock(2))
+        samples.append(data.hex())
+
+    script = """
+    foreach ($hex in ([Console]::In.ReadToEnd() | ConvertFrom-Json)) {
+        try {
+            [Atlaso.RestorationControlFrames]::RequirePublicData([Convert]::FromHexString($hex))
+            'accepted'
+        } catch {
+            $failure = $_.Exception.GetBaseException()
+            if ($failure -isnot [FormatException] -or
+                $failure.Message -cne 'Restoration DATA contains a private pattern.') { throw }
+            'refused'
+        }
+    }
+    """
+    assert run_host_frames(windows_frame_pwsh, script, json.dumps(samples)) == [
+        "accepted" if accepted else "refused" for _, accepted in cases
+    ]
+
+
+def test_windows_decoded_public_patterns_check_individual_tokens(windows_frame_pwsh: str) -> None:
+    """Check independent names and values, strict decoding, and canonical preconditions.
+
+    Args:
+        windows_frame_pwsh: Resolved PowerShell 7 executable.
+    """
+    samples = [
+        public_bytes({"https://fixture@host": 0}),
+        public_bytes({"items": ["", "https://fixture@host"]}),
+        public_bytes({"items": ["https://fixture", "@host", None, False, 0]}),
+        public_bytes({"text": "\ud800"}),
+        public_bytes({"text": "\udc00"}),
+        b" {}",
+    ]
+    script = """
+    foreach ($hex in ([Console]::In.ReadToEnd() | ConvertFrom-Json)) {
+        try {
+            [Atlaso.RestorationControlFrames]::RequirePublicData([Convert]::FromHexString($hex))
+            'accepted'
+        } catch {
+            $failure = $_.Exception.GetBaseException()
+            if ($failure -isnot [FormatException] -or $null -ne $failure.InnerException -or
+                $failure.Data.Count -ne 0) { throw }
+            $failure.Message
+        }
+    }
+    """
+    assert run_host_frames(windows_frame_pwsh, script, json.dumps([sample.hex() for sample in samples])) == [
+        "Restoration DATA contains a private pattern.",
+        "Restoration DATA contains a private pattern.",
+        "accepted",
+        "Invalid decoded restoration DATA.",
+        "Invalid decoded restoration DATA.",
+        "Invalid canonical restoration DATA.",
+    ]
+
+
 def test_windows_canonical_data_and_typed_stage2(windows_frame_pwsh: str, baseline: bytes) -> None:
     """Exercise the Python oracle and the two separate host gates on the same bytes.
 
