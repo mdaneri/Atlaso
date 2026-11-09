@@ -233,21 +233,44 @@ if ($null -eq $processLookupFailure -or
 
 $standaloneScript = Join-Path $repositoryRoot `
     'scripts\windows\vmware\reset-atlaso-onepassword-credential-bridge.ps1'
-$escapedStandaloneScript = $standaloneScript.Replace("'", "''")
-$standaloneCommand = @"
-& '$escapedStandaloneScript' -Inspect | ConvertTo-Json -Compress
+<#
+.SYNOPSIS
+Run a standalone credential bridge command and read its sanitized status.
+.PARAMETER Mode
+Select inspection, inactive reset, or exact-owned-job reset.
+#>
+function Invoke-TestStandaloneCredentialReset {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('Inspect', 'Reset', 'Terminate')]
+        [string]$Mode
+    )
+
+    $arguments = @{
+        Inspect = '-Inspect'
+        Reset = '-Confirm:$false'
+        Terminate = '-TerminateOwnedProcess -Confirm:$false'
+    }[$Mode]
+    $escapedScript = $standaloneScript.Replace("'", "''")
+    $command = @"
+& '$escapedScript' $arguments | ConvertTo-Json -Compress
 exit `$LASTEXITCODE
 "@
-$standaloneOutput = & (Get-Process -Id $PID).Path `
-    -NoLogo -NoProfile -NonInteractive -Command $standaloneCommand 2>&1 | Out-String
-if ($LASTEXITCODE -ne 0) {
-    throw "The standalone inspection command failed (exit $LASTEXITCODE)."
+    $output = & (Get-Process -Id $PID).Path `
+        -NoLogo -NoProfile -NonInteractive -Command $command 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) {
+        throw "The standalone credential command failed ($Mode, exit $LASTEXITCODE)."
+    }
+    $status = ConvertFrom-Json -InputObject $output -AsHashtable -ErrorAction Stop
+    if (($status.Values -join "`n") -match [regex]::Escape($repositoryRoot)) {
+        throw 'The standalone credential command exposed an operator path.'
+    }
+    return $status
 }
-$standaloneStatus = ConvertFrom-Json -InputObject $standaloneOutput -AsHashtable -ErrorAction Stop
-if ($standaloneStatus.MarkerState -cne 'absent' -or
-    $standaloneStatus.Result -cne 'inspection' -or
-    ($standaloneStatus.Values -join "`n") -match [regex]::Escape($repositoryRoot)) {
-    throw 'The standalone inspection command did not return sanitized missing-marker state.'
+
+$standaloneStatus = Invoke-TestStandaloneCredentialReset -Mode Inspect
+if ($standaloneStatus.MarkerState -cne 'absent' -or $standaloneStatus.Result -cne 'inspection') {
+    throw 'The standalone inspection command did not return missing-marker state.'
 }
 
 $missingInspection = Invoke-AtlasoOnePasswordCredentialBridgeReset `
@@ -271,12 +294,15 @@ try {
             -ChildProcessId ([int]::MaxValue - 1) `
             -ChildProcessStartFileTimeUtc 1 `
             -ProcessOwnershipPhase assigned)
-    $inactiveOutput = & (Get-Process -Id $PID).Path `
-        -NoLogo -NoProfile -NonInteractive -File $standaloneScript `
-        -Confirm:$false 2>&1 | Out-String
-    if ($LASTEXITCODE -ne 0 -or
-        $inactiveOutput -notmatch 'Result\s*:\s*reset' -or
-        $inactiveOutput -match [regex]::Escape($repositoryRoot) -or
+    & (Get-Process -Id $PID).Path `
+        -NoLogo -NoProfile -NonInteractive -File $standaloneScript 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 1 -or
+        -not (Test-Path -LiteralPath $markerPath) -or
+        -not (Test-Path -LiteralPath $inactiveRoot)) {
+        throw 'An unconfirmed noninteractive reset must preserve the marker and bridge root.'
+    }
+    $inactiveStatus = Invoke-TestStandaloneCredentialReset -Mode Reset
+    if ($inactiveStatus.Result -cne 'reset' -or
         (Test-Path -LiteralPath $markerPath) -or
         (Test-Path -LiteralPath $inactiveRoot)) {
         throw 'The standalone current-boot inactive reset did not complete safely.'
@@ -726,12 +752,8 @@ try {
         $ownedRootProcess.HasExited) {
         throw 'WhatIf changed the exact owned process or retained state.'
     }
-    $ownedResetOutput = & (Get-Process -Id $PID).Path `
-        -NoLogo -NoProfile -NonInteractive -File $standaloneScript `
-        -TerminateOwnedProcess -Confirm:$false 2>&1 | Out-String
-    if ($LASTEXITCODE -ne 0 -or
-        $ownedResetOutput -notmatch 'Result\s*:\s*reset' -or
-        $ownedResetOutput -match [regex]::Escape($repositoryRoot) -or
+    $ownedResetStatus = Invoke-TestStandaloneCredentialReset -Mode Terminate
+    if ($ownedResetStatus.Result -cne 'reset' -or
         (Test-Path -LiteralPath $markerPath) -or
         (Test-Path -LiteralPath $ownedJobRoot) -or
         -not $ownedRootProcess.HasExited) {
@@ -872,8 +894,8 @@ foreach ($invalidFixture in @(
                 -RepositoryRoot $repositoryRoot `
                 -Confirm:$false | Out-Null
         }
-        $standaloneFailure = & (Get-Process -Id $PID).Path `
-            -NoLogo -NoProfile -NonInteractive -File $standaloneScript -Inspect 2>&1 | Out-String
+        $standaloneFailure = (& (Get-Process -Id $PID).Path `
+            -NoLogo -NoProfile -NonInteractive -File $standaloneScript -Inspect 2>&1) -join "`n"
         if ($LASTEXITCODE -ne 1 -or
             $standaloneFailure -notmatch '^ERROR:' -or
             $standaloneFailure -match 'not-disclosed|RootPath|ProcessJobName' -or
