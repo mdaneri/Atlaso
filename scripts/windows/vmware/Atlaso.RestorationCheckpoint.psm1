@@ -33,7 +33,8 @@ Complete ordinal property allowlist.
 function Get-RestorationMembers([System.Text.Json.JsonElement]$Value, [string[]]$Names) {
     $members = [Collections.Generic.Dictionary[string,System.Text.Json.JsonElement]]::new([StringComparer]::Ordinal)
     foreach ($property in $Value.EnumerateObject()) {
-        if ($property.Name -cnotin $Names -or -not $members.TryAdd($property.Name, $property.Value)) {
+        if ([Array]::IndexOf($Names, $property.Name) -lt 0 -or
+            -not $members.TryAdd($property.Name, $property.Value)) {
             throw 'Restoration projection fields refused.'
         }
     }
@@ -86,26 +87,29 @@ function Assert-RestorationInterface([object]$Baseline, [object]$Binding) {
     $addresses = @('ip_cidr','gateway','ipv6_cidr','ipv6_gateway')
     $flags = @('ipv6_enabled','check_duplicate_ip_addresses','access_management_ui_enabled')
     $common = $modes + $addresses + $flags + @('mtu')
+    $ordinal = [StringComparer]::Ordinal
     $row = Get-RestorationMembers $Baseline['original_row'] ($common + @('id','name','mac_address','admin_up'))
     $form = Get-RestorationMembers $Baseline['browser_fields'] ($common + @('admin_state'))
     Assert-RestorationStrings $row ($modes + @('name','mac_address')) 32
     Assert-RestorationBooleans $row ($flags + @('admin_up'))
     if ($row['id'].GetInt64() -lt 1 -or $row['mtu'].GetInt32() -lt 576 -or $row['mtu'].GetInt32() -gt 9000 -or
-        $row['name'].GetString() -cne $Binding.interface -or
-        $row['mac_address'].GetString().Replace('-', ':').ToLowerInvariant() -cne $Binding.mac_address -or
-        $row['role'].GetString() -cnotin @('management','access','route','unused') -or
-        $row['mode'].GetString() -cnotin @('access','trunk','unused') -or
-        $row['ipv4_method'].GetString() -cnotin @('static','dhcp')) {
+        -not $ordinal.Equals($row['name'].GetString(), $Binding.interface) -or
+        -not $ordinal.Equals($row['mac_address'].GetString().Replace('-', ':').ToLowerInvariant(), $Binding.mac_address) -or
+        [Array]::IndexOf(@('management','access','route','unused'), $row['role'].GetString()) -lt 0 -or
+        [Array]::IndexOf(@('access','trunk','unused'), $row['mode'].GetString()) -lt 0 -or
+        [Array]::IndexOf(@('static','dhcp'), $row['ipv4_method'].GetString()) -lt 0) {
         throw 'Original restoration interface refused.'
     }
     foreach ($name in ($modes + $flags + @('mtu'))) {
-        if ($row[$name].GetRawText() -cne $form[$name].GetRawText()) {
+        if (-not $ordinal.Equals($row[$name].GetRawText(), $form[$name].GetRawText())) {
             throw 'Restoration browser projection changed.'
         }
     }
     foreach ($name in $addresses) {
         $value = if ($row[$name].ValueKind -eq [System.Text.Json.JsonValueKind]::Null) { '' } else { $row[$name].GetString() }
-        if ($value.Length -gt 80 -or $value -cne $form[$name].GetString()) {
+        # The browser projection requires a JSON string, including for an absent address.
+        if ($value.Length -gt 80 -or $form[$name].ValueKind -ne [System.Text.Json.JsonValueKind]::String -or
+            -not $ordinal.Equals($value, $form[$name].GetString())) {
             throw 'Restoration address projection refused.'
         }
         if (-not $value) { continue }
@@ -113,7 +117,7 @@ function Assert-RestorationInterface([object]$Baseline, [object]$Binding) {
         $parts = $value.Split('/')
         $ip = $null
         if ($value -cnotmatch '\A[0-9a-fA-F.:/]+\z' -or -not [Net.IPAddress]::TryParse($parts[0], [ref]$ip) -or
-            ($family -eq 4 -and ($ip.AddressFamily -ne 'InterNetwork' -or $ip.ToString() -cne $parts[0])) -or
+            ($family -eq 4 -and ($ip.AddressFamily -ne 'InterNetwork' -or -not $ordinal.Equals($ip.ToString(), $parts[0]))) -or
             ($family -eq 6 -and $ip.AddressFamily -ne 'InterNetworkV6')) {
             throw 'Restoration address family refused.'
         }
@@ -124,7 +128,9 @@ function Assert-RestorationInterface([object]$Baseline, [object]$Binding) {
         }
     }
     $adminState = if ($row['admin_up'].GetBoolean()) { 'up' } else { 'down' }
-    if ($form['admin_state'].GetString() -cne $adminState) { throw 'Restoration admin state refused.' }
+    if (-not $ordinal.Equals($form['admin_state'].GetString(), $adminState)) {
+        throw 'Restoration admin state refused.'
+    }
 }
 
 <#
@@ -147,8 +153,9 @@ function Assert-RestorationDns([System.Text.Json.JsonElement]$Projection) {
         $minimum = if ($name -ceq 'cache_size') { 0 } else { 1 }
         if ($dns[$name].GetInt32() -lt $minimum) { throw 'Restoration DNS number refused.' }
     }
-    if ($dns['query_logging_mode'].GetString() -cnotin @('off','queries-extra') -or
-        $dns['listen_interfaces_present'].GetString() -cne '1' -or $dns['listen_interfaces'].GetArrayLength() -gt 256) {
+    if ([Array]::IndexOf(@('off','queries-extra'), $dns['query_logging_mode'].GetString()) -lt 0 -or
+        -not [StringComparer]::Ordinal.Equals($dns['listen_interfaces_present'].GetString(), '1') -or
+        $dns['listen_interfaces'].GetArrayLength() -gt 256) {
         throw 'Restoration DNS controls refused.'
     }
     $interfaces = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
@@ -175,6 +182,7 @@ function Assert-RestorationBaseline([byte[]]$Bytes, [object]$Binding) {
         [Text.DecoderExceptionFallback]::new()).GetString($Bytes)
     $document = [System.Text.Json.JsonDocument]::Parse($ascii)
     try {
+        $ordinal = [StringComparer]::Ordinal
         $parts = @('review','original_row','browser_fields','dns_settings')
         $root = Get-RestorationMembers $document.RootElement ($parts +
             @('test_only','consistency_only','native_acceptance','formal_acceptance','projection_sha256'))
@@ -186,7 +194,9 @@ function Assert-RestorationBaseline([byte[]]$Bytes, [object]$Binding) {
             'plan_error','initial_apply_required','active_task')
         if ($review['units'].GetArrayLength() -ne 0 -or $review['requested_units'].GetArrayLength() -ne 0 -or
             $review['pending_count'].GetInt32() -ne 0 -or $review['execution_count'].GetInt32() -ne 0 -or
-            $review['plan_error'].GetString() -cne '' -or $review['initial_apply_required'].GetBoolean() -or
+            $review['plan_error'].ValueKind -ne [System.Text.Json.JsonValueKind]::String -or
+            -not $ordinal.Equals($review['plan_error'].GetString(), '') -or
+            $review['initial_apply_required'].GetBoolean() -or
             $review['active_task'].ValueKind -ne [System.Text.Json.JsonValueKind]::Null) {
             throw 'Restoration review is not clean.'
         }
@@ -195,7 +205,9 @@ function Assert-RestorationBaseline([byte[]]$Bytes, [object]$Binding) {
         $digests = Get-RestorationMembers $root['projection_sha256'] $parts
         foreach ($part in $parts) {
             $actual = Get-RestorationDigest ([Text.Encoding]::ASCII.GetBytes($root[$part].GetRawText()))
-            if ($digests[$part].GetString() -cne $actual) { throw 'Restoration projection digest differs.' }
+            if (-not $ordinal.Equals($digests[$part].GetString(), $actual)) {
+                throw 'Restoration projection digest differs.'
+            }
         }
     }
     finally { $document.Dispose() }

@@ -86,18 +86,19 @@ def host_frame_expression(method: str, fields: tuple[bytes | int, ...]) -> str:
     return f"[Atlaso.RestorationControlFrames]::{method}({', '.join(arguments)})"
 
 
-def run_host_frames(executable: str, script: str) -> list[str]:
+def run_host_frames(executable: str, script: str, input_text: str | None = None) -> list[str]:
     """Run the in-memory Windows frame fixture and return its lines.
 
     Args:
         executable: Resolved PowerShell executable.
         script: Test-only calls built from fixed synthetic fields.
+        input_text: Optional synthetic fixture input sent over standard input.
     """
     result = subprocess.run(
         [executable, "-NoProfile", "-NonInteractive", "-Command",
          "$ErrorActionPreference = 'Stop'; "
          "Import-Module ./scripts/windows/vmware/Atlaso.RestorationControlFrames.psm1; " + script],
-        cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True, timeout=30, check=False,
+        cwd=Path(__file__).resolve().parents[1], input=input_text, capture_output=True, text=True, timeout=30, check=False,
     )
     assert result.returncode == 0, result.stderr
     return result.stdout.splitlines()
@@ -277,6 +278,66 @@ def test_windows_canonical_data_and_typed_stage2(windows_frame_pwsh: str, baseli
     assert run_host_frames(windows_frame_pwsh, script) == [
         "accepted:accepted", "refused:accepted", "refused:accepted", "accepted:refused",
     ]
+
+
+def test_windows_stage2_requires_ordinal_values(windows_frame_pwsh: str, baseline: bytes) -> None:
+    """Refuse changes to exact Stage2 strings even with matching projection digests.
+
+    Args:
+        windows_frame_pwsh: Resolved PowerShell 7 executable.
+        baseline: Exact Stage1 DATA from synthetic normal UI responses.
+    """
+    original = json.loads(baseline)
+    samples = [baseline.hex()]
+    expected = ["accepted"]
+    interface_refusal = "Original restoration interface refused."
+    address_refusal = "Restoration address projection refused."
+    dns_refusal = "Restoration DNS controls refused."
+    for part, key, value, result in (
+        ("original_row", "mac_address", _MAC.replace(":", "-"), "accepted"),
+        ("dns_settings", "query_logging_mode", "queries-extra", "accepted"),
+        ("original_row", "name", "eth1\x00", interface_refusal),
+        ("original_row", "mac_address", _MAC + "\x00", interface_refusal),
+        ("original_row", "role", "access\x00", interface_refusal),
+        ("original_row", "mode", "access\x00", interface_refusal),
+        ("original_row", "ipv4_method", "static\x00", interface_refusal),
+        ("browser_fields", "ip_cidr", original["browser_fields"]["ip_cidr"] + "\x00", address_refusal),
+        ("browser_fields", "gateway", None, address_refusal),
+        ("browser_fields", "admin_state", "up\x00", "Restoration admin state refused."),
+        ("dns_settings", "query_logging_mode", original["dns_settings"]["query_logging_mode"] + "\x00", dns_refusal),
+        ("dns_settings", "listen_interfaces_present", "1\x00", dns_refusal),
+        ("review", "plan_error", "\x00", "Restoration review is not clean."),
+        ("review", "plan_error", None, "Restoration review is not clean."),
+        ("projection_sha256", "review", original["projection_sha256"]["review"] + "\x00",
+         "Restoration projection digest differs."),
+    ):
+        data = copy.deepcopy(original)
+        data[part][key] = value
+        if part != "projection_sha256":
+            data["projection_sha256"][part] = hashlib.sha256(public_bytes(data[part])).hexdigest()
+        samples.append(public_bytes(data).hex())
+        expected.append(result)
+
+    data = copy.deepcopy(original)
+    data["test_only\x00"] = data.pop("test_only")
+    samples.append(public_bytes(data).hex())
+    expected.append("Restoration projection fields refused.")
+    script = f"""
+    $checkpoint = Import-Module ./scripts/windows/vmware/Atlaso.RestorationCheckpoint.psm1 -PassThru
+    foreach ($hex in ([Console]::In.ReadToEnd() | ConvertFrom-Json)) {{
+        $sample = [Convert]::FromHexString($hex)
+        try {{
+            & $checkpoint {{
+                param([byte[]] $data, [string] $mac)
+                Assert-RestorationBaseline $data @{{ interface = 'eth1'; mac_address = $mac }}
+            }} $sample '{_MAC}'
+            'accepted'
+        }} catch {{
+            $_.Exception.Message
+        }}
+    }}
+    """
+    assert run_host_frames(windows_frame_pwsh, script, json.dumps(samples)) == expected
 
 
 def test_windows_data_reader_collects_exact_fragments(windows_frame_pwsh: str) -> None:
