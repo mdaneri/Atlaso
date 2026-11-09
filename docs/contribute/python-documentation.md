@@ -54,6 +54,12 @@ def create_host(hostname: str, mac_address: str, enabled: bool = True) -> Host:
     """
 ```
 
+## Isolate shared test stubs
+
+Use pytest's `monkeypatch.setattr` for attributes on shared modules such as `shutil.which`. Pytest restores
+the resolver after the test, so later cases can still discover native commands. Use `monkeypatch.context()`
+when a test needs to verify restoration before it returns.
+
 ## Implementation comments
 
 Use `#` comments for rationale that cannot be made clear through naming or structure. Good subjects include protocol
