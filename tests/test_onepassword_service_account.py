@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="DPAPI and Windows ACLs are required")
 def test_dpapi_setup_rotation_acl_and_child_environment_isolation() -> None:
     """Exercise the Windows-only setup helper and token-scoped child launcher."""
     pwsh = shutil.which("pwsh")

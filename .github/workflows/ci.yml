@@ -194,6 +194,30 @@ jobs:
           ./tests/powershell/Test-AtlasoVmrunConsoleIsolation.ps1 -StateRoot $stateRoot
       - name: Install locked source-verification test dependencies
         run: python -m pip install --require-hashes -r requirements-dev.lock
+      - name: Verify Windows Workstation and Photon fixtures
+        shell: pwsh
+        run: |
+          $stateRoot = Join-Path $env:GITHUB_WORKSPACE 'test-results/windows-native'
+          New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
+          $env:TEMP = $stateRoot
+          $env:TMP = $stateRoot
+          $env:PYTHONDONTWRITEBYTECODE = '1'
+          Get-Command pwsh -ErrorAction Stop | Out-Null
+          $tests = @(
+            'tests/test_vmware_cleanup.py'
+            'tests/test_vmware_hostname_limit.py'
+            'tests/test_photon_image.py::test_photon_kickstart_generator_is_canonical_and_provider_specific'
+            'tests/test_photon_image.py::test_vmware_workstation_build_monitor_behavior'
+            'tests/test_photon_image.py::test_vmware_workstation_address_readiness_behavior'
+            'tests/test_photon_image.py::test_vmware_source_snapshot_resists_during_packer_checkout_changes'
+            'tests/test_photon_image.py::test_vmware_photon_build_state_stays_under_task_repository'
+            'tests/test_photon_image.py::test_vmware_deploy_wheel_remote_path_contract'
+            'tests/test_photon_image.py::test_vmware_normal_test_vm_development_ca_bridge_contract'
+            'tests/test_onepassword_photon_build_credentials.py::test_shared_credential_bridge_explicit_and_fail_closed_cases'
+            'tests/test_onepassword_photon_build_credentials.py::test_supported_credential_bridge_reset_contract'
+            'tests/test_onepassword_service_account.py::test_dpapi_setup_rotation_acl_and_child_environment_isolation'
+          )
+          python -B -m pytest @tests --basetemp "$stateRoot/pytest"
       - name: Verify native Windows refresh process admission
         shell: pwsh
         run: |

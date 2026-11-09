@@ -16,6 +16,8 @@ from pathlib import Path
 
 import pytest
 
+requires_windows_image_fixture = pytest.mark.skipif(os.name != "nt", reason="Windows image-build and Workstation fixtures")
+
 
 def load_lifecycle_runner():
     """Return lifecycle runner."""
@@ -792,6 +794,7 @@ def test_wsl_build_module_behavior():
     assert "Atlaso WSL build module behavior tests passed." in result.stdout
 
 
+@requires_windows_image_fixture
 def test_photon_kickstart_generator_is_canonical_and_provider_specific(tmp_path):
     """Verify the canonical portable Photon kickstart contract.
 
@@ -925,6 +928,7 @@ def test_photon_kickstart_generator_is_canonical_and_provider_specific(tmp_path)
     assert "/usr/local/sbin/atlaso-finalize-image-build" not in provision
 
 
+@requires_windows_image_fixture
 def test_vmware_workstation_build_monitor_behavior(tmp_path):
     """Verify bounded sanitized monitoring across VMware builder startup phases.
 
@@ -959,6 +963,7 @@ def test_vmware_workstation_build_monitor_behavior(tmp_path):
     assert "generated-vnc-test-secret" not in result.stderr
 
 
+@requires_windows_image_fixture
 def test_vmware_workstation_address_readiness_behavior(tmp_path):
     """Verify duplicate static addresses and wrong host neighbors fail closed.
 
@@ -2186,6 +2191,7 @@ def test_vmware_release_snapshot_preserves_attached_or_detached_identity() -> No
     assert "branch --show-current)).Trim()" not in snapshot_recheck
 
 
+@requires_windows_image_fixture
 def test_vmware_source_snapshot_resists_during_packer_checkout_changes(
     tmp_path: Path,
 ) -> None:
@@ -2226,6 +2232,7 @@ def test_vmware_source_snapshot_resists_during_packer_checkout_changes(
     assert "Atlaso immutable source snapshot tests passed." in result.stdout
 
 
+@requires_windows_image_fixture
 def test_vmware_photon_build_state_stays_under_task_repository() -> None:
     """Credential, Packer, cleanup, and reservation state stay task-local."""
     pwsh = shutil.which("pwsh")
@@ -3296,6 +3303,7 @@ def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
     assert "../../docs/reference/full-technical-reference.md#vmware-workstation-workflow" in image_password_docs
 
 
+@requires_windows_image_fixture
 def test_vmware_deploy_wheel_remote_path_contract():
     """Verify both SSH modes reject unsafe remote staging paths before deployment."""
     pwsh = shutil.which("pwsh")
@@ -3350,6 +3358,7 @@ def test_vmware_deploy_wheel_onepassword_bridge_contract():
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+@requires_windows_image_fixture
 def test_vmware_normal_test_vm_development_ca_bridge_contract():
     """Verify normal test VM shared-CA defaults and fail-closed boundaries."""
     pwsh = shutil.which("pwsh")
