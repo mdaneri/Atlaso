@@ -1294,6 +1294,11 @@ with those same identities and the recorded `-Purpose` when it differs from the 
 plan as evidence before removal. These paths reuse `Atlaso.WorkstationCleanup.psm1`; do not replace them with raw
 provider deletion or recursive filesystem commands.
 
+Keep the original `plan.json` and `vmware-identity.json` together. Cleanup checks the `ClientA` role against the
+recorded plan. Ordinary runs use `client-a`. Certificate DHCP-peer and NTP cold-start runs both use
+`certificate-dhcp-peer` in their original identity records. Use `-WhatIf` with the recorded lab identity to check
+that cleanup accepts the evidence before removing the VMs.
+
 VM-only cleanup deliberately leaves the lab result root, including `plan.json`, `vmware-identity.json`, and logs.
 Before releasing that root, preserve sanitized validation and ownership evidence outside it, independently bind the
 absolute root to the originating task and recorded lab manifest, verify no VMX remains, and verify all lab helpers
