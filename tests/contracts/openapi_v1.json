@@ -10870,7 +10870,7 @@
         ]
       },
       "post": {
-        "description": "Create Api Token.\n\nRequires the `read:dashboard` API scope. An omitted expiration uses the current maximum API\ntoken lifetime from Appliance Settings. An explicit expiration must be timezone-aware, in the\nfuture, and no later than that current maximum. The selected absolute expiration is immutable\nwhen the policy changes later. The operation changes Atlaso application state immediately and\nreturns the plaintext bearer token only once.",
+        "description": "Create Api Token.\n\nRequires the `admin:all` API scope. Restricted bearer tokens cannot issue another token,\nincluding one with equal or narrower scopes. Use password-authenticated API login or the\nauthenticated management UI to create a token without administrator bearer authority.\nRequested scopes must remain within the owner's current roles. An omitted expiration uses the\ncurrent maximum API token lifetime from Appliance Settings. An explicit expiration must be\ntimezone-aware, in the future, and no later than that current maximum. The selected absolute expiration is immutable\nwhen the policy changes later. The operation changes Atlaso application state immediately and\nreturns the plaintext bearer token only once.",
         "operationId": "createApiToken",
         "requestBody": {
           "content": {
@@ -10892,6 +10892,16 @@
               }
             },
             "description": "Create Api Token. The response body matches the documented success schema."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The bearer token lacks admin:all, or requested scopes exceed the owner's current roles."
           },
           "422": {
             "content": {
