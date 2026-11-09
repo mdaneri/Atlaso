@@ -3238,6 +3238,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#isolate-shared-test-stubs" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Isolate shared test stubs
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#implementation-comments" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4209,6 +4220,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#isolate-shared-test-stubs" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Isolate shared test stubs
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#implementation-comments" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4398,6 +4420,10 @@ uses PEP 257 docstrings with Google-style sections where a summary alone cannot 
 </span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="sd">        HostExistsError: If a host with the same identity already exists.</span>
 </span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="sd">    &quot;&quot;&quot;</span>
 </span></code></pre></div>
+<h2 id="isolate-shared-test-stubs">Isolate shared test stubs<a class="headerlink" href="#isolate-shared-test-stubs" title="Permanent link">&para;</a></h2>
+<p>Use pytest's <code>monkeypatch.setattr</code> for attributes on shared modules such as <code>shutil.which</code>. Pytest restores
+the resolver after the test, so later cases can still discover native commands. Use <code>monkeypatch.context()</code>
+when a test needs to verify restoration before it returns.</p>
 <h2 id="implementation-comments">Implementation comments<a class="headerlink" href="#implementation-comments" title="Permanent link">&para;</a></h2>
 <p>Use <code>#</code> comments for rationale that cannot be made clear through naming or structure. Good subjects include protocol
 requirements, platform compatibility, security decisions, unusual limits, race prevention, lifecycle ordering, and
