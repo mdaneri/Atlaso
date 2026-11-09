@@ -19,6 +19,7 @@ from atlaso.app.schemas import (
     ApiTokenCreated,
     ApiTokenResponse,
     IdentityResponse,
+    ProblemDetails,
 )
 from atlaso.app.security import Identity, require_scope
 from atlaso.app.token_service import create_token_for_user, token_to_response
@@ -91,18 +92,27 @@ def build_router() -> IdentityApiRouter:
         status_code=201,
         tags=["API Tokens"],
         operation_id="createApiToken",
+        responses={
+            403: {
+                "model": ProblemDetails,
+                "description": "The bearer token lacks admin:all, or requested scopes exceed the owner's current roles.",
+            },
+        },
     )
     def create_api_token(
         payload: ApiTokenCreate,
-        identity: Annotated[Identity, Depends(require_scope("read:dashboard"))],
+        identity: Annotated[Identity, Depends(require_scope("admin:all"))],
         db: Session = Depends(get_db),
         settings: Settings = Depends(get_settings),
     ) -> ApiTokenCreated:
         """Create Api Token.
 
-        Requires the `read:dashboard` API scope. An omitted expiration uses the current maximum API
-        token lifetime from Appliance Settings. An explicit expiration must be timezone-aware, in the
-        future, and no later than that current maximum. The selected absolute expiration is immutable
+        Requires the `admin:all` API scope. Restricted bearer tokens cannot issue another token,
+        including one with equal or narrower scopes. Use password-authenticated API login or the
+        authenticated management UI to create a token without administrator bearer authority.
+        Requested scopes must remain within the owner's current roles. An omitted expiration uses the
+        current maximum API token lifetime from Appliance Settings. An explicit expiration must be
+        timezone-aware, in the future, and no later than that current maximum. The selected absolute expiration is immutable
         when the policy changes later. The operation changes Atlaso application state immediately and
         returns the plaintext bearer token only once.
 
