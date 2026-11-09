@@ -220,7 +220,7 @@ def observe_dhcp_baseline(peer, appliance, fixture: dict, address: str, mac: str
         "port=0", "interface=eth1", "bind-interfaces", "except-interface=eth0",
         f"dhcp-range={network.network.network_address},static,{network.network.netmask},12h",
         f"dhcp-host={canonical_mac},{lease_address},12h", "dhcp-leasefile=/var/lib/misc/dnsmasq.leases",
-        "dhcp-authoritative",
+        "dhcp-authoritative", "dhcp-option=option:router",
     ]
     config = peer.command("cat /etc/dnsmasq.conf").decode("utf-8")
     if config.splitlines() != expected_config or "started" not in peer.command("rc-service dnsmasq status").decode("utf-8"):

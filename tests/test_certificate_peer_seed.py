@@ -78,6 +78,9 @@ ConvertTo-Json -InputObject @($seedArguments) -Compress
         iso.close()
     assert "open-vm-tools-vix" in rendered["packages"]
     assert "open-vm-tools-timesync" not in rendered["packages"]
+    dhcp_config = next(row["content"] for row in rendered["write_files"]
+                       if row["path"] == "/usr/local/etc/atlaso-certificate-peer.conf")
+    assert dhcp_config.splitlines().count("dhcp-option=option:router") == 1
     retained = next(row["content"] for row in rendered["write_files"]
                     if row["path"] == "/etc/cloud/cloud.cfg.d/99-atlaso-certificate-retained-peer.cfg")
     assert yaml.safe_load(retained)["manual_cache_clean"] is True

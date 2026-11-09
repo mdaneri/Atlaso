@@ -137,6 +137,8 @@ def peer_files(args: argparse.Namespace) -> dict[str, str]:
         "dhcp-leasefile=/var/lib/misc/dnsmasq.leases\n"
         "dhcp-authoritative\n"
     )
+    if getattr(args, "no_dhcp_router", False):
+        dnsmasq += "dhcp-option=option:router\n"
     extra_packages = ""
     extra_write_files = ""
     extra_commands = ""
@@ -310,6 +312,9 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ntp-probe-cidr")
     parser.add_argument("--instance-id")
     parser.add_argument("--retain-instance-cache", action="store_true")
+    parser.add_argument(
+        "--no-dhcp-router", action="store_true", help="Omit the default router from the private lease."
+    )
     return parser
 
 

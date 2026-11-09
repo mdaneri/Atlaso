@@ -541,8 +541,11 @@ def read_native(plan: dict, fixture: dict, peer: PinnedPeerTransport, appliance:
         f"dhcp-host={mac},{dhcp},12h", "dhcp-leasefile=/var/lib/misc/dnsmasq.leases",
         "dhcp-authoritative",
     ]
+    allowed_configs = [expected_config + ["dhcp-option=option:router"]]
+    if mode == "static":
+        allowed_configs.append(expected_config)
     config = peer.command("cat /etc/dnsmasq.conf").decode("utf-8")
-    if config.splitlines() != expected_config:
+    if config.splitlines() not in allowed_configs:
         raise Refusal("peer_static_only_dhcp_changed")
     if "started" not in peer.command("rc-service dnsmasq status").decode("utf-8"):
         raise Refusal("peer_dhcp_daemon_inactive")

@@ -348,7 +348,7 @@ try {
     $seedArguments = @('--output', $seedPath, '--hostname', $validation.peer_hostname, '--user', $validation.peer_user,
         '--public-key', $publicKey, '--server-cidr', $validation.server_cidr, '--lease-address', $validation.lease_address,
         '--client-mac', $validation.appliance_mac, '--publish-host-key-to-serial', '--instance-id', $context.InvocationId,
-        '--serve-ntp', '--vmware-vix', '--retain-instance-cache')
+        '--serve-ntp', '--vmware-vix', '--retain-instance-cache', '--no-dhcp-router')
     foreach ($address in $validation.management_addresses) { $seedArguments += @('--management-address', $address) }
     $null = Invoke-CertificatePeerPython -Root $root -Code `
         'import runpy; from pathlib import Path; entry=Path(sys.path[0])/"scripts/interop/create_certificate_peer_seed_iso.py"; sys.path.insert(0,str(entry.parent)); sys.argv=[str(entry),*sys.argv[1:]]; runpy.run_path(str(entry),run_name="__main__")' `

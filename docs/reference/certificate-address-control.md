@@ -222,6 +222,7 @@ It installs the existing GuestInfo/VIX profile and restarts Tools before publish
 address and graceful-power operations can use the installed plugins. The unique NoCloud instance cache is retained
 across seed retirement; the original SSH keys, interface configuration and successful cloud-init state must survive
 the separate seed-removal restart.
+The peer's DHCP reservation suppresses the router option. The appliance retains only its on-link management route.
 The peer VMX declares UTF-8 for the supported offline ISO seed-retirement tools.
 The LAN receipt binds the verified configured worktree root, which contains the appliance and peer outputs;
 the original receipt remains outside both VM removal scopes.

@@ -18,12 +18,14 @@ import certificate_peer_proof as proof  # noqa: E402 - Local interop script impo
 class FakePeer:
     """Return only bounded network readbacks used by the proof."""
 
-    def __init__(self, *, wrong_lease: bool = False):
+    def __init__(self, *, wrong_lease: bool = False, no_dhcp_router: bool = False):
         """Initialize the validated client or test double.
 
         Args:
-            wrong_lease: Wrong lease used by this operation."""
+            wrong_lease: Wrong lease used by this operation.
+            no_dhcp_router: Suppress the default router in the reservation."""
         self.wrong_lease = wrong_lease
+        self.no_dhcp_router = no_dhcp_router
 
     def command(self, command: str) -> bytes:
         """Handle command for certificate handoff verification.
@@ -31,12 +33,15 @@ class FakePeer:
         Args:
             command: Command to execute on the pinned peer."""
         if command == "cat /etc/dnsmasq.conf":
-            return (
+            config = (
                 "port=0\ninterface=eth1\nbind-interfaces\nexcept-interface=eth0\n"
                 "dhcp-range=192.168.77.0,static,255.255.255.0,12h\n"
                 "dhcp-host=00:50:56:aa:bb:cc,192.168.77.10,12h\n"
                 "dhcp-leasefile=/var/lib/misc/dnsmasq.leases\ndhcp-authoritative\n"
-            ).encode()
+            )
+            if self.no_dhcp_router:
+                config += "dhcp-option=option:router\n"
+            return config.encode()
         if command == "rc-service dnsmasq status":
             return b"dnsmasq is started"
         if command == "ip -j -4 addr show dev eth1":
@@ -248,10 +253,12 @@ def test_read_native_observes_dhcp_management_baseline_without_static_rewire(
     monkeypatch.setattr(proof, "PeerHTTPSConnection", HTTPS)
     if route_fault:
         with pytest.raises(proof.Refusal, match="appliance_eth0_route_missing|appliance_dhcp_default_route_present|appliance_management_"):
-            proof.read_native(plan, fixture, FakePeer(), Appliance())
+            proof.read_native(plan, fixture, FakePeer(no_dhcp_router=True), Appliance())
         return
 
-    result = proof.read_native(plan, fixture, FakePeer(), Appliance())
+    with pytest.raises(proof.Refusal, match="peer_static_only_dhcp_changed"):
+        proof.read_native(plan, fixture, FakePeer(), Appliance())
+    result = proof.read_native(plan, fixture, FakePeer(no_dhcp_router=True), Appliance())
 
     assert result["phase"] == "dhcp-baseline-preflight"
     assert result["ordinary_ca_baseline_mode"] == "dhcp"
