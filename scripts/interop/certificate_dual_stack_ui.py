@@ -25,7 +25,8 @@ from scripts.interop.certificate_dual_stack_guest import (
 )
 
 PROTECTED = frozenset({"network", "ca", "firewall", "appliance_settings", "public_services"})
-ALLOWED_UNITS = PROTECTED | {"dnsmasq"}
+ALLOWED_ROOTS = PROTECTED | {"dnsmasq"}
+ALLOWED_UNITS = ALLOWED_ROOTS | {"nat"}
 FIELDS = (
     "role", "mode", "ipv4_method", "ip_cidr", "gateway", "ipv6_enabled",
     "ipv6_cidr", "ipv6_gateway", "mtu", "admin_state",
@@ -286,7 +287,7 @@ def validate_public_apply_review(review: dict[str, Any]) -> None:
             or not isinstance(review["requested_units"], list)
             or not all(isinstance(item, str) for item in review["requested_units"])
             or len(review["requested_units"]) != len(set(review["requested_units"]))
-            or not PROTECTED <= set(review["requested_units"]) <= ALLOWED_UNITS
+            or not PROTECTED <= set(review["requested_units"]) <= ALLOWED_ROOTS
             or not isinstance(review["units"], list) or not review["units"]):
         raise GuestRefusal("complete_public_review_required")
     selected: set[str] = set()
@@ -307,6 +308,8 @@ def validate_public_apply_review(review: dict[str, Any]) -> None:
             raise GuestRefusal("complete_public_review_required")
         changed += int(unit["changed"])
         if not unit["selected"]:
+            if unit["id"] == "nat":
+                raise GuestRefusal("traffic_publishing_dependency_required")
             if unit["changed"]:
                 raise GuestRefusal("unselected_pending_unit")
             continue
@@ -323,6 +326,8 @@ def validate_public_apply_review(review: dict[str, Any]) -> None:
                 or not isinstance(unit["snapshot_hash"], str)
                 or re.fullmatch(r"[0-9a-f]{64}", unit["snapshot_hash"]) is None):
             raise GuestRefusal("complete_public_review_required")
+        if unit["id"] == "nat" and (unit["required_dependency"] is not True or not unit["dependency_reason"]):
+            raise GuestRefusal("traffic_publishing_dependency_required")
         candidate = [unit[key] for key in ("network_candidate_preview", "network_candidate_diff", "network_candidate_valid")]
         if (candidate != [None, None, None]
                 and not (isinstance(candidate[0], str) and isinstance(candidate[1], str) and candidate[2] is True)):
@@ -339,7 +344,7 @@ def prepare_review(client: UIClient, roots: list[str]) -> tuple[dict[str, Any], 
         client: Admitted authenticated UI session.
         roots: Explicit admitted roots; all five protected units are mandatory.
     """
-    if len(roots) != len(set(roots)) or not PROTECTED.issubset(roots) or not set(roots) <= ALLOWED_UNITS:
+    if len(roots) != len(set(roots)) or not PROTECTED.issubset(roots) or not set(roots) <= ALLOWED_ROOTS:
         raise GuestRefusal("protected_apply_roots_required")
     path = "/ui/management/appliance-apply/review?" + urllib.parse.urlencode(
         [("selected_units", unit) for unit in roots]

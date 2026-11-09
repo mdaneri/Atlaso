@@ -54,8 +54,10 @@ test-only driver. They do not provide an admitted end-to-end native command or e
 - Numeric TLS connections verify the original CA, numeric IP SAN and independently observed console leaf, with no
   DNS, proxy, redirect or insecure fallback. A peer TCP refusal remains an observation requiring separate complete
   native absence and positive-path evidence; a timeout is unknown.
-- Desired interface Save and the full server-expanded five-unit protected Apply use the existing normal UI
-  endpoints. An acknowledged durable public intent precedes the single POST. The original returned job receipt
+- Desired interface Save and the full server-expanded protected Apply use the existing normal UI endpoints.
+  The review retains the five protected roots and the complete Traffic Publishing row when the server selects it
+  as a required dependency. Traffic Publishing stays outside the explicit root list. The controller reviews the
+  expanded scope and acknowledges the durable public intent before the single POST. The original returned job receipt
   requires its own durable acknowledgement before any separate status read. The read derives the canonical
   management Tasks path from the validated original job ID; the server-returned URL remains unchanged in the original
   receipt and status evidence. Redirects remain refusals. Unknown outcomes never trigger resubmission, cancellation

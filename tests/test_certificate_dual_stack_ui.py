@@ -257,6 +257,50 @@ def test_server_root_order_is_retained_without_changing_consent() -> None:
     assert [value for key, value in fields if key == "requested_units"] == review["requested_units"]
 
 
+@pytest.mark.parametrize("change", ["explicit_root", "unselected", "not_required", "missing_reason", "invalid_hash"])
+def test_traffic_publishing_is_only_a_complete_server_dependency(change: str) -> None:
+    """Refuse Traffic Publishing outside the documented implicit dependency shape.
+
+    Args:
+        change: Unsupported root, dependency, or validation shape.
+    """
+    review = review_fixture()
+    dependency = {
+        **review["units"][0], "id": "nat", "label": "Traffic Publishing", "changed": False,
+        "required_dependency": True, "dependency_reason": "Replay after Network changes.",
+    }
+    review["units"].append(dependency)
+    review["execution_count"] += 1
+    roots = sorted(ui.PROTECTED)
+    if change == "explicit_root":
+        roots.append("nat")
+        review["requested_units"].append("nat")
+    elif change == "unselected":
+        dependency["selected"] = False
+        review["execution_count"] -= 1
+    elif change == "not_required":
+        dependency["required_dependency"] = False
+    elif change == "missing_reason":
+        dependency["dependency_reason"] = ""
+    else:
+        dependency["snapshot_hash"] = ""
+
+    client = FakeClient(review)
+    with pytest.raises(GuestRefusal):
+        ui.submit_once(client, roots, lambda *_args: pytest.fail("Unexpected checkpoint"))
+    assert all(form is None for _, form in client.requests)
+    if change == "explicit_root":
+        assert client.requests == []
+
+    public = {key: value for key, value in review.items() if key != "plan_token"}
+    if not dependency["selected"]:
+        public["units"] = [*review["units"][:-1], {
+            key: dependency[key] for key in ("id", "label", "changed", "valid", "selected")
+        }]
+    with pytest.raises(GuestRefusal):
+        ui.validate_public_apply_review(public)
+
+
 @pytest.mark.parametrize("secret", ["private-admin-sentinel", "private-csrf-sentinel", "private-plan-token-sentinel", "-----BEGIN PRIVATE KEY-----", "https://user:password@example.test/"])
 def test_selected_preview_cannot_publish_private_material(secret: str) -> None:
     """Never place a private key, credential URL or known session value in a checkpoint.
