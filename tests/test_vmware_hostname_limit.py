@@ -2,11 +2,13 @@
 
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows Workstation hostname fixture")
 def test_vmware_hostname_limit_before_clone(tmp_path: Path) -> None:
     """Keep generated identities observable and refuse oversized overrides before cloning.
 

@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+requires_windows_bridge = pytest.mark.skipif(os.name != "nt", reason="Windows credential bridge fixture")
+
 
 def _embedded_child(path: str) -> str:
     """Return the embedded isolated Python SDK child from a PowerShell helper.
@@ -423,6 +425,7 @@ def test_omitted_nonsecret_sdk_selectors_are_discovered_fail_closed() -> None:
     )
 
 
+@requires_windows_bridge
 def test_shared_credential_bridge_explicit_and_fail_closed_cases() -> None:
     """Run real DPAPI explicit, invalid, partial, and caller-environment cases."""
     pwsh = shutil.which("pwsh")
@@ -450,6 +453,7 @@ def test_shared_credential_bridge_explicit_and_fail_closed_cases() -> None:
     assert "caller-root-must-not-be-used" not in result.stdout + result.stderr
 
 
+@requires_windows_bridge
 def test_supported_credential_bridge_reset_contract(tmp_path: Path) -> None:
     """Run live Windows reset, fail-closed, interruption, and idempotency cases.
 

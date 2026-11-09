@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.skipif(os.name != "nt", reason="Workstation cleanup uses Windows filesystem APIs")
+
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 VMWARE_SCRIPT_ROOT = REPOSITORY_ROOT / "scripts" / "windows" / "vmware"
 
