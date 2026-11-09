@@ -1,5 +1,9 @@
 """Test extracted current-identity and API-token transports."""
 
+import pytest
+
+from atlaso.app.database import SessionLocal
+from atlaso.app.models import ApiToken, AuditEvent, User
 from tests.routers.api_v1.helpers import create_token
 
 
@@ -80,3 +84,78 @@ def test_revoked_token_is_rejected(client):
         "/api/v1/dashboard", headers={"Authorization": f"Bearer {token}"}
     )
     assert response.status_code == 401
+
+
+@pytest.mark.parametrize(
+    "caller_scopes, requested_scopes",
+    [
+        (["read:dashboard"], ["admin:all"]),
+        (["read:dashboard", "write:wan"], ["write:services"]),
+        (["read:dashboard"], ["read:dashboard"]),
+        (["read:dashboard"], []),
+    ],
+)
+def test_restricted_bearer_cannot_issue_tokens(client, caller_scopes, requested_scopes):
+    """Deny new credentials from restricted bearers before token or audit creation.
+
+    Args:
+        client: Isolated HTTP client exercising the real issuance dependency.
+        caller_scopes: Permissions granted to the administrator-owned caller token.
+        requested_scopes: Broader, equal, or empty permissions requested for a child.
+    """
+    token, _metadata = create_token(client, scopes=caller_scopes)
+    with SessionLocal() as db:
+        token_count = db.query(ApiToken).count()
+        audit_count = db.query(AuditEvent).filter_by(action="create_api_token").count()
+
+    response = client.post(
+        "/api/v1/api-tokens",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"name": "delegation-denied", "scopes": requested_scopes},
+    )
+
+    assert response.status_code == 403
+    with SessionLocal() as db:
+        assert db.query(ApiToken).count() == token_count
+        assert db.query(AuditEvent).filter_by(action="create_api_token").count() == audit_count
+
+
+def test_admin_bearer_can_issue_a_usable_scoped_token(client):
+    """Preserve explicit administrator issuance and the resulting scope limits.
+
+    Args:
+        client: Isolated HTTP client exercising token creation and authentication.
+    """
+    token, _metadata = create_token(client, scopes=["admin:all"])
+    response = client.post(
+        "/api/v1/api-tokens",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"name": "authorized-integration", "scopes": ["read:dashboard"]},
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["token"]["scopes"] == ["read:dashboard"]
+    assert "raw_token" not in body["token"]
+    child_headers = {"Authorization": f"Bearer {body['raw_token']}"}
+    assert client.get("/api/v1/dashboard", headers=child_headers).status_code == 200
+    assert client.get("/api/v1/monitor", headers=child_headers).status_code == 403
+
+
+def test_admin_bearer_issuance_keeps_current_owner_role_ceiling(client):
+    """Retain the shared service's current role check after transport admission.
+
+    Args:
+        client: Isolated HTTP client with a role change after credential issuance.
+    """
+    token, _metadata = create_token(client, scopes=["admin:all"])
+    with SessionLocal() as db:
+        user = db.query(User).filter_by(username="admin").one()
+        user.role = "viewer"
+        user.roles_json = '["viewer"]'
+        db.commit()
+    response = client.post(
+        "/api/v1/api-tokens",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"name": "role-ceiling-denied", "scopes": ["admin:all"]},
+    )
+    assert response.status_code == 403
