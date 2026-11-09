@@ -404,8 +404,8 @@ the most recently updated DNS-bearing source as a migration fallback.
 If another Appliance Settings field differs from its baseline, that unit remains pending after a successful handoff so
 the full hostname, resolver, SSH, Web Terminal trust, and telemetry apply remains pending. A staged resolver-mode or
 server change is part of the successful handoff's Appliance Settings baseline when all unrelated settings already
-match, but is not baseline-committed when another unrelated setting also differs. Rollback restores the snapshotted
-networkd resolver directives, reverts the candidate link's transient
+match. The same rule covers the CA trust path added or removed by a management HTTPS toggle. Rollback restores the
+snapshotted networkd resolver directives, reverts the candidate link's transient
 resolver override, and reconfigures the restored links before checking the previous listener.
 
 Readiness is fail-closed and bounded. Every host-facing probe includes the previous or candidate configured public port.

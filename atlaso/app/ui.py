@@ -809,6 +809,7 @@ MANAGEMENT_HANDOFF_APPLIANCE_SETTINGS_KEYS = {
     "management_https_enabled",
     "management_https_cert_path",
     "management_https_key_path",
+    "management_https_ca_path",
     "web_terminal_interfaces",
     "web_terminal_addresses",
 }
@@ -11166,8 +11167,10 @@ def management_handoff_completes_appliance_settings(
     if not previous or not current:
         return False
     for key in MANAGEMENT_HANDOFF_APPLIANCE_SETTINGS_KEYS:
-        if key in previous or key in current:
-            previous[key] = current.get(key)
+        if key in current:
+            previous[key] = current[key]
+        else:
+            previous.pop(key, None)
     return previous == current
 
 
