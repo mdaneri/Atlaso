@@ -3571,6 +3571,17 @@ def test_lifecycle_cleanup_preview_checks_client_role_against_plan(tmp_path, mod
         encoding="utf-8",
     )
     original_files = {path: path.read_bytes() for path in lab.rglob("*") if path.is_file()}
+    # Capture the exception message before PowerShell applies terminal formatting.
+    preview = tmp_path / "preview.ps1"
+    preview.write_text(
+        "try {\n"
+        "    & $args[0] -PullRequestNumber 871 -CollisionSuffix test -VmrunPath $args[1] -WhatIf\n"
+        "} catch {\n"
+        "    [Console]::Error.WriteLine($_.Exception.Message)\n"
+        "    exit 1\n"
+        "}\n",
+        encoding="utf-8",
+    )
     try:
         result = subprocess.run(
             [
@@ -3578,14 +3589,9 @@ def test_lifecycle_cleanup_preview_checks_client_role_against_plan(tmp_path, mod
                 "-NoProfile",
                 "-NonInteractive",
                 "-File",
+                str(preview),
                 str(scripts / "remove-lifecycle-vms.ps1"),
-                "-PullRequestNumber",
-                "871",
-                "-CollisionSuffix",
-                "test",
-                "-VmrunPath",
                 sys.executable,
-                "-WhatIf",
             ],
             check=False,
             capture_output=True,
