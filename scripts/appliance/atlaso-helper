@@ -16171,7 +16171,10 @@ def _handle_network(
         handoff_held_addresses: Keep exact old sources selected until WAN is ready.
     """
     try:
-        lock = (_network_transaction_lock(wait_seconds=10 if action == "acknowledge" else 0)
+        # The observer can already hold admission while collecting bounded native
+        # evidence, before it sees this Apply and yields. Wait only for acquisition.
+        wait_seconds = {"apply": 30, "acknowledge": 10}.get(action, 0)
+        lock = (_network_transaction_lock(wait_seconds=wait_seconds)
                 if action in {"apply", "recover", "acknowledge"} else nullcontext())
         with lock:
             return _handle_network_locked(

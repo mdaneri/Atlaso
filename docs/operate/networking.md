@@ -100,6 +100,9 @@ evidence; the normal TLS certificate-coverage and readiness checks still apply.
 Before recovering an interrupted front-door activation, the observer checks for pending or running Apply jobs under
 writer admission and retains that admission through recovery. A live Settings Apply keeps its candidate files and
 rollback journal; the observer defers until the Apply job is terminal.
+Network Apply can wait up to 30 seconds for the native transaction lock if the observer is already collecting
+addresses. Ordinary and paired Apply acquire the same lock before mutation. If the lock stays busy, Apply fails
+before entering the Network mutation handler.
 When changing static management to DHCP, the temporary networkd holdover retains the link-local address families
 required by both the previous and candidate configurations. The previous policy cannot disable newly enabled IPv4LL
 or IPv6 during readiness. Successful retirement removes the temporary holdover and leaves the candidate's final policy.
