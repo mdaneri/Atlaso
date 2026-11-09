@@ -764,7 +764,10 @@ reason, and retry condition and preserve it; uncertainty is neither cleanup auth
 retention. A terminal failed run does not waive any branch/worktree completion gate.
 
 The trusted-host bootstrap and proof wrappers admit the original ISO and peer receipt kinds for the current task and
-PR, then repeat inventory, reservation, identity, and trust checks before obtaining guest credentials. Receipts from
+PR, then repeat inventory, reservation, identity, and trust checks before obtaining guest credentials. The standalone
+peer fixture binds the LAN receipt at its original path under the configured Codex worktree root's `lan-segments`
+directory. Keep the plan, public CA, and byte-identical copies of its direct receipt inputs under `test-results`.
+Keep original paths in selectors that compare the factory or installer's recorded paths. Receipts from
 the older PR #871 independent-control path remain bound to that task and cannot be relabeled. Use the
 [VMware lifecycle certificate section](vmware-workstation-lifecycle-testing.md#single-command-run) for the reviewed
 Git-blob entrypoint and bounded credential wrapper workflow.

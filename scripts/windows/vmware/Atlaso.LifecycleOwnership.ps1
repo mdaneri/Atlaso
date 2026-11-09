@@ -9,10 +9,12 @@ admitted Git objects before creating resources. No existing resource is adopted.
 <#
 .SYNOPSIS
 Resolve the exact active Codex worktree root without accepting a caller override.
+.PARAMETER PythonPath
+Python executable used to parse the active TOML configuration.
 #>
 function Get-AtlasoLifecycleDurableRoot {
     [OutputType([string])]
-    param()
+    param([string]$PythonPath = 'python')
 
     $codexDirectory = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path ([Environment]::GetFolderPath('UserProfile')) '.codex' }
     $configPath = Join-Path $codexDirectory 'config.toml'
@@ -35,7 +37,7 @@ root = desktop.get("git-worktree-root")
 assert isinstance(root, str) and root.strip(), "configure desktop.git-worktree-root"
 print(json.dumps(root))
 '@
-        $parsed = @($configuration | & python -I -S -c $parser 2>$null)
+        $parsed = @($configuration | & $PythonPath -I -S -B -c $parser 2>$null)
         if ($LASTEXITCODE -ne 0 -or $parsed.Count -ne 1) { throw 'Cannot resolve the active supported Codex worktree root.' }
         $configuredPath = $parsed[0] | ConvertFrom-Json
         if (-not [IO.Path]::IsPathFullyQualified($configuredPath)) { throw 'Configured worktree root must be absolute.' }

@@ -450,12 +450,15 @@ Pin the plan and receipt bytes used by a credentialed certificate inspector.
 Existing receipt-bound proof plan.
 .PARAMETER EvidenceRoot
 Original task-owned evidence root containing the plan and receipts.
+.PARAMETER PythonPath
+Pinned Python executable used to resolve the configured LAN receipt directory.
 #>
 function Protect-AtlasoCertificateProofInputs {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Plan,
-        [Parameter(Mandatory)][string]$EvidenceRoot
+        [Parameter(Mandatory)][string]$EvidenceRoot,
+        [string]$PythonPath
     )
 
     Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
@@ -488,20 +491,6 @@ function Protect-AtlasoCertificateProofInputs {
                 $references.Add($value)
             }
         }
-        $fixture = $planValue.PSObject.Properties['peer_fixture']
-        if ($null -ne $fixture -and $null -ne $fixture.Value) {
-            $fixturePath = [IO.Path]::GetFullPath([string]$fixture.Value.path)
-            if (-not $fixturePath.StartsWith($owned, [StringComparison]::OrdinalIgnoreCase)) {
-                throw 'Certificate peer fixture escapes the owned evidence root.'
-            }
-            $fixtureValue = Get-Content -LiteralPath $fixturePath -Raw | ConvertFrom-Json -ErrorAction Stop
-            if ($fixtureValue.lan_segment_receipt -and $fixtureValue.lan_segment_receipt_sha256) {
-                $references.Add([pscustomobject]@{
-                    path = $fixtureValue.lan_segment_receipt
-                    sha256 = $fixtureValue.lan_segment_receipt_sha256
-                })
-            }
-        }
         foreach ($reference in $references) {
             $path = [IO.Path]::GetFullPath([string]$reference.path)
             $digest = [string]$reference.sha256
@@ -514,6 +503,56 @@ function Protect-AtlasoCertificateProofInputs {
             $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($path, $true))
             if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $digest) {
                 throw 'Certificate proof receipt changed before credentialed admission.'
+            }
+        }
+        # Resolve the embedded LAN reference only after the fixture bytes are pinned
+        # and checked. All direct plan references remain inside the evidence root.
+        $fixture = $planValue.PSObject.Properties['peer_fixture']
+        if ($null -ne $fixture -and $null -ne $fixture.Value) {
+            if (-not $references.Contains($fixture.Value)) { throw 'Certificate peer fixture reference is invalid.' }
+            $fixtureValue = Get-Content -LiteralPath $fixture.Value.path -Raw | ConvertFrom-Json -ErrorAction Stop
+            $segmentPath = [string]$fixtureValue.lan_segment_receipt
+            $segmentDigest = [string]$fixtureValue.lan_segment_receipt_sha256
+            if ($segmentPath -or $segmentDigest) {
+                if (-not [IO.Path]::IsPathFullyQualified($segmentPath) -or $segmentDigest -cnotmatch '^[0-9a-f]{64}$') {
+                    throw 'Certificate proof receipt path or digest is invalid.'
+                }
+                $path = [IO.Path]::GetFullPath($segmentPath)
+                $external = -not $path.StartsWith($owned, [StringComparison]::OrdinalIgnoreCase)
+                if ($external) {
+                    if (-not $PythonPath -or -not $env:CODEX_THREAD_ID -or
+                        $planValue.trust_model -cne 'trusted-host' -or $planValue.task_id -cne $env:CODEX_THREAD_ID -or
+                        $fixtureValue.kind -cne 'certificate-dhcp-peer-fixture' -or
+                        $fixtureValue.task_id -cne $planValue.task_id -or $fixtureValue.repository -cne 'mdaneri/Atlaso' -or
+                        $fixtureValue.pr -cne $planValue.pr -or $planValue.trusted_host.segment_receipt.path -cne $segmentPath -or
+                        $planValue.trusted_host.segment_receipt.sha256 -cne $segmentDigest) {
+                        throw 'Original certificate LAN receipt selector is invalid.'
+                    }
+                    . (Join-Path $PSScriptRoot 'Atlaso.LifecycleOwnership.ps1')
+                    $labRoot = Get-AtlasoLifecycleDurableRoot -PythonPath $PythonPath
+                    $lanRoot = Join-Path $labRoot 'lan-segments'
+                    if ($path -cne $segmentPath -or [IO.Path]::GetDirectoryName($path) -ine $lanRoot -or
+                        [IO.Path]::GetFileName($path) -cnotmatch '^[0-9a-f]{32}\.json$') {
+                        throw 'Original certificate LAN receipt escapes its registered directory.'
+                    }
+                }
+                $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath(
+                    [IO.Path]::GetDirectoryName($path), $true))
+                $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($path, $true))
+                if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $segmentDigest) {
+                    throw 'Certificate proof receipt changed before credentialed admission.'
+                }
+                if ($external) {
+                    $segment = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -ErrorAction Stop
+                    if ($segment.schema -cne 1 -or $segment.task_id -cne $planValue.task_id -or
+                        $segment.repository -cne 'mdaneri/Atlaso' -or $segment.pr -cne $planValue.pr -or
+                        $segment.source_commit -cne $fixtureValue.source_commit -or $segment.lab_root -ine $labRoot -or
+                        $segment.creation_id -cne [IO.Path]::GetFileNameWithoutExtension($path) -or
+                        ('lan:' + $segment.name) -cne $fixtureValue.private_network -or
+                        $segment.pvn_id -cne $fixtureValue.lan_segment_id) {
+                        throw 'Original certificate LAN receipt binding is invalid.'
+                    }
+                }
             }
         }
         return $pins

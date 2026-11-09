@@ -80,6 +80,80 @@ try {
 } finally {
     foreach ($pin in $proofPins) { $pin.Dispose() }
 }
+# Standalone peer creation records its LAN outside test-results. Admit only
+# the original file selected by both the pinned fixture and trusted host.
+$configDirectory = Join-Path $OutputDirectory 'certificate-codex'
+$lanRoot = Join-Path $OutputDirectory 'lan-segments'
+$null = New-Item -ItemType Directory -Path $configDirectory, $lanRoot
+$lanId = 'c' * 32
+$originalLan = Join-Path $lanRoot ($lanId + '.json')
+[IO.File]::WriteAllText((Join-Path $configDirectory 'config.toml'),
+    "[desktop]`ngit-worktree-root = '$OutputDirectory'`n")
+$originalCodexHome = $env:CODEX_HOME
+$originalTaskId = $env:CODEX_THREAD_ID
+$env:CODEX_HOME = $configDirectory
+$env:CODEX_THREAD_ID = 'certificate-pin-task'
+try {
+    $lan = @{
+        schema = 1; task_id = $env:CODEX_THREAD_ID; repository = 'mdaneri/Atlaso'; pr = 1118
+        source_commit = 'b' * 40; lab_root = $OutputDirectory; creation_id = $lanId
+        name = 'task-private'; pvn_id = 'task-private-id'
+    }
+    $originalLanFixture = @{
+        kind = 'certificate-dhcp-peer-fixture'; task_id = $lan.task_id; repository = $lan.repository
+        pr = $lan.pr; source_commit = $lan.source_commit; private_network = 'lan:task-private'
+        lan_segment_id = $lan.pvn_id; lan_segment_receipt = $originalLan
+    }
+    $originalLanPlan = @{
+        ca_path = $caPath; trust_model = 'trusted-host'; task_id = $lan.task_id; pr = $lan.pr
+        peer_fixture = @{ path = (Join-Path $proofRoot 'original-lan-fixture.json') }
+        trusted_host = @{ segment_receipt = @{ path = $originalLan } }
+    }
+    $originalLanPlanPath = Join-Path $proofRoot 'original-lan-proof-plan.json'
+    $pinParameters = @{
+        Plan = $originalLanPlanPath; EvidenceRoot = $certificateEvidenceRoot
+        PythonPath = (Get-Command python -CommandType Application | Select-Object -First 1 -ExpandProperty Source)
+    }
+    foreach ($case in @('admit', 'mismatched-selector', 'wrong-owner', 'wrong-directory')) {
+        $lan.task_id = if ($case -eq 'wrong-owner') { 'another-task' } else { $env:CODEX_THREAD_ID }
+        $lanPath = if ($case -eq 'wrong-directory') { Join-Path $OutputDirectory ($lanId + '.json') } else { $originalLan }
+        [IO.File]::WriteAllText($lanPath, ($lan | ConvertTo-Json -Compress))
+        $originalLanFixture.lan_segment_receipt = $lanPath
+        $originalLanFixture.lan_segment_receipt_sha256 = (Get-FileHash -LiteralPath $lanPath).Hash.ToLowerInvariant()
+        $originalLanPlan.trusted_host.segment_receipt.path = $lanPath
+        $originalLanPlan.trusted_host.segment_receipt.sha256 = if ($case -eq 'mismatched-selector') {
+            'd' * 64
+        } else { $originalLanFixture.lan_segment_receipt_sha256 }
+        [IO.File]::WriteAllText($originalLanPlan.peer_fixture.path, ($originalLanFixture | ConvertTo-Json -Compress))
+        $originalLanPlan.peer_fixture.sha256 = (Get-FileHash -LiteralPath $originalLanPlan.peer_fixture.path).Hash.ToLowerInvariant()
+        [IO.File]::WriteAllText($originalLanPlanPath, ($originalLanPlan | ConvertTo-Json -Compress -Depth 5))
+        $proofPins = @()
+        try {
+            $failure = try { $proofPins = @(Protect-AtlasoCertificateProofInputs @pinParameters); '' }
+            catch { $_.Exception.Message }
+            $expected = switch ($case) {
+                'admit' { '' }
+                'mismatched-selector' { 'Original certificate LAN receipt selector is invalid.' }
+                'wrong-owner' { 'Original certificate LAN receipt binding is invalid.' }
+                'wrong-directory' { 'Original certificate LAN receipt escapes its registered directory.' }
+            }
+            if ($failure -cne $expected) { throw "Unexpected original LAN admission for ${case}: $failure" }
+            if ($case -eq 'admit') {
+                $blocked = $false
+                try {
+                    $write = [IO.File]::Open($lanPath, 'Open', 'Write', 'ReadWrite')
+                    $write.Dispose()
+                } catch [IO.IOException] { $blocked = $true }
+                if (-not $blocked) { throw 'The original LAN receipt was writable while pinned.' }
+            }
+        } finally {
+            foreach ($pin in $proofPins) { $pin.Dispose() }
+        }
+    }
+} finally {
+    $env:CODEX_HOME = $originalCodexHome
+    $env:CODEX_THREAD_ID = $originalTaskId
+}
 foreach ($name in @('inspect-certificate-peer.ps1', 'inspect-certificate-handoff.ps1')) {
     $wrapperPath = Join-Path $RepositoryRoot (Join-Path 'scripts/windows/vmware' $name)
     $parameters = @{
