@@ -96,6 +96,14 @@ server-managed SOA serial from its projections and digests. The digests bind can
 can detect observed changes between reads. The baseline carries data for the restoration journal and leaves
 runtime readiness, DNS zone and record verification, and write admission to their respective gates.
 
+The Windows restoration checkpoint journal separates capture intent, durable checkpoint, and successful capture.
+It publishes an exclusive intent before capture and uses the same creation handle for nonreplacing publication.
+After the writer closes, it verifies the final file identity and exact bytes through a retained read pin, then
+synchronizes directory metadata before acknowledgement. The same live controller requires the completed capture
+to return matching baseline data after the final reads. Uncertain attempts retain their files and block replay
+under that receiver. This path has synthetic coverage for the controller and Windows file operations. The
+production entry point refuses until a live controller, receiver, and capture transport are admitted.
+
 The credential terminal adapter deliberately refuses until the controller can prove the bounded SDK child has
 stopped before restoring terminal settings. A guest input deadline alone cannot provide that guarantee: remaining
 SDK keystrokes could reach a restored shell. The byte-reader tests exercise synthetic sentinel input only.

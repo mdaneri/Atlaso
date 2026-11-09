@@ -542,6 +542,17 @@ namespace Atlaso
                     throw new Win32Exception(Marshal.GetLastWin32Error());
             }
         }
+        public static string GetOrdinaryFileHandleIdentity(SafeFileHandle handle) {
+            ByHandleFileInformation information;
+            if (!GetFileInformationByHandle(handle, out information))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            if ((information.FileAttributes & (0x10 | 0x400)) != 0 || information.NumberOfLinks != 1)
+                throw new InvalidOperationException("Expected an ordinary single-identity file handle.");
+            return String.Format("{0:X8}:{1:X8}{2:X8}:{3:X8}{4:X8}",
+                information.VolumeSerialNumber, information.FileIndexHigh, information.FileIndexLow,
+                unchecked((uint)information.CreationTime.dwHighDateTime),
+                unchecked((uint)information.CreationTime.dwLowDateTime));
+        }
         public static string Get(string path)
         {
             using (SafeFileHandle handle = CreateFileW(
