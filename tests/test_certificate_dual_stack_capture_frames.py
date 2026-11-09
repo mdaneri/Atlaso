@@ -26,7 +26,11 @@ from scripts.interop.certificate_dual_stack_capture_frames import (
     FrameKind,
     parse_header,
 )
-from scripts.interop.certificate_dual_stack_guest import MAX_PUBLIC_BYTES, public_bytes
+from scripts.interop.certificate_dual_stack_guest import (
+    MAX_PUBLIC_BYTES,
+    GuestRefusal,
+    public_bytes,
+)
 from scripts.interop.certificate_dual_stack_restore import capture_restoration_baseline
 from tests.test_certificate_dual_stack_restore import _MAC, _PATHS, _Transport
 from tests.test_certificate_dual_stack_restore import dns_form as dns_form
@@ -577,33 +581,99 @@ def test_windows_data_reader_refuses_bad_progress_or_expiry(windows_frame_pwsh: 
     ]
 
 
-def test_exchange_wraps_the_original_stage1_callback_and_final_return(dns_form: str) -> None:
-    """Keep durable acknowledgement separate from the normal final-read return.
+@pytest.mark.parametrize(
+    "mode", ["success", "go-binding", "go-clock", "ack-receipt", "final-drift", "final-error"],
+)
+def test_exchange_wraps_the_original_stage1_callback_and_final_return(
+    dns_form: str, baseline: bytes, mode: str,
+) -> None:
+    """Require independent peer expectations before the Stage1 capture can complete.
 
     Args:
         dns_form: Rendered current normal DNS settings form.
+        baseline: Canonical DATA captured independently from the same synthetic inputs.
+        mode: The successful exchange or the one deliberately refused boundary.
     """
-    controller, child = started()
     ui = _Transport(dns_form)
-    checkpointed: list[bytes] = []
+    if mode == "final-drift":
+        ui.rows[2]["gateway"] = ""
+    elif mode == "final-error":
+        ui.status[8] = 500
 
-    def checkpoint(value: dict[str, Any]) -> None:
-        """Simulate a publisher acknowledging only the frozen canonical data.
+    peer_binding = CaptureBinding(
+        b"r" * 16, b"n" * 16, b"c" * 32, b"l" * 32, b"p" * 32, b"b" * 32, 2_000, 100, 20_000,
+    )
+    peer_go, peer_checkpoint, peer_ack, peer_complete = (
+        ClockSample(peer_binding.boot_sha256, 1_000 + offset, 100, 10_000 + offset * 10)
+        for offset in (0 if mode == "go-clock" else 1, 2, 5, 6)
+    )
+    receipt_prefix = b"synthetic checkpoint\n" + peer_binding.capture_intent_sha256
+    expected_receipt = receipt_prefix + baseline
+    expected_digest = hashlib.sha256(expected_receipt).digest()
+    substituted_digest = bytes([expected_digest[0] ^ 1]) + expected_digest[1:]
+    published: list[bytes] = []
+    decoded_acks: list[bytes] = []
+    completed: list[bytes] = []
 
-        Args:
-            value: Original callback's independent DATA copy.
+    def exchange() -> bytes:
+        """Run one original exchange with local endpoints and no recovery path.
+
+        Returns:
+            Provisional DATA after exact COMPLETE and synthetic EOF.
         """
-        assert ui.requests == [("GET", path) for path in _PATHS * 2]
-        checkpointed.append(controller.accept_checkpoint(child.checkpoint(public_bytes(value), clock(2)), clock(3)))
-        assert child.accept_ack(controller.acknowledge(_RECEIPT, clock(4)), clock(5)) == _RECEIPT
+        controller_binding = replace(_BINDING, run_id=b"x" * 16) if mode == "go-binding" else _BINDING
+        controller = CaptureControllerFrames(controller_binding)
+        child = CaptureChildFrames(peer_binding)
+        child.accept_go(controller.go(clock(1)), peer_go)
 
-    data = public_bytes(capture_restoration_baseline(ui.client, "eth1", _MAC, checkpoint))
-    assert ui.requests == [("GET", path) for path in _PATHS * 3]
-    assert checkpointed == [data]
-    controller.accept_complete(child.complete(data, clock(6)), clock(7))
-    assert controller.accept_eof(b"", clock(8)) == data
-    with pytest.raises(CaptureFrameRefusal, match="capture_phase_invalid"):
-        controller.accept_eof(b"", clock(9))
+        def checkpoint(value: dict[str, Any]) -> None:
+            """Release the original callback only after an independently matching receipt.
+
+            Args:
+                value: Original callback's independent DATA copy.
+            """
+            assert ui.requests == [("GET", path) for path in _PATHS * 2]
+            candidate = child.checkpoint(public_bytes(value), peer_checkpoint)
+            accepted = controller.accept_checkpoint(candidate, clock(3))
+            receipt = b"synthetic checkpoint\n" + controller_binding.capture_intent_sha256 + accepted
+            assert receipt == expected_receipt
+            published.append(receipt)
+            ack = controller.acknowledge(hashlib.sha256(receipt).digest(), clock(4))
+            if mode == "ack-receipt":
+                ack = ack[:-32] + substituted_digest
+            decoded = child.accept_ack(ack, peer_ack)
+            decoded_acks.append(decoded)
+            if decoded != expected_digest:
+                raise CaptureFrameRefusal("synthetic_checkpoint_receipt_differs")
+
+        data = public_bytes(capture_restoration_baseline(ui.client, "eth1", _MAC, checkpoint))
+        assert ui.requests == [("GET", path) for path in _PATHS * 3]
+        complete = child.complete(data, peer_complete)
+        completed.append(complete)
+        controller.accept_complete(complete, clock(7))
+        provisional = controller.accept_eof(b"", clock(8))
+        with pytest.raises(CaptureFrameRefusal, match="capture_phase_invalid"):
+            controller.accept_eof(b"", clock(9))
+        return provisional
+
+    if mode in ("go-binding", "go-clock"):
+        with pytest.raises(CaptureFrameRefusal, match="^capture_go_invalid$"):
+            exchange()
+        assert not ui.requests
+        assert not published and not decoded_acks and not completed
+        return
+
+    if mode == "success":
+        assert exchange() == baseline
+        assert completed == [frame(FrameKind.COMPLETE, baseline)]
+    else:
+        with pytest.raises(GuestRefusal, match="^restoration_checkpoint_uncertain$"):
+            exchange()
+        assert completed == []
+    assert published == [expected_receipt]
+    # The mutated tail passes the frame-level ACK check but must not release the callback.
+    assert decoded_acks == [substituted_digest if mode == "ack-receipt" else expected_digest]
+    assert ui.requests == [("GET", path) for path in _PATHS * (2 if mode == "ack-receipt" else 3)]
 
 
 @pytest.mark.parametrize(("kind", "length"), [
