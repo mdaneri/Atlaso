@@ -101,15 +101,35 @@ catch {
     if ($_.Exception.Message -eq 'Overlapping capture-root admission unexpectedly succeeded.') { throw }
 }
 
+# The capture root lives beneath the pytest-owned fixture root, so the
+# fixture root itself is the ancestor conflict path this assertion can
+# actually exercise; pytest's temp directory is normally outside the
+# repository, so the repository root would not overlap at all.
 try {
     $null = Open-AtlasoInstallationCaptureRoot `
         -DirectoryPath $captureRootPath `
         -ExpectedIdentity $captureRootIdentity `
-        -ConflictPaths @($resolvedRepositoryRoot)
-    throw 'Source-root overlap admission unexpectedly succeeded.'
+        -ConflictPaths @($resolvedFixtureRoot)
+    throw 'Fixture-root overlap admission unexpectedly succeeded.'
 }
 catch {
-    if ($_.Exception.Message -eq 'Source-root overlap admission unexpectedly succeeded.') { throw }
+    if ($_.Exception.Message -eq 'Fixture-root overlap admission unexpectedly succeeded.') { throw }
+}
+
+# The descendant conflict path stays uncreated: creating it would make the
+# capture root nonempty, so a descendant-overlap regression could pass via the
+# unrelated emptiness check. The overlap comparison is purely prefix-based and
+# must reject this call on its own.
+$innerConflictPath = Join-Path $captureRootPath 'inner-conflict'
+try {
+    $null = Open-AtlasoInstallationCaptureRoot `
+        -DirectoryPath $captureRootPath `
+        -ExpectedIdentity $captureRootIdentity `
+        -ConflictPaths @($innerConflictPath)
+    throw 'Descendant conflict-path admission unexpectedly succeeded.'
+}
+catch {
+    if ($_.Exception.Message -eq 'Descendant conflict-path admission unexpectedly succeeded.') { throw }
 }
 
 $occupiedRootPath = Join-Path $resolvedFixtureRoot 'capture-occupied'
