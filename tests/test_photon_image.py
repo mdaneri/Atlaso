@@ -3541,10 +3541,6 @@ def test_lifecycle_cleanup_preview_checks_client_role_against_plan(tmp_path, mod
         role: Original identity role of the ClientA VMX.
         error: Expected refusal text, or None for a successful preview.
     """
-    pwsh = shutil.which("pwsh")
-    if pwsh is None:
-        pytest.skip("PowerShell 7 is required")
-
     vmware = Path("scripts/windows/vmware")
     scripts = tmp_path / vmware
     scripts.mkdir(parents=True)
@@ -3575,16 +3571,29 @@ def test_lifecycle_cleanup_preview_checks_client_role_against_plan(tmp_path, mod
         encoding="utf-8",
     )
     original_files = {path: path.read_bytes() for path in lab.rglob("*") if path.is_file()}
-    result = subprocess.run(
-        [
-            pwsh, "-NoProfile", "-NonInteractive", "-File", str(scripts / "remove-lifecycle-vms.ps1"),
-            "-PullRequestNumber", "871", "-CollisionSuffix", "test", "-VmrunPath", sys.executable, "-WhatIf",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
+    try:
+        result = subprocess.run(
+            [
+                "pwsh",
+                "-NoProfile",
+                "-NonInteractive",
+                "-File",
+                str(scripts / "remove-lifecycle-vms.ps1"),
+                "-PullRequestNumber",
+                "871",
+                "-CollisionSuffix",
+                "test",
+                "-VmrunPath",
+                sys.executable,
+                "-WhatIf",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except FileNotFoundError:
+        pytest.skip("PowerShell 7 is required")
 
     if error is None:
         assert result.returncode == 0, result.stdout + result.stderr
