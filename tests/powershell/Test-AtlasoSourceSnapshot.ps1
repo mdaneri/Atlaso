@@ -215,6 +215,8 @@ New-Item -ItemType Directory -Path $sourceRepository, $firstStaging | Out-Null
 & git -C $sourceRepository init --initial-branch=main | Out-Null
 & git -C $sourceRepository config user.name 'Atlaso Snapshot Test'
 & git -C $sourceRepository config user.email 'snapshot-test@example.invalid'
+# The byte comparison below expects LF independently of the runner's Git settings.
+& git -C $sourceRepository config core.autocrlf false
 $trackedPath = Join-Path $sourceRepository 'tracked.txt'
 [System.IO.File]::WriteAllText(
     $trackedPath,

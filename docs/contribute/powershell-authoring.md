@@ -31,6 +31,10 @@ Run the isolated Photon build-state regression on Windows with
 It extracts wrapper functions through the PowerShell AST without running the image build. Keep required helper
 imports synchronized with the functions under test, and reject missing or duplicate definitions during setup.
 
+Run fixtures that depend on Windows filesystem identity, DPAPI, or Workstation host APIs on Windows. Gate those
+Python cases on the operating system as well as PowerShell availability. The Windows Packer validation job runs the
+native Workstation cleanup, hostname, Photon build, and credential fixtures with synthetic inputs.
+
 For task-owned local validation, first create an empty root with the existing
 [`PytestGitFixtures` owner](completed-task-cleanup.md#disposable-pytest-git-fixtures), preserving its original receipt
 outside every removal root. Pass that root and its original native identity as `-FixtureRoot` and
