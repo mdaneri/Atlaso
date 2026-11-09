@@ -112,6 +112,12 @@ checkpoint bytes. After EOF those bytes are provisional data. A separate Windows
 original process and both pipe peers, enforce the deadline, and prove natural exit of the entire owned job before
 the controller can accept capture completion.
 
+The private Windows pipe primitives reserve a single local byte-stream instance, verify the endpoint ACL and
+read the kernel-reported peer PID on each handle. Each overlapped operation retains its buffer and event until
+the operating system reports completion, including after a cancellation request. Closure requires a native
+broken-pipe result after the final byte. The fixture uses both endpoints in one process. Original child
+identity, owned-job termination, the independent watchdog, and the framing bridge still require qualification.
+
 The credential terminal adapter deliberately refuses until the controller can prove the bounded SDK child has
 stopped before restoring terminal settings. A guest input deadline alone cannot provide that guarantee: remaining
 SDK keystrokes could reach a restored shell. The byte-reader tests exercise synthetic sentinel input only.
