@@ -104,6 +104,11 @@ to return matching baseline data after the final reads. Uncertain attempts retai
 under that receiver. This path has synthetic coverage for the controller and Windows file operations. The
 production entry point refuses until a live controller, receiver, and capture transport are admitted.
 
+An opt-in synthetic capture can read the intent digest before checkpointing and the checkpoint digest after
+durable publication. Each read is available once on the original controller thread. The journal rechecks the
+retained file identity, exact bytes, current admission and original deadline before returning the digest.
+The callbacks expire when capture returns and are limited to the synthetic journal fixture.
+
 The source-only capture framing sends GO, CHECKPOINT, ACK, and COMPLETE in that order, followed by EOF.
 The endpoints check the original run, nonce, and receipt digests against the expected binding.
 They use the smaller remaining budget from the original raw counter and UTC deadlines. CHECKPOINT carries

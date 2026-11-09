@@ -268,7 +268,9 @@ function Assert-RestorationScope([object]$Authority) {
     if ([Atlaso.WorkstationFileIdentity]::Get($Authority.Root) -cne $Authority.RootIdentity) {
         throw 'Original restoration scope changed.'
     }
-    $verified = & $Authority.Verify
+    $Authority.Verifying = $true
+    try { $verified = & $Authority.Verify }
+    finally { $Authority.Verifying = $false }
     if ($verified -isnot [bool] -or -not $verified) { throw 'Original restoration admission refused.' }
     $null = Get-RestorationRemaining $Authority
 }
@@ -309,6 +311,8 @@ function New-RestorationCheckpointTestScope {
             Thread=[Threading.Thread]::CurrentThread.ManagedThreadId; Phase='Ready'; Clock=$clock
             Deadline=$Deadline; Budget=$budget; Verify=$Verify; BeforeReadPin=$BeforeReadPin
             Intent=$null; Checkpoint=$null; Baseline=$null; IntentClaimCollision=$false
+            UseReceiptDigests=$false; ReceiptActivation=$null; Verifying=$false
+            IntentDigestRead=$false; CheckpointDigestRead=$false; CheckpointBaselineSha256=$null
         }
         Assert-RestorationScope $authority
         $scope = [pscustomobject]@{}
@@ -397,6 +401,12 @@ Private original capture state.
 Stage1 data from the original capture.
 #>
 function Save-RestorationCheckpoint([object]$Authority, [byte[]]$Baseline) {
+    if ($Authority.UseReceiptDigests -and
+        ($Authority.Thread -ne [Threading.Thread]::CurrentThread.ManagedThreadId -or
+        $Authority.Verifying -or $null -eq $Authority.ReceiptActivation -or
+        $Authority.Phase -cne 'Capturing' -or -not $Authority.IntentDigestRead)) {
+        throw 'Original restoration checkpoint is unavailable.'
+    }
     try {
         if ($Authority.Phase -cne 'Capturing') { throw 'Original restoration callback is not available.' }
         $Authority.Phase = 'PublishingCheckpoint'
@@ -405,13 +415,15 @@ function Save-RestorationCheckpoint([object]$Authority, [byte[]]$Baseline) {
         if ($null -eq $Baseline) { throw 'Restoration projection missing.' }
         $frozen = [byte[]]$Baseline.Clone()
         Assert-RestorationBaseline $frozen $Authority.Binding
+        $baselineDigest = Get-RestorationDigest $frozen
         $header = [ordered]@{
             schema=1; kind='restoration-baseline-checkpoint'; original_intent_sha256=$Authority.Intent.Sha256
-            baseline_sha256=(Get-RestorationDigest $frozen)
+            baseline_sha256=$baselineDigest
         } | ConvertTo-Json -Compress
         $json = $header.Substring(0, $header.Length - 1) + ',"baseline":' + [Text.Encoding]::ASCII.GetString($frozen) + '}' + [char]10
         $Authority.Checkpoint = Publish-RestorationRecord $Authority 'checkpoint' ([Text.Encoding]::ASCII.GetBytes($json))
         $Authority.Baseline = $frozen
+        $Authority.CheckpointBaselineSha256 = $baselineDigest
         $Authority.Phase = 'Checkpointed'
     }
     catch {
@@ -422,19 +434,69 @@ function Save-RestorationCheckpoint([object]$Authority, [byte[]]$Baseline) {
 
 <#
 .SYNOPSIS
+Read one verified digest from an original retained receipt during synthetic capture.
+.PARAMETER Authority
+Private original capture state.
+.PARAMETER Activation
+Private identity of this capture invocation.
+.PARAMETER Checkpoint
+Read the durable checkpoint digest after the one original save.
+#>
+function Read-RestorationReceiptDigest([object]$Authority, [object]$Activation, [switch]$Checkpoint) {
+    $phase = if ($Checkpoint) { 'Checkpointed' } else { 'Capturing' }
+    $claim = if ($Checkpoint) { 'CheckpointDigestRead' } else { 'IntentDigestRead' }
+    if ($Authority.Thread -ne [Threading.Thread]::CurrentThread.ManagedThreadId -or
+        $Authority.Verifying -or $null -eq $Activation -or
+        -not [object]::ReferenceEquals($Activation, $Authority.ReceiptActivation) -or
+        $Authority.Phase -cne $phase -or $Authority.$claim) {
+        throw 'Original restoration receipt digest is unavailable.'
+    }
+
+    # Claim before calling the synthetic verifier. A reentrant or failed read cannot retry.
+    $Authority.$claim = $true
+    try {
+        Assert-RestorationScope $Authority
+        Assert-RestorationRecord $Authority.Intent
+        $record = $Authority.Intent
+        if ($Checkpoint) {
+            Assert-RestorationRecord $Authority.Checkpoint
+            if ((Get-RestorationDigest $Authority.Baseline) -cne $Authority.CheckpointBaselineSha256) {
+                throw 'Original restoration checkpoint baseline differs.'
+            }
+            $record = $Authority.Checkpoint
+        }
+        $digest = Get-RestorationDigest $record.Bytes
+        Assert-RestorationScope $Authority
+        if ($digest -cne $record.Sha256 -or $Authority.Phase -cne $phase -or
+            -not [object]::ReferenceEquals($Activation, $Authority.ReceiptActivation)) {
+            throw 'Original restoration receipt changed.'
+        }
+        return $digest
+    }
+    catch {
+        $Authority.Phase = 'Failed'
+        throw 'Original restoration receipt digest failed or is uncertain.'
+    }
+}
+
+<#
+.SYNOPSIS
 Consume the original scope and require a matching completed capture after its checkpoint.
 .PARAMETER Scope
 Original opaque scope from the internal test admission.
 .PARAMETER Capture
 Internal synthetic capture with checkpoint and remaining-budget callbacks.
+.PARAMETER SyntheticReceiptDigests
+Provide two additional one-shot digest callbacks only for synthetic qualification.
 #>
-function Invoke-RestorationCheckpointCapture([object]$Scope, [scriptblock]$Capture) {
+function Invoke-RestorationCheckpointCapture([object]$Scope, [scriptblock]$Capture, [switch]$SyntheticReceiptDigests) {
     $ErrorActionPreference = 'Stop'
     $authority = $null
     if (-not $script:RestorationScopes.TryGetValue($Scope, [ref]$authority) -or $authority.Phase -cne 'Ready' -or
         $authority.Thread -ne [Threading.Thread]::CurrentThread.ManagedThreadId) {
         throw 'Original restoration capture is unavailable.'
     }
+    $authority.UseReceiptDigests = $SyntheticReceiptDigests.IsPresent
     $authority.Phase = 'Claiming'
     try {
         Assert-RestorationScope $authority
@@ -459,7 +521,19 @@ function Invoke-RestorationCheckpointCapture([object]$Scope, [scriptblock]$Captu
         $remaining = (Get-Command Get-RestorationRemaining -CommandType Function).ScriptBlock
         $checkpointCallback = [Action[byte[]]]({ param([byte[]]$Baseline) & $save $authority $Baseline }.GetNewClosure())
         $remainingCallback = [Func[double]]({ & $remaining $authority }.GetNewClosure())
-        $result = & $Capture $checkpointCallback $remainingCallback
+        if ($SyntheticReceiptDigests) {
+            $activation = [object]::new()
+            $authority.ReceiptActivation = $activation
+            $readDigest = (Get-Command Read-RestorationReceiptDigest -CommandType Function).ScriptBlock
+            $readIntent = [Func[string]]({ & $readDigest $authority $activation }.GetNewClosure())
+            $readCheckpoint = [Func[string]]({ & $readDigest $authority $activation -Checkpoint }.GetNewClosure())
+            try { $result = & $Capture $checkpointCallback $remainingCallback $readIntent $readCheckpoint }
+            finally { $authority.ReceiptActivation = $null }
+            if (-not $authority.IntentDigestRead -or -not $authority.CheckpointDigestRead) {
+                throw 'Original restoration receipt digest sequence is incomplete.'
+            }
+        }
+        else { $result = & $Capture $checkpointCallback $remainingCallback }
         Assert-RestorationScope $authority
         if ($authority.Phase -cne 'Checkpointed' -or $result -isnot [byte[]] -or
             -not [Linq.Enumerable]::SequenceEqual[byte]($result, $authority.Baseline)) {
@@ -495,6 +569,10 @@ function Close-RestorationCheckpointScope([object]$Scope) {
     if (-not $script:RestorationScopes.TryGetValue($Scope, [ref]$authority) -or
         $authority.Thread -ne [Threading.Thread]::CurrentThread.ManagedThreadId) {
         throw 'Original restoration scope unavailable.'
+    }
+    if ($authority.UseReceiptDigests -and
+        ($null -ne $authority.ReceiptActivation -or $authority.Phase -notin @('Failed','Completed'))) {
+        throw 'Original restoration scope cannot close during capture.'
     }
     $authority.Phase = 'Closed'
     $null = $script:RestorationScopes.Remove($Scope)

@@ -248,12 +248,14 @@ Invoke the private synchronous checkpoint capture for one scope.
 Opaque scope returned by New-TestScope.
 .PARAMETER Capture
 Synthetic capture callback which publishes and returns exact baseline bytes.
+.PARAMETER SyntheticReceiptDigests
+Enable the private one-shot receipt digest callbacks for this fixture.
 #>
-function Invoke-TestCapture([object]$Scope, [scriptblock]$Capture) {
+function Invoke-TestCapture([object]$Scope, [scriptblock]$Capture, [switch]$SyntheticReceiptDigests) {
     return & $checkpointModule {
-        param($OriginalScope, $Runner)
-        Invoke-RestorationCheckpointCapture -Scope $OriginalScope -Capture $Runner
-    } $Scope $Capture
+        param($OriginalScope, $Runner, $EnableDigests)
+        Invoke-RestorationCheckpointCapture -Scope $OriginalScope -Capture $Runner -SyntheticReceiptDigests:$EnableDigests
+    } $Scope $Capture $SyntheticReceiptDigests.IsPresent
 }
 
 <#
@@ -556,6 +558,92 @@ Assert-Throws { Invoke-TestCapture $lifecycleScope { throw 'A consumed scope mus
 Close-TestScope $lifecycleScope
 Assert-Throws { Invoke-TestCapture $lifecycleScope { throw 'A closed scope must not capture.' } } `
     'A closed scope must remain revoked.'
+
+$digestNonce = New-TestCaseNonce
+$digestState = @{ Intent=$null; Checkpoint=$null; ReadIntent=$null; ReadCheckpoint=$null; Reenter=$false; Rejected=$false }
+$digestVerifier = {
+    if ($digestState.Reenter) {
+        $digestState.Reenter = $false
+        try { $null = $digestState.ReadIntent.Invoke() }
+        catch { $digestState.Rejected = $_.Exception.GetBaseException().Message -ceq 'Original restoration receipt digest is unavailable.' }
+    }
+    $true
+}.GetNewClosure()
+$digestScope = New-TestScope $digestNonce (New-TestCaseNonce) $digestVerifier $null $null
+$digestCapture = {
+    param($Save, $Remaining, $ReadIntent, $ReadCheckpoint)
+    $digestState.ReadIntent = $ReadIntent
+    $digestState.ReadCheckpoint = $ReadCheckpoint
+    Assert-Throws { $null = $ReadCheckpoint.Invoke() } 'The checkpoint digest must refuse before publication.'
+    Assert-Throws { $Save.Invoke($baselineBytes) } 'Save must wait for the original intent digest.'
+    Assert-Throws { Close-TestScope $digestScope } 'The active original scope must retain its pins.'
+
+    $runspace = [RunspaceFactory]::CreateRunspace()
+    $runspace.ThreadOptions = 'ReuseThread'
+    $runspace.Open()
+    $worker = [PowerShell]::Create()
+    try {
+        $worker.Runspace = $runspace
+        $null = $worker.AddScript({
+            param($Reader)
+            $rejected = $false
+            try { $null = $Reader.Invoke() }
+            catch { $rejected = $_.Exception.GetBaseException().Message -ceq 'Original restoration receipt digest is unavailable.' }
+            [pscustomobject]@{ Thread=[Threading.Thread]::CurrentThread.ManagedThreadId; Rejected=$rejected }
+        }).AddArgument($ReadIntent)
+        $other = $worker.Invoke()
+        Assert-RestorationTest ($other.Count -eq 1 -and $other[0].Rejected -and
+            $other[0].Thread -ne [Threading.Thread]::CurrentThread.ManagedThreadId) `
+            'A different managed thread must reach the original digest guard and refuse.'
+    }
+    finally { $worker.Dispose(); $runspace.Dispose() }
+
+    $digestState.Reenter = $true
+    $digestState.Intent = $ReadIntent.Invoke()
+    Assert-RestorationTest $digestState.Rejected 'The admission predicate must not reenter a claimed digest.'
+    Assert-Throws { $null = $ReadIntent.Invoke() } 'The original intent digest is available once.'
+    $Save.Invoke($baselineBytes)
+    $digestState.Checkpoint = $ReadCheckpoint.Invoke()
+    Assert-Throws { $null = $ReadCheckpoint.Invoke() } 'The original checkpoint digest is available once.'
+    return ,$baselineBytes
+}.GetNewClosure()
+try {
+    $digestResult = Invoke-TestCapture $digestScope $digestCapture -SyntheticReceiptDigests
+    foreach ($phase in @('intent','checkpoint')) {
+        $file = Join-Path $resolvedTestRoot "atlaso-restoration-$digestNonce.$phase.json"
+        $expected = (Get-FileHash -LiteralPath $file).Hash.ToLowerInvariant()
+        Assert-RestorationTest ($digestState[$phase] -ceq $expected) 'The callback must hash the exact retained receipt bytes.'
+    }
+    Assert-RestorationTest ($digestResult.IntentSha256 -ceq $digestState.Intent -and
+        $digestResult.CheckpointSha256 -ceq $digestState.Checkpoint) 'Completion must agree with both original receipt digests.'
+    Assert-Throws { $null = $digestState.ReadCheckpoint.Invoke() } 'The original callback is stale after capture returns.'
+}
+finally { Close-TestScope $digestScope }
+Assert-Throws { $null = $digestState.ReadIntent.Invoke() } 'The original callback is stale after close.'
+
+$digestDrift = @{ Arm=$false; Checks=0; Refused=$false; Escaped=$false }
+$digestDriftVerifier = {
+    if ($digestDrift.Arm) { return (++$digestDrift.Checks -eq 1) }
+    $true
+}.GetNewClosure()
+$digestDriftScope = New-TestScope (New-TestCaseNonce) (New-TestCaseNonce) $digestDriftVerifier $null $null
+$digestDriftCapture = {
+    param($Save, $Remaining, $ReadIntent, $ReadCheckpoint)
+    $null = $ReadIntent.Invoke()
+    $Save.Invoke($baselineBytes)
+    $digestDrift.Arm = $true
+    try { $null = $ReadCheckpoint.Invoke(); $digestDrift.Escaped = $true }
+    catch { $digestDrift.Refused = $_.Exception.GetBaseException().Message -ceq 'Original restoration receipt digest failed or is uncertain.' }
+    Assert-Throws { $null = $ReadCheckpoint.Invoke() } 'A failed digest access cannot retry.'
+    return ,$baselineBytes
+}.GetNewClosure()
+try {
+    Assert-Throws { Invoke-TestCapture $digestDriftScope $digestDriftCapture -SyntheticReceiptDigests } `
+        'Admission drift after checking the pins must consume the capture.'
+    Assert-RestorationTest ($digestDrift.Checks -eq 2 -and $digestDrift.Refused -and -not $digestDrift.Escaped) `
+        'The second guard must refuse before returning a checkpoint digest.'
+}
+finally { Close-TestScope $digestDriftScope }
 
 $raceNonce = New-TestCaseNonce
 $barrier = Join-Path $resolvedTestRoot ("restoration-claim-$raceNonce.release")
