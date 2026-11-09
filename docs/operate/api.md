@@ -44,6 +44,13 @@ listeners. See [Public Services](../services/public-services.md) for the listene
 Token issuance saves the token and its creation audit event in one transaction for both the API and management UI.
 If that transaction fails, neither record is saved and no token secret is returned.
 
+`POST /api/v1/api-tokens` requires an existing bearer token with `admin:all`. Restricted bearer tokens receive `403`,
+even when requesting equal, narrower, or empty scopes. To create a token without administrator bearer authority,
+authenticate with the account password through `POST /api/v1/auth/login`, or use the signed-in management UI with its
+CSRF protection. Every issuance path limits the requested scopes to the account's current roles. Tokens issued by an
+authorized administrator have independent expiration and revocation; revoking the issuing token does not revoke
+other tokens it created.
+
 Treat bearer tokens like passwords. Do not put them in command history, source files, screenshots, issue reports,
 authenticated URLs, or shared logs. Prefer a secret manager for automation and an environment variable for short-lived
 interactive work.
