@@ -38,7 +38,11 @@ $modulePath = Join-Path $PSScriptRoot 'Atlaso.OnePasswordCredentials.psm1'
 
 try {
     Import-Module $modulePath -Force -ErrorAction Stop
-    Invoke-AtlasoOnePasswordCredentialBridgeReset `
+    $confirmation = @{}
+    if ($PSBoundParameters.ContainsKey('Confirm')) {
+        $confirmation.Confirm = [bool]$PSBoundParameters['Confirm']
+    }
+    Invoke-AtlasoOnePasswordCredentialBridgeReset @confirmation `
         -RepositoryRoot $repositoryRoot `
         -Inspect:$Inspect `
         -TerminateOwnedProcess:$TerminateOwnedProcess `

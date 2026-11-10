@@ -31,6 +31,10 @@ Run the isolated Photon build-state regression on Windows with
 It extracts wrapper functions through the PowerShell AST without running the image build. Keep required helper
 imports synchronized with the functions under test, and reject missing or duplicate definitions during setup.
 
+Run fixtures that depend on Windows filesystem identity, DPAPI, or Workstation host APIs on Windows. Gate those
+Python cases on the operating system as well as PowerShell availability. The Windows Packer validation job runs the
+native Workstation cleanup, hostname, Photon build, and credential fixtures with synthetic inputs.
+
 When a Python test extracts a production PowerShell block, load its real helper dependencies and supply the valid
 public inputs that the full script normally initializes. For example, the Windows ownership fixtures load
 `Atlaso.WorkstationFirstBoot.ps1` and bind the VM name before running parent preflight and restored-root admission.
