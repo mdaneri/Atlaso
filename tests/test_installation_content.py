@@ -92,7 +92,7 @@ def _expectation(kind):
                 "optional-tool": ["1.0-1.ph5", "noarch"],
                 "pip": ["26.2.1-1.ph5", "noarch"],
                 "filesystem": ["1.1-11.ph5", "x86_64"],
-                "systemd": ["257.13-6.ph5", "x86_64"],
+                "systemd": ["257.13-6.1.ph5", "x86_64"],
             }),
             "required_packages": _inventory(["linux", "python3"]),
         },
@@ -173,7 +173,7 @@ def _runtime_fixture_helper():
                            INSTALLATION_OPENLDAP_SHA256=content_inspection.PHOTON_OPENLDAP_SHA256,
                            INSTALLATION_SHIM_SHA256=content_inspection.PHOTON_SHIM_SHA256,
                            INSTALLATION_GRUB_EFI_SHA256=content_inspection.PHOTON_GRUB_EFI_SHA256,
-                           INSTALLATION_MODULE_GENERATED_PATHS=frozenset({"/lib/modules/6.12.115-1.ph5/modules.alias"}),
+                           INSTALLATION_MODULE_GENERATED_PATHS=frozenset({"/lib/modules/6.12.115-2.ph5/modules.alias"}),
                            verify_installation_module_indexes=lambda: {"runtime_module_indexes_verified": True},
                            verify_installation_network_databases=lambda: {"runtime_network_databases_verified": True},
                            verify_installation_metadata=lambda *_checksums: {**fields, "runtime_journal_metadata_verified": True,
@@ -254,7 +254,7 @@ def _prepare_fixture():
     rpms.append({"file": "filesystem.rpm", "name": "filesystem", "version": "1.1-11.ph5", "architecture": "x86_64",
                  "sha256": content_inspection.PHOTON_FILESYSTEM_SHA256})
     records.append({"path": "rpms/systemd.rpm", "sha256": content_inspection.PHOTON_SYSTEMD_SHA256})
-    rpms.append({"file": "systemd.rpm", "name": "systemd", "version": "257.13-6.ph5", "architecture": "x86_64",
+    rpms.append({"file": "systemd.rpm", "name": "systemd", "version": "257.13-6.1.ph5", "architecture": "x86_64",
                  "sha256": content_inspection.PHOTON_SYSTEMD_SHA256})
     records.append({"path": "rpms/audit.rpm", "sha256": content_inspection.PHOTON_AUDIT_SHA256})
     rpms.append({"file": "audit.rpm", "name": "audit", "version": "4.1.3-3.ph5", "architecture": "x86_64",
@@ -274,7 +274,7 @@ def _prepare_fixture():
     records.append({"path": "rpms/grub_efi.rpm", "sha256": content_inspection.PHOTON_GRUB_EFI_SHA256})
     rpms.append({"file": "grub_efi.rpm", "name": "grub2-efi-image", "version": "2.12-2.ph5", "architecture": "x86_64",
                  "sha256": content_inspection.PHOTON_GRUB_EFI_SHA256})
-    for name, version in (("linux", "6.12.115-1.ph5"), ("kmod", "34.1-3.ph5"), ("kmod-binary", "34.1-3.ph5")):
+    for name, version in (("linux", "6.12.115-2.ph5"), ("kmod", "34.1-3.ph5"), ("kmod-binary", "34.1-3.ph5")):
         checksum = content_inspection.PHOTON_MODULE_RPMS[name]
         if name == "linux":
             next(item for item in records if item["path"] == "rpms/linux.rpm")["sha256"] = checksum
@@ -469,7 +469,7 @@ def test_prepare_content_inputs_binds_expectations_to_admitted_files():
         "audit": ["4.1.3-3.ph5", "x86_64"],
         "filesystem": ["1.1-11.ph5", "x86_64"],
         "grub2-efi-image": ["2.12-2.ph5", "x86_64"],
-        "linux": ["6.12.115-1.ph5", "x86_64"],
+        "linux": ["6.12.115-2.ph5", "x86_64"],
         "kmod": ["34.1-3.ph5", "x86_64"],
         "kmod-binary": ["34.1-3.ph5", "x86_64"],
         "python3": ["3.14-2.ph5", "x86_64"],
@@ -477,7 +477,7 @@ def test_prepare_content_inputs_binds_expectations_to_admitted_files():
         "openldap-servers": ["2.6.4-6.ph5", "x86_64"],
         "rpcbind": ["1.2.6-6.ph5", "x86_64"],
         "shim-signed": ["16.1-1.ph5", "x86_64"],
-        "systemd": ["257.13-6.ph5", "x86_64"],
+        "systemd": ["257.13-6.1.ph5", "x86_64"],
     }
     assert expectations[0]["source_file_count"] == 11
     assert expectations[4]["notice_lock_sha256"] == hashlib.sha256(
@@ -1278,23 +1278,23 @@ def test_generated_rpm_program_reports_only_fixed_phase_on_failure(
         (
             b"linux\n",
             "linux",
-            "/boot/linux-6.12.115-1.ph5.cfg",
+            "/boot/linux-6.12.115-2.ph5.cfg",
             stat.S_IFREG | 0o644,
             "system-rpm-files-package-" + hashlib.sha256(b"linux").hexdigest()
-            + f"-entry{content_inspection.RPM_DIAGNOSTIC_PATHS.index('/boot/linux-6.12.115-1.ph5.cfg')}-f0644-v.......T.",
+            + f"-entry{content_inspection.RPM_DIAGNOSTIC_PATHS.index('/boot/linux-6.12.115-2.ph5.cfg')}-f0644-v.......T.",
         ),
         (
             b"linux\n", "linux", "/boot/linux-unknown.cfg", None,
             "system-rpm-files-package-" + hashlib.sha256(b"linux").hexdigest(),
         ),
         (
-            b"linux\n", "linux", "/lib/modules/6.12.115-1.ph5/modules.alias",
+            b"linux\n", "linux", "/lib/modules/6.12.115-2.ph5/modules.alias",
             stat.S_IFREG | 0o644,
             "system-rpm-files-package-" + hashlib.sha256(b"linux").hexdigest()
-            + f"-entry{content_inspection.RPM_DIAGNOSTIC_PATHS.index('/lib/modules/6.12.115-1.ph5/modules.alias')}-f0644-v.......T.",
+            + f"-entry{content_inspection.RPM_DIAGNOSTIC_PATHS.index('/lib/modules/6.12.115-2.ph5/modules.alias')}-f0644-v.......T.",
         ),
         (
-            b"linux\n", "linux", "/lib/modules/6.12.115-1.ph5/private-state", None,
+            b"linux\n", "linux", "/lib/modules/6.12.115-2.ph5/private-state", None,
             "system-rpm-files-package-" + hashlib.sha256(b"linux").hexdigest(),
         ),
     ],
@@ -1444,16 +1444,16 @@ def test_generated_rpm_file_diagnostic_keeps_owner_candidates_private(
         ("missing /var/log/journal\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
         (".M....G.. /var/log/journal\n", 1, b"private-error", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
         ("", 0, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
-        ("S.5....T. /lib/modules/6.12.115-1.ph5/modules.alias\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
-        ("S.5....T. /lib/modules/6.12.115-1.ph5/modules.alias\n", 1, b"", "modulefail", stat.S_IFDIR | 0o555, 0, 0, "runtime"),
-        ("S.5....T. /lib/modules/6.12.115-1.ph5/modules.alias\n", 1, b"", "modulerace", stat.S_IFDIR | 0o555, 0, 0, "runtime"),
+        ("S.5....T. /lib/modules/6.12.115-2.ph5/modules.alias\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
+        ("S.5....T. /lib/modules/6.12.115-2.ph5/modules.alias\n", 1, b"", "modulefail", stat.S_IFDIR | 0o555, 0, 0, "runtime"),
+        ("S.5....T. /lib/modules/6.12.115-2.ph5/modules.alias\n", 1, b"", "modulerace", stat.S_IFDIR | 0o555, 0, 0, "runtime"),
         ("", 0, b"", "networkdbfail", stat.S_IFDIR | 0o555, 0, 0, "network-databases"),
-        (".M....... /lib/modules/6.12.115-1.ph5/modules.alias\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
-        ("......G.. /lib/modules/6.12.115-1.ph5/modules.alias\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
-        ("S.5....T. /lib/modules/6.12.115-1.ph5/kernel/private.ko.xz\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
-        ("missing /lib/modules/6.12.115-1.ph5/modules.alias\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
-        ("S.5....T. /lib/modules/6.12.115-1.ph5/modules.alias\n", 1, b"private-error", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
-        ("S.5....T. /lib/modules/6.12.115-1.ph5/modules.alias\n", 2, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        (".M....... /lib/modules/6.12.115-2.ph5/modules.alias\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        ("......G.. /lib/modules/6.12.115-2.ph5/modules.alias\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        ("S.5....T. /lib/modules/6.12.115-2.ph5/kernel/private.ko.xz\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        ("missing /lib/modules/6.12.115-2.ph5/modules.alias\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        ("S.5....T. /lib/modules/6.12.115-2.ph5/modules.alias\n", 1, b"private-error", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        ("S.5....T. /lib/modules/6.12.115-2.ph5/modules.alias\n", 2, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
         ("SM5...GT. /var/log/btmp\nSM5...GT. /var/log/wtmp\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
         ("SM5..UGT. /var/log/btmp\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
         ("SM5...GTP /var/log/btmp\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),

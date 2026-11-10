@@ -30,6 +30,19 @@ def load_customizer():
     return module
 
 
+def load_vmware_customizer(tmp_path: Path):
+    """Load the customizer with the prerequisite VMware platform marker.
+
+    Args:
+        tmp_path: Isolated location for the simulated guest-agent marker.
+    """
+    customizer = load_customizer()
+    marker = tmp_path / "guest-agent.applied"
+    marker.write_text("platform=vmware\n", encoding="utf-8")
+    customizer.GUEST_AGENT_MARKER_PATH = marker
+    return customizer
+
+
 @pytest.mark.parametrize("platform", ("vmware", "qemu", "hyperv", "baremetal"))
 def test_portable_first_boot_uses_verified_guest_agent_platform_marker(tmp_path: Path, platform: str) -> None:
     """The OVF handoff consumes the prerequisite provider-neutral platform result.
@@ -1466,7 +1479,7 @@ def test_vmware_ovf_customizer_completes_answered_empty_boot_with_image_defaults
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
         monkeypatch: Pytest helper used to replace VMware reads and polling.
     """
-    customizer = load_customizer()
+    customizer = load_vmware_customizer(tmp_path)
     customizer.MARKER_PATH = tmp_path / "customization.applied"
     customizer.PENDING_MARKER_PATH = tmp_path / "customization.pending"
     customizer.NO_OVF_MARKER_PATH = tmp_path / "no-ovf.applied"
@@ -1552,7 +1565,7 @@ def test_vmware_ovf_customizer_non_ovf_reboot_is_idempotent(tmp_path, monkeypatc
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
         monkeypatch: Pytest helper used to replace VMware reads and polling.
     """
-    customizer = load_customizer()
+    customizer = load_vmware_customizer(tmp_path)
     customizer.NO_OVF_MARKER_PATH = tmp_path / "no-ovf.applied"
     customizer.INITIALIZATION_LOCK_PATH = tmp_path / "initializing"
     customizer.NETWORK_REVIEW_PATH = tmp_path / "network-review.json"
@@ -1596,7 +1609,7 @@ def test_vmware_ovf_customizer_replaces_non_ovf_marker_when_envelope_arrives(
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
         monkeypatch: Pytest helper used to replace customization mutations.
     """
-    customizer = load_customizer()
+    customizer = load_vmware_customizer(tmp_path)
     customizer.MARKER_PATH = tmp_path / "customization.applied"
     customizer.PENDING_MARKER_PATH = tmp_path / "customization.pending"
     customizer.NO_OVF_MARKER_PATH = tmp_path / "no-ovf.applied"
@@ -1648,7 +1661,7 @@ def test_vmware_ovf_customizer_waits_for_answer_before_replacing_non_ovf_marker(
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
         monkeypatch: Pytest helper used to replace VMware reads and customization mutations.
     """
-    customizer = load_customizer()
+    customizer = load_vmware_customizer(tmp_path)
     customizer.MARKER_PATH = tmp_path / "customization.applied"
     customizer.PENDING_MARKER_PATH = tmp_path / "customization.pending"
     customizer.NO_OVF_MARKER_PATH = tmp_path / "no-ovf.applied"
@@ -1710,7 +1723,7 @@ def test_vmware_ovf_customizer_keeps_unanswered_tools_channel_fail_closed(
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
         monkeypatch: Pytest helper used to stop the intentional wait loop.
     """
-    customizer = load_customizer()
+    customizer = load_vmware_customizer(tmp_path)
     customizer.NO_OVF_MARKER_PATH = tmp_path / "no-ovf.applied"
     customizer.INITIALIZATION_LOCK_PATH = tmp_path / "initializing"
     customizer.INITIALIZATION_LOCK_PATH.touch()
@@ -1747,7 +1760,7 @@ def test_vmware_ovf_customizer_keeps_present_empty_envelope_fail_closed(
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
         monkeypatch: Pytest helper used to stop the intentional wait loop.
     """
-    customizer = load_customizer()
+    customizer = load_vmware_customizer(tmp_path)
     customizer.NO_OVF_MARKER_PATH = tmp_path / "no-ovf.applied"
     customizer.INITIALIZATION_LOCK_PATH = tmp_path / "initializing"
     customizer.INITIALIZATION_LOCK_PATH.touch()
@@ -1786,7 +1799,7 @@ def test_vmware_ovf_customizer_marker_recovers_interrupted_review_cleanup(tmp_pa
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
         monkeypatch: Pytest helper used to suppress the customization log.
     """
-    customizer = load_customizer()
+    customizer = load_vmware_customizer(tmp_path)
     customizer.MARKER_PATH = tmp_path / "customization.applied"
     customizer.PENDING_MARKER_PATH = tmp_path / "customization.pending"
     customizer.INITIALIZATION_LOCK_PATH = tmp_path / "initializing"
@@ -1825,7 +1838,7 @@ def test_normal_test_vm_republishes_identity_after_signer_scrub_restart(tmp_path
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
         monkeypatch: Pytest helper used to replace guest-info and cleanup operations.
     """
-    customizer = load_customizer()
+    customizer = load_vmware_customizer(tmp_path)
     customizer.MARKER_PATH = tmp_path / "customization.applied"
     customizer.INITIALIZATION_LOCK_PATH = tmp_path / "initializing"
     customizer.NETWORK_REVIEW_PATH = tmp_path / "network-review.json"
@@ -1881,7 +1894,7 @@ def test_ordinary_applied_marker_does_not_publish_test_identity(tmp_path, monkey
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
         monkeypatch: Pytest helper used to replace guest-info and cleanup operations.
     """
-    customizer = load_customizer()
+    customizer = load_vmware_customizer(tmp_path)
     customizer.MARKER_PATH = tmp_path / "customization.applied"
     customizer.write_json_atomic(customizer.MARKER_PATH, {"normal_test_vm": False})
     monkeypatch.setattr(
@@ -1908,7 +1921,7 @@ def test_vmware_ovf_customizer_marker_scrubs_properties_injected_into_reused_sou
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
         monkeypatch: Pytest fixture used to replace dependencies for the test.
     """
-    customizer = load_customizer()
+    customizer = load_vmware_customizer(tmp_path)
     customizer.MARKER_PATH = tmp_path / "customization.applied"
     customizer.PENDING_MARKER_PATH = tmp_path / "customization.pending"
     customizer.INITIALIZATION_LOCK_PATH = tmp_path / "initializing"
@@ -2283,7 +2296,7 @@ def test_vmware_ovf_customizer_reapplies_new_deployment_over_pending_source(
         source_deployment_id: Non-secret identifier recorded by the interrupted source.
         replacement_deployment_id: Identifier supplied by the replacement, or blank for OVA.
     """
-    customizer = load_customizer()
+    customizer = load_vmware_customizer(tmp_path)
     customizer.PENDING_MARKER_PATH = tmp_path / "customization.pending"
     customizer.MARKER_PATH = tmp_path / "customization.applied"
     customizer.INITIALIZATION_LOCK_PATH = tmp_path / "initializing"

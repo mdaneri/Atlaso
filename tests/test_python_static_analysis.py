@@ -120,7 +120,7 @@ def test_static_analysis_configuration_is_pinned_and_scoped() -> None:
         .splitlines()
     )
 
-    assert analyzer_requirements == {"ruff==0.17.2", "mypy==2.4.0"}
+    assert analyzer_requirements == {"ruff==0.17.3", "mypy==2.4.1"}
     assert project["tool"]["ruff"] == {
         "target-version": "py314",
         "per-file-target-version": {"atlaso/app/services/vcf_lab_remote.py": "py310"},

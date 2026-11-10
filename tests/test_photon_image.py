@@ -16,6 +16,8 @@ from pathlib import Path
 
 import pytest
 
+requires_windows_image_fixture = pytest.mark.skipif(os.name != "nt", reason="Windows image-build and Workstation fixtures")
+
 
 def load_lifecycle_runner():
     """Return lifecycle runner."""
@@ -792,6 +794,7 @@ def test_wsl_build_module_behavior():
     assert "Atlaso WSL build module behavior tests passed." in result.stdout
 
 
+@requires_windows_image_fixture
 def test_photon_kickstart_generator_is_canonical_and_provider_specific(tmp_path):
     """Verify the canonical portable Photon kickstart contract.
 
@@ -925,6 +928,7 @@ def test_photon_kickstart_generator_is_canonical_and_provider_specific(tmp_path)
     assert "/usr/local/sbin/atlaso-finalize-image-build" not in provision
 
 
+@requires_windows_image_fixture
 def test_vmware_workstation_build_monitor_behavior(tmp_path):
     """Verify bounded sanitized monitoring across VMware builder startup phases.
 
@@ -959,6 +963,7 @@ def test_vmware_workstation_build_monitor_behavior(tmp_path):
     assert "generated-vnc-test-secret" not in result.stderr
 
 
+@requires_windows_image_fixture
 def test_vmware_workstation_address_readiness_behavior(tmp_path):
     """Verify duplicate static addresses and wrong host neighbors fail closed.
 
@@ -2213,6 +2218,7 @@ def test_vmware_release_snapshot_preserves_attached_or_detached_identity() -> No
     assert "branch --show-current)).Trim()" not in snapshot_recheck
 
 
+@requires_windows_image_fixture
 def test_vmware_source_snapshot_resists_during_packer_checkout_changes(
     tmp_path: Path,
 ) -> None:
@@ -2253,6 +2259,7 @@ def test_vmware_source_snapshot_resists_during_packer_checkout_changes(
     assert "Atlaso immutable source snapshot tests passed." in result.stdout
 
 
+@requires_windows_image_fixture
 def test_vmware_photon_build_state_stays_under_task_repository() -> None:
     """Credential, Packer, cleanup, and reservation state stay task-local."""
     pwsh = shutil.which("pwsh")
@@ -3323,6 +3330,7 @@ def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
     assert "../../docs/reference/full-technical-reference.md#vmware-workstation-workflow" in image_password_docs
 
 
+@requires_windows_image_fixture
 def test_vmware_deploy_wheel_remote_path_contract():
     """Verify both SSH modes reject unsafe remote staging paths before deployment."""
     pwsh = shutil.which("pwsh")
@@ -3377,6 +3385,7 @@ def test_vmware_deploy_wheel_onepassword_bridge_contract():
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+@requires_windows_image_fixture
 def test_vmware_normal_test_vm_development_ca_bridge_contract():
     """Verify normal test VM shared-CA defaults and fail-closed boundaries."""
     pwsh = shutil.which("pwsh")
@@ -3538,6 +3547,104 @@ def test_vmware_lifecycle_cleanup_only_removes_existing_lifecycle_vms():
     assert "VM artifacts were preserved at '$vmRoot'" not in runner
     assert "Remove-Item -LiteralPath $vmRoot -Recurse -Force" not in runner
     assert "-CleanupVmsOnly" in docs
+
+
+@pytest.mark.parametrize(
+    ("mode", "role", "error"),
+    [
+        ({}, "client-a", None),
+        ({"certificate_only": True, "certificate_dhcp_peer": True}, "certificate-dhcp-peer", None),
+        ({"ntp_cold_start_only": True, "certificate_dhcp_peer": False}, "certificate-dhcp-peer", None),
+        ({"ntp_cold_start_only": True}, "client-a", "invalid VM record"),
+        ({"certificate_only": True, "certificate_dhcp_peer": True}, "client-a", "invalid VM record"),
+        ({"certificate_dhcp_peer": False, "ntp_cold_start_only": False}, "certificate-dhcp-peer", "invalid VM record"),
+        ({}, "unknown-peer", "invalid VM record"),
+        ({"certificate_dhcp_peer": True}, "certificate-dhcp-peer", "plan modes are inconsistent"),
+        (
+            {"certificate_only": True, "certificate_dhcp_peer": True, "ntp_cold_start_only": True},
+            "certificate-dhcp-peer",
+            "plan modes are inconsistent",
+        ),
+        ({"ntp_cold_start_only": "false"}, "certificate-dhcp-peer", "is not a boolean"),
+    ],
+)
+def test_lifecycle_cleanup_preview_checks_client_role_against_plan(tmp_path, mode, role, error):
+    """Exercise the public cleanup preview against original-format lifecycle evidence.
+
+    Args:
+        tmp_path: Isolated fixture checkout.
+        mode: Recorded plan flags or a malformed combination to reject.
+        role: Original identity role of the ClientA VMX.
+        error: Expected refusal text, or None for a successful preview.
+    """
+    vmware = Path("scripts/windows/vmware")
+    scripts = tmp_path / vmware
+    scripts.mkdir(parents=True)
+    for name in (
+        "remove-lifecycle-vms.ps1",
+        "Atlaso.VmwareTestIdentity.psm1",
+        "Atlaso.WorkstationCleanup.psm1",
+        "Atlaso.WorkstationLanSegments.ps1",
+    ):
+        shutil.copyfile(vmware / name, scripts / name)
+
+    lab_name = "Atlaso-PR-871-lifecycle-test"
+    lab = tmp_path / "test-results/vmware-workstation-lifecycle" / lab_name
+    ownership = {"lab_name": lab_name, "pull_request_number": 871, "purpose": "lifecycle", "collision_suffix": "test"}
+    vms = []
+    for suffix, vm_role in (("Appliance", "appliance"), ("ClientA", role)):
+        display_name = f"{lab_name}-{suffix}"
+        vmx = lab / "vms" / display_name / f"{display_name}.vmx"
+        vmx.parent.mkdir(parents=True)
+        vmx.write_text(f'displayName = "{display_name}"\n', encoding="utf-8")
+        vms.append({"role": vm_role, "display_name": display_name, "vmx": str(vmx)})
+
+    plan = lab / "plan.json"
+    identity = lab / "vmware-identity.json"
+    plan.write_text(json.dumps({**ownership, **mode}), encoding="utf-8")
+    identity.write_text(
+        json.dumps({**ownership, "result_root": str(lab), "log_identity": lab_name, "vms": vms}),
+        encoding="utf-8",
+    )
+    original_files = {path: path.read_bytes() for path in lab.rglob("*") if path.is_file()}
+    # Capture the exception message before PowerShell applies terminal formatting.
+    preview = tmp_path / "preview.ps1"
+    preview.write_text(
+        "try {\n"
+        "    & $args[0] -PullRequestNumber 871 -CollisionSuffix test -VmrunPath $args[1] -WhatIf\n"
+        "} catch {\n"
+        "    [Console]::Error.WriteLine($_.Exception.Message)\n"
+        "    exit 1\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    try:
+        result = subprocess.run(
+            [
+                "pwsh",
+                "-NoProfile",
+                "-NonInteractive",
+                "-File",
+                str(preview),
+                str(scripts / "remove-lifecycle-vms.ps1"),
+                sys.executable,
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except FileNotFoundError:
+        pytest.skip("PowerShell 7 is required")
+
+    if error is None:
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert result.stdout.count("Stop and delete VMware Workstation lifecycle artifacts") == len(vms)
+    else:
+        assert result.returncode != 0
+        assert error in result.stderr
+        assert "Stop and delete VMware Workstation lifecycle artifacts" not in result.stdout
+    assert {path: path.read_bytes() for path in lab.rglob("*") if path.is_file()} == original_files
 
 
 def test_vmware_test_identity_is_bound_to_the_exact_owner():

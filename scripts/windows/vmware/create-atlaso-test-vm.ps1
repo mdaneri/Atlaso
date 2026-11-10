@@ -3198,9 +3198,11 @@ $selectedIdentityCount = [int]($PullRequestNumber -gt 0) + [int][bool]$LocalBuil
 if ($selectedIdentityCount -ne 1) {
     throw 'Select exactly one test VM identity: -PullRequestNumber for PR validation or -LocalBuilder for local testing.'
 }
-$sourceBranch = ([string](& git -C $repoRoot branch --show-current)).Trim()
-$sourceCommit = ([string](& git -C $repoRoot rev-parse HEAD)).Trim()
+# Detached pull request checkouts have no branch name.
+$sourceBranch = (& git -C $repoRoot branch --show-current | Out-String).Trim()
 $gitIdentityReadFailed = $LASTEXITCODE -ne 0
+$sourceCommit = (& git -C $repoRoot rev-parse HEAD | Out-String).Trim()
+$gitIdentityReadFailed = $gitIdentityReadFailed -or $LASTEXITCODE -ne 0
 $sourceChanges = @(& git -C $repoRoot status --short --untracked-files=all)
 if ($LocalBuilder -and ($gitIdentityReadFailed -or $LASTEXITCODE -ne 0 -or -not $sourceBranch -or
         $sourceCommit -notmatch '^[0-9a-f]{40}$' -or $sourceChanges.Count -ne 0)) {
