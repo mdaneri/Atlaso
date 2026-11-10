@@ -4991,13 +4991,14 @@ mode <code>0644</code>. Before and after package verification, <code>/var/log/jo
 <code>systemd-journal</code>, with mode <code>2755</code>, exactly as the native tmpfiles rule specifies. Only mode and group discrepancies
 for that directory are reconciled after this proof. Missing entries, owner or digest changes, descendants, other
 verification flags and different policy bytes still fail. Journal contents remain private and are not inspected.
-The current profile admits Photon <code>systemd-257.13-6.ph5</code> (SHA-256
-<code>54d0b99c3d18b45d88ef0f8358c4bb13187e6456df6d0f4f054901af8a864077</code>). Its journal policy bytes and packaged
-directory ownership match the previously reviewed <code>257.13-5.ph5</code>; the native policy checksum remains
+The current profile admits Photon <code>systemd-257.13-6.1.ph5</code> (SHA-256
+<code>3f31b4ae0bdcdc410909907dcb0e7bfd09f46259a97cceae0d55195ece4e49ba</code>). Review of the signed RPMs found
+payload changes from <code>257.13-6.ph5</code>, with matching file paths, packaged ownership and modes, scriptlets, triggers
+and journal policy bytes. The native policy checksum remains
 <code>68e4c097e33b30c731a359cb3af86693e5f854c53d3d6bb5ec9eb7d17f04e585</code>.
-The <a href="https://github.com/vmware/photon/commit/682001eb08d91802bfdda61fcef5b7cc0a89576b">upstream package change</a>
-adds transaction file triggers for native service reload/restart and system metadata maintenance. An ordinary
-<code>rpm --scripts</code> comparison does not include those triggers; inspect them with <code>rpm -qp --filetriggers</code> during review.
+The <a href="https://github.com/vmware/photon/commit/682001eb08d91802bfdda61fcef5b7cc0a89576b">upstream change in <code>257.13-6.ph5</code></a>
+introduced transaction file triggers for native service reload/restart and system metadata maintenance. Inspect them
+with <code>rpm -qp --filetriggers</code> during review because <code>rpm --scripts</code> omits them.
 The exact package pin establishes this journal metadata profile. A new complete capture, signature and transaction
 admission, ISO readback and installed-content verification still establish acceptance for each refreshed image.
 The audit-directory profile similarly requires the exact admitted audit RPM and its native
