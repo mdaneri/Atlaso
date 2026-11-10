@@ -544,13 +544,14 @@ mode `0644`. Before and after package verification, `/var/log/journal` must be a
 `systemd-journal`, with mode `2755`, exactly as the native tmpfiles rule specifies. Only mode and group discrepancies
 for that directory are reconciled after this proof. Missing entries, owner or digest changes, descendants, other
 verification flags and different policy bytes still fail. Journal contents remain private and are not inspected.
-The current profile admits Photon `systemd-257.13-6.ph5` (SHA-256
-`54d0b99c3d18b45d88ef0f8358c4bb13187e6456df6d0f4f054901af8a864077`). Its journal policy bytes and packaged
-directory ownership match the previously reviewed `257.13-5.ph5`; the native policy checksum remains
+The current profile admits Photon `systemd-257.13-6.1.ph5` (SHA-256
+`3f31b4ae0bdcdc410909907dcb0e7bfd09f46259a97cceae0d55195ece4e49ba`). Review of the signed RPMs found
+payload changes from `257.13-6.ph5`, with matching file paths, packaged ownership and modes, scriptlets, triggers
+and journal policy bytes. The native policy checksum remains
 `68e4c097e33b30c731a359cb3af86693e5f854c53d3d6bb5ec9eb7d17f04e585`.
-The [upstream package change](https://github.com/vmware/photon/commit/682001eb08d91802bfdda61fcef5b7cc0a89576b)
-adds transaction file triggers for native service reload/restart and system metadata maintenance. An ordinary
-`rpm --scripts` comparison does not include those triggers; inspect them with `rpm -qp --filetriggers` during review.
+The [upstream change in `257.13-6.ph5`](https://github.com/vmware/photon/commit/682001eb08d91802bfdda61fcef5b7cc0a89576b)
+introduced transaction file triggers for native service reload/restart and system metadata maintenance. Inspect them
+with `rpm -qp --filetriggers` during review because `rpm --scripts` omits them.
 The exact package pin establishes this journal metadata profile. A new complete capture, signature and transaction
 admission, ISO readback and installed-content verification still establish acceptance for each refreshed image.
 The audit-directory profile similarly requires the exact admitted audit RPM and its native
@@ -578,7 +579,7 @@ private child, or other verification flag fails this initial-installation profil
 The kernel-index profile binds the exact Linux, kmod and kmod-binary RPMs. It first admits the complete public module
 namespace from original package metadata before reading file contents, then compares all 1,235 immutable directory
 and file records through retained, no-follow descriptors. Missing, extra, linked or changed inputs fail.
-The current profile pins Linux `6.12.115-1.ph5`, with 37,960,648 immutable input bytes. Its complete native RPM-header
+The current profile pins Linux `6.12.115-2.ph5`, with 37,990,052 immutable input bytes. Its complete native RPM-header
 audit retains the same 1,235 records and eleven generated index paths; kmod and kmod-binary inputs are unchanged.
 After ordinary RPM file verification, the profile invokes the authenticated `kmod` executable as `depmod`, selecting
 its native compatibility entry point with explicit input, configuration and output selectors. It writes only to
@@ -645,7 +646,7 @@ boot file or relax the RPM comparison.
 The admitted OpenLDAP server package contributes only its public service unit and two declared directories to this
 registry. Their fixed indices can identify missing entries, modes and verification flags. LDAP databases, configuration
 values and private children are never read or emitted, and the diagnostic does not accept a discrepancy.
-The pinned Linux package's `/boot/linux-6.12.115-1.ph5.cfg` and `/lib/modules/6.12.115-1.ph5/modules.alias` are also
+The pinned Linux package's `/boot/linux-6.12.115-2.ph5.cfg` and `/lib/modules/6.12.115-2.ph5/modules.alias` are also
 fixed public diagnostic entries. Only their indices, types, modes and RPM verification flags can be reported;
 contents stay private and any discrepancy still fails. The native kernel install script runs `depmod`; the diagnostic
 does not treat that fact alone as proof of correct generated indexes.
