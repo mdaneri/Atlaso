@@ -92,7 +92,7 @@ def _expectation(kind):
                 "optional-tool": ["1.0-1.ph5", "noarch"],
                 "pip": ["26.2.1-1.ph5", "noarch"],
                 "filesystem": ["1.1-11.ph5", "x86_64"],
-                "systemd": ["257.13-6.ph5", "x86_64"],
+                "systemd": ["257.13-6.1.ph5", "x86_64"],
             }),
             "required_packages": _inventory(["linux", "python3"]),
         },
@@ -254,7 +254,7 @@ def _prepare_fixture():
     rpms.append({"file": "filesystem.rpm", "name": "filesystem", "version": "1.1-11.ph5", "architecture": "x86_64",
                  "sha256": content_inspection.PHOTON_FILESYSTEM_SHA256})
     records.append({"path": "rpms/systemd.rpm", "sha256": content_inspection.PHOTON_SYSTEMD_SHA256})
-    rpms.append({"file": "systemd.rpm", "name": "systemd", "version": "257.13-6.ph5", "architecture": "x86_64",
+    rpms.append({"file": "systemd.rpm", "name": "systemd", "version": "257.13-6.1.ph5", "architecture": "x86_64",
                  "sha256": content_inspection.PHOTON_SYSTEMD_SHA256})
     records.append({"path": "rpms/audit.rpm", "sha256": content_inspection.PHOTON_AUDIT_SHA256})
     rpms.append({"file": "audit.rpm", "name": "audit", "version": "4.1.3-3.ph5", "architecture": "x86_64",
@@ -477,7 +477,7 @@ def test_prepare_content_inputs_binds_expectations_to_admitted_files():
         "openldap-servers": ["2.6.4-6.ph5", "x86_64"],
         "rpcbind": ["1.2.6-6.ph5", "x86_64"],
         "shim-signed": ["16.1-1.ph5", "x86_64"],
-        "systemd": ["257.13-6.ph5", "x86_64"],
+        "systemd": ["257.13-6.1.ph5", "x86_64"],
     }
     assert expectations[0]["source_file_count"] == 11
     assert expectations[4]["notice_lock_sha256"] == hashlib.sha256(
