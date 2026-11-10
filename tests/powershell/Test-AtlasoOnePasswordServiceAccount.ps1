@@ -153,6 +153,7 @@ try {
     $missingSystemPath = Join-Path $fixtureLocalRoot 'missing-system.dpapi'
     [System.IO.File]::Copy($tokenPath, $missingSystemPath)
     $missingSystemAcl = Get-Acl -LiteralPath $missingSystemPath
+    $missingSystemAcl.SetOwner($currentSid)
     $missingSystemAcl.SetAccessRuleProtection($true, $false)
     foreach ($rule in @($missingSystemAcl.Access)) {
         [void]$missingSystemAcl.RemoveAccessRuleAll($rule)
@@ -177,6 +178,7 @@ try {
     $partialReadPath = Join-Path $fixtureLocalRoot 'partial-read.dpapi'
     [System.IO.File]::Copy($tokenPath, $partialReadPath)
     $partialReadAcl = Get-Acl -LiteralPath $partialReadPath
+    $partialReadAcl.SetOwner($currentSid)
     $partialReadAcl.SetAccessRuleProtection($true, $false)
     foreach ($rule in @($partialReadAcl.Access)) {
         [void]$partialReadAcl.RemoveAccessRuleAll($rule)

@@ -10,6 +10,7 @@ import io
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess
 import tarfile
@@ -8304,11 +8305,12 @@ route=192.0.2.0/24
     assert helper._wan_config_errors(config_path) == []
 
 
-def test_wan_disabled_apply_skips_preserved_route_with_absent_target(tmp_path):
+def test_wan_disabled_apply_skips_preserved_route_with_absent_target(tmp_path, monkeypatch):
     """Do not address a missing device while its saved route is dormant.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Fixture that restores the shared executable resolver.
     """
     helper = load_helper_module()
     config_path = tmp_path / "disabled-absent-route-target.conf"
@@ -8336,27 +8338,36 @@ route=192.0.2.0/24
         encoding="utf-8",
     )
     commands: list[list[str]] = []
-    helper.shutil.which = lambda command: (
-        f"/usr/sbin/{command}" if command in {"ip", "tc"} else None
-    )
     helper._link_exists = lambda _interface_name: False
     helper._run = lambda command: (
         commands.append(command)
         or subprocess.CompletedProcess(command, 1, "", "device absent")
     )
 
-    assert helper._wan_config_errors(config_path) == []
-    assert helper._apply_wan_routes_and_qdiscs(
-        helper._parse_wan_config(config_path)
-    ) == 0
-    assert commands == []
+    original_which = shutil.which
+    original_pwsh = original_which("pwsh")
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            helper.shutil,
+            "which",
+            lambda command: f"/usr/sbin/{command}" if command in {"ip", "tc"} else None,
+        )
+        assert helper._wan_config_errors(config_path) == []
+        assert helper._apply_wan_routes_and_qdiscs(
+            helper._parse_wan_config(config_path)
+        ) == 0
+        assert commands == []
+
+    assert shutil.which is original_which
+    assert shutil.which("pwsh") == original_pwsh
 
 
-def test_wan_disabled_apply_cleans_live_route_target_omitted_from_intent(tmp_path):
+def test_wan_disabled_apply_cleans_live_route_target_omitted_from_intent(tmp_path, monkeypatch):
     """Clear routes and netem when an omitted target still exists on the host.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Fixture that restores the shared executable resolver.
     """
     helper = load_helper_module()
     config_path = tmp_path / "disabled-live-omitted-route-target.conf"
@@ -8384,8 +8395,10 @@ route=192.0.2.0/24
         encoding="utf-8",
     )
     commands: list[list[str]] = []
-    helper.shutil.which = lambda command: (
-        f"/usr/sbin/{command}" if command in {"ip", "tc"} else None
+    monkeypatch.setattr(
+        helper.shutil,
+        "which",
+        lambda command: f"/usr/sbin/{command}" if command in {"ip", "tc"} else None,
     )
     helper._link_exists = lambda interface_name: interface_name == "eth2"
     helper._run = lambda command: (
@@ -10019,11 +10032,12 @@ def test_wan_helper_allows_nat_on_access_role_target(tmp_path):
     assert helper._wan_config_errors(config_path) == []
 
 
-def test_wan_helper_accepts_ipv6_routes_and_rejects_ipv6_only_nat_targets(tmp_path):
+def test_wan_helper_accepts_ipv6_routes_and_rejects_ipv6_only_nat_targets(tmp_path, monkeypatch):
     """Verify that wan helper accepts ipv6 routes and rejects ipv6 only nat targets.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Fixture that restores the shared executable resolver.
     """
     helper = load_helper_module()
     ipv6_route = tmp_path / "ipv6-route.conf"
@@ -10045,17 +10059,22 @@ def test_wan_helper_accepts_ipv6_routes_and_rejects_ipv6_only_nat_targets(tmp_pa
         return subprocess.CompletedProcess(command, 0, "", "")
 
     helper._run = fake_run
-    helper.shutil.which = lambda command: f"/usr/sbin/{command}" if command in {"ip", "tc"} else None
+    monkeypatch.setattr(
+        helper.shutil,
+        "which",
+        lambda command: f"/usr/sbin/{command}" if command in {"ip", "tc"} else None,
+    )
     assert helper._apply_wan_routes_and_qdiscs(parsed) == 0
     assert ["ip", "-6", "route", "replace", "2001:db8:100::/64", "via", "2001:db8:20::fe", "dev", "eth1.20", "metric", "120", "table", "200"] in commands
     assert any("outbound interface with an IPv4 CIDR" in error for error in helper._wan_config_errors(ipv6_only_nat))
 
 
-def test_wan_helper_installs_flagged_management_default_in_main_table(tmp_path):
+def test_wan_helper_installs_flagged_management_default_in_main_table(tmp_path, monkeypatch):
     """Keep locally originated appliance traffic on the migrated default route.
 
     Args:
         tmp_path: Temporary directory used for the candidate WAN config.
+        monkeypatch: Fixture that restores the shared executable resolver.
     """
     helper = load_helper_module()
     config_path = tmp_path / "flagged-management-default.conf"
@@ -10094,8 +10113,10 @@ route=0.0.0.0/0
         commands.append(command)
         or subprocess.CompletedProcess(command, 0, "", "")
     )
-    helper.shutil.which = lambda command: (
-        f"/usr/sbin/{command}" if command in {"ip", "tc"} else None
+    monkeypatch.setattr(
+        helper.shutil,
+        "which",
+        lambda command: f"/usr/sbin/{command}" if command in {"ip", "tc"} else None,
     )
 
     assert helper._wan_config_errors(config_path) == []
@@ -10132,11 +10153,12 @@ route=0.0.0.0/0
     )
 
 
-def test_wan_helper_retires_previous_flagged_management_default(tmp_path):
+def test_wan_helper_retires_previous_flagged_management_default(tmp_path, monkeypatch):
     """Use last-applied mirroring to clean the main table after unflagging.
 
     Args:
         tmp_path: Temporary directory used for candidate and applied WAN configs.
+        monkeypatch: Fixture that restores the shared executable resolver.
     """
     helper = load_helper_module()
     previous_path = tmp_path / "previous-flagged-management.conf"
@@ -10203,8 +10225,10 @@ route=0.0.0.0/0
   interface=eth0
   metric=100""",
     }
-    helper.shutil.which = lambda command: (
-        f"/usr/sbin/{command}" if command in {"ip", "tc"} else None
+    monkeypatch.setattr(
+        helper.shutil,
+        "which",
+        lambda command: f"/usr/sbin/{command}" if command in {"ip", "tc"} else None,
     )
 
     for name, routes in cases.items():
@@ -10242,12 +10266,13 @@ route=0.0.0.0/0
 
 
 @pytest.mark.parametrize("removed", [False, True])
-def test_wan_preserves_new_network_owned_management_default(tmp_path, removed):
+def test_wan_preserves_new_network_owned_management_default(tmp_path, removed, monkeypatch):
     """Retiring an old Access mirror must retain the new dedicated default.
 
     Args:
         tmp_path: Disposable applied Network configuration location.
         removed: Whether the old Access mirror is retired.
+        monkeypatch: Fixture that restores the shared executable resolver.
     """
     helper = load_helper_module()
     previous_path = tmp_path / "previous.conf"
@@ -10270,7 +10295,11 @@ def test_wan_preserves_new_network_owned_management_default(tmp_path, removed):
         encoding="utf-8",
     )
     commands = []
-    helper.shutil.which = lambda command: f"/usr/sbin/{command}" if command in {"ip", "tc"} else None
+    monkeypatch.setattr(
+        helper.shutil,
+        "which",
+        lambda command: f"/usr/sbin/{command}" if command in {"ip", "tc"} else None,
+    )
     helper._run = lambda command: (
         commands.append(command) or subprocess.CompletedProcess(command, 0, "", "")
     )
@@ -10284,11 +10313,12 @@ def test_wan_preserves_new_network_owned_management_default(tmp_path, removed):
                    and "table" not in command for command in commands)
 
 
-def test_wan_rollback_explicitly_removes_candidate_only_main_default(tmp_path):
+def test_wan_rollback_explicitly_removes_candidate_only_main_default(tmp_path, monkeypatch):
     """Remove a partially applied mirror absent from last-applied runtime state.
 
     Args:
         tmp_path: Temporary directory used for the explicit rollback config.
+        monkeypatch: Fixture that restores the shared executable resolver.
     """
     helper = load_helper_module()
     rollback_path = tmp_path / "candidate-only-main-default.conf"
@@ -10317,8 +10347,10 @@ route=0.0.0.0/0
         encoding="utf-8",
     )
     commands: list[list[str]] = []
-    helper.shutil.which = lambda command: (
-        f"/usr/sbin/{command}" if command in {"ip", "tc"} else None
+    monkeypatch.setattr(
+        helper.shutil,
+        "which",
+        lambda command: f"/usr/sbin/{command}" if command in {"ip", "tc"} else None,
     )
     helper._run = lambda command: (
         commands.append(command)
@@ -10334,11 +10366,12 @@ route=0.0.0.0/0
     assert not any("table" in command for command in commands)
 
 
-def test_wan_rollback_removes_exact_candidate_main_default_metric(tmp_path):
+def test_wan_rollback_removes_exact_candidate_main_default_metric(tmp_path, monkeypatch):
     """Remove a candidate metric variant without deleting the restored baseline route.
 
     Args:
         tmp_path: Temporary directory used for the exact rollback config.
+        monkeypatch: Fixture that restores the shared executable resolver.
     """
     helper = load_helper_module()
     rollback_path = tmp_path / "candidate-metric-main-default.conf"
@@ -10374,8 +10407,10 @@ route=0.0.0.0/0
         encoding="utf-8",
     )
     commands: list[list[str]] = []
-    helper.shutil.which = lambda command: (
-        f"/usr/sbin/{command}" if command in {"ip", "tc"} else None
+    monkeypatch.setattr(
+        helper.shutil,
+        "which",
+        lambda command: f"/usr/sbin/{command}" if command in {"ip", "tc"} else None,
     )
     helper._run = lambda command: (
         commands.append(command)
@@ -10401,11 +10436,12 @@ route=0.0.0.0/0
     ] in commands
 
 
-def test_wan_helper_cleans_managed_policy_rule_windows_before_apply(tmp_path):
+def test_wan_helper_cleans_managed_policy_rule_windows_before_apply(tmp_path, monkeypatch):
     """Verify that wan helper cleans managed policy rule windows before apply.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Fixture that restores the shared executable resolver.
     """
     helper = load_helper_module()
     config_path = tmp_path / "policy-rules.conf"
@@ -10423,7 +10459,11 @@ def test_wan_helper_cleans_managed_policy_rule_windows_before_apply(tmp_path):
         return subprocess.CompletedProcess(command, 0, "", "")
 
     helper._run = fake_run
-    helper.shutil.which = lambda command: f"/usr/sbin/{command}" if command == "ip" else None
+    monkeypatch.setattr(
+        helper.shutil,
+        "which",
+        lambda command: f"/usr/sbin/{command}" if command == "ip" else None,
+    )
 
     assert helper._apply_wan_policy_rules(parsed) == 0
     assert ["ip", "rule", "del", "priority", "1000"] in commands
