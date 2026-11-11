@@ -375,6 +375,9 @@ $providerFailureVmrun = Join-Path $OutputDirectory 'hostname-provider-failure-vm
     "@echo off`r`nif /I `"%3`"==`"getGuestIPAddress`" (`r`n  echo 192.168.167.135`r`n  exit /b 0`r`n)`r`nif /I `"%3`"==`"readVariable`" exit /b 8`r`nif /I `"%3`"==`"list`" (`r`n  echo Total running VMs: 1`r`n  echo `"$targetVmx`"`r`n  exit /b 0`r`n)`r`nexit /b 9`r`n",
     [System.Text.UTF8Encoding]::new($false)
 )
+# Allow one complete ownership and hostname observation on hosted Windows. A late retry can replace it
+# with a deadline failure, which the separate timeout cases cover.
+$providerFailureDeadlineSeconds = 10
 $providerFailureError = $null
 try {
     Set-Alias -Name Get-NetNeighbor -Value Get-TestNetNeighbor -Scope Global
@@ -383,8 +386,8 @@ try {
         -VmxPath $targetVmx `
         -ExpectedHostname 'issue-584.atlaso.internal' `
         -VmrunPath $providerFailureVmrun `
-        -TimeoutSeconds 2 `
-        -PollSeconds 1 | Out-Null
+        -TimeoutSeconds $providerFailureDeadlineSeconds `
+        -PollSeconds $providerFailureDeadlineSeconds | Out-Null
 }
 catch {
     $providerFailureError = $_
@@ -393,11 +396,15 @@ finally {
     Remove-Item Alias:Get-NetNeighbor -ErrorAction SilentlyContinue
     Remove-Item Alias:Test-Connection -ErrorAction SilentlyContinue
 }
-if ($null -eq $providerFailureError -or
-    $providerFailureError.Exception.Message -notlike 'An initial VMware ownership observation completed*' -or
-    $providerFailureError.Exception.Message -notlike '*hostname evidence query failed with exit code 8*' -or
-    $providerFailureError.Exception.Message -like '*guest initialization did not publish*') {
-    throw 'A failed hostname provider read was misclassified as a successful empty first-boot answer.'
+$providerFailureMessage = if ($null -eq $providerFailureError) {
+    '<no error>'
+} else {
+    $providerFailureError.Exception.Message
+}
+if ($providerFailureMessage -notlike 'An initial VMware ownership observation completed*' -or
+    $providerFailureMessage -notlike '*hostname evidence query failed with exit code 8*' -or
+    $providerFailureMessage -like '*guest initialization did not publish*') {
+    throw "Expected a hostname provider failure with exit code 8 after initial ownership. Observed diagnostic: $providerFailureMessage"
 }
 $addressCounter = Join-Path $OutputDirectory 'transient-address-count.txt'
 [System.IO.File]::WriteAllText($addressCounter, '0', [System.Text.UTF8Encoding]::new($false))
