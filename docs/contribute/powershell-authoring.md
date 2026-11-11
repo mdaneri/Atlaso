@@ -33,7 +33,9 @@ imports synchronized with the functions under test, and reject missing or duplic
 
 Run fixtures that depend on Windows filesystem identity, DPAPI, or Workstation host APIs on Windows. Gate those
 Python cases on the operating system as well as PowerShell availability. The Windows Packer validation job runs the
-native Workstation cleanup, hostname, Photon build, and credential fixtures with synthetic inputs.
+native Workstation cleanup, hostname, Photon build, and credential fixtures with synthetic inputs. The readiness
+fixture gives the hostname provider exit-code case time for one complete observation and reports the observed
+diagnostic on failure. Separate cases exercise short readiness deadlines with stalled providers.
 
 For task-owned local validation, first create an empty root with the existing
 [`PytestGitFixtures` owner](completed-task-cleanup.md#disposable-pytest-git-fixtures), preserving its original receipt
