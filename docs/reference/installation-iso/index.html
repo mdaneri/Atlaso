@@ -5105,9 +5105,10 @@ native two-second timestamps. Metadata is stable while each file is read, and th
 comparison. Only those files' mode and timestamp discrepancies are reconciled; other flags, paths and changed bytes
 still fail. These checks follow <a href="https://cdn.kernel.org/doc/html/latest/filesystems/vfat.html">Linux's VFAT mount masks</a>
 and <a href="https://github.com/torvalds/linux/blob/v6.1/fs/fat/misc.c">FAT timestamp encoding</a>.</p>
-<p>Changes to <code>scripts/installation/layout.py</code> require reviewing its exact bytes and updating both the host content
-preparation pin and the guest package-state verifier pin together. Focused content and package-state tests compare
-those pins with the actual checked-in helper. Existing media keeps its original helper and validation evidence.</p>
+<p>Git checks out <code>scripts/installation/layout.py</code> with LF line endings on every platform so its bytes match the pins.
+Changes to the helper require reviewing its exact bytes and updating both the host content preparation pin and the
+guest package-state verifier pin together. Focused content and package-state tests compare those pins with the actual
+checked-in helper. Existing media keeps its original helper and validation evidence.</p>
 <p>Use <code>-CollisionSuffix inspection-a</code> and <code>-CollisionSuffix inspection-b</code> for two fresh installations in separate
 canonical VM directories. The wrappers reuse the shared identity helper to preserve the PR number while giving each
 VM a distinct name. Supply the same suffix with that VM's original receipt selectors for every subsequent login,
