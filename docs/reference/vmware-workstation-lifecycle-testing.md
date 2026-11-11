@@ -41,6 +41,9 @@ This initial mode admits these fixed IPv4 addresses only. `SiteInterface` is `et
 the generic lifecycle `SiteCidr` setting does not select this mode's fixed service address. Source policy and polling
 intervals remain unchanged. The peer retains its existing Chrony upstreams and must prove a current selected real
 upstream, normal leap, fresh reference, low measured offset and a nonce-matched UDP reply before appliance edits.
+The private DHCP peer omits the router option. The acceptance check requires both IP families to have no default
+route before Apply and after the successful cold Apply. The appliance's unbound IPv4 lookup for the peer must select
+the original DHCP source and on-link route in management table `100`.
 VMware periodic and one-shot synchronization are disabled in both new VM configurations before their first boot.
 
 Before invoking the mode, follow the ownership section of [completed-task cleanup](../contribute/completed-task-cleanup.md#prepare-durable-ownership-evidence).

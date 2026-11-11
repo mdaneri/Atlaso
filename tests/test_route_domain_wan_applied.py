@@ -150,6 +150,12 @@ def test_transition_guard_brackets_both_families_after_source_slots(monkeypatch)
             if priority == route_domains.TRANSITION_PRIORITY:
                 rows.append({"priority": priority, "src": "all", "srclen": 0,
                              "iif": "lo", "action": "unreachable", "protocol": "2"})
+            elif priority in (4998, 4999):
+                row = {"priority": priority, "src": "0.0.0.0", "iif": "lo",
+                       "table": "254" if priority == 4998 else "100", "protocol": "2"}
+                if priority == 4999:
+                    row["suppress_prefixlen"] = 0
+                rows.append(row)
             elif priority == 6003:
                 network = ipaddress.ip_network(route_domains.TRANSITION_DESTINATION_EXEMPTIONS[family])
                 rows.append({"priority": priority, "dst": str(network.network_address),
@@ -179,15 +185,21 @@ def test_transition_guard_brackets_both_families_after_source_slots(monkeypatch)
     monkeypatch.setattr(route_domains, "run_ip", run_ip)
     monkeypatch.setattr(route_domains, "read_intent", lambda: route_domains.Intent(()))
     route_domains.transition_guard(True)
-    assert occupied == {4: {6000, 6001, 6002, 6003, 6004}, 6: {6000, 6001, 6002, 6003, 6004}}
+    assert occupied == {4: {4998, 4999, 6000, 6001, 6002, 6003, 6004}, 6: {6000, 6001, 6002, 6003, 6004}}
     route_domains.transition_guard(False)
     assert occupied == {4: set(), 6: set()}
     assert [(cmd[1], cmd[3], cmd[cmd.index("priority") + 1]) for cmd in commands] == [
         (family, action, str(priority))
-        for action, priorities in (("add", (6004, 6000, 6001, 6002, 6003)),
-                                   ("del", (6000, 6001, 6002, 6003, 6004)))
-        for family in ("-4", "-6")
+        for family, action, priorities in (
+            ("-4", "add", (6004, 6000, 6001, 6002, 6003, 4998, 4999)),
+            ("-6", "add", (6004, 6000, 6001, 6002, 6003)),
+            ("-4", "del", (6000, 6001, 6002, 6003, 4999, 4998, 6004)),
+            ("-6", "del", (6000, 6001, 6002, 6003, 6004)),
+        )
         for priority in priorities]
+    fallback = commands[6]
+    assert fallback[6:] == ["from", "0.0.0.0/32", "iif", "lo", "protocol", "2",
+                            "table", "100", "suppress_prefixlength", "0"]
 
 
 def test_owned_terminal_guard_is_admitted_by_new_network_transaction(monkeypatch):
