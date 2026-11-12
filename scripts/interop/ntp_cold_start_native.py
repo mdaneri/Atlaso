@@ -161,6 +161,33 @@ def native_clock(session, password: str, peer_address: str, mode: str = "ntp_cli
             "single_controller": True, "packet_guard": True}
 
 
+def verify_gateway_free_routing(session, plan: dict, *, applied: bool = False) -> dict:
+    """Require the original private peer path to work without a default route.
+
+    Args:
+        session: Strictly pinned appliance SSH transport.
+        plan: Validated fixture addresses and network.
+        applied: Whether Network Apply has installed the management route domain.
+    """
+    for family in (4, 6):
+        routes = json.loads(session.command(f"ip -j -{family} route show table all"))
+        if any(route.get("dst") in ("default", "0.0.0.0/0", "::/0") for route in routes):
+            raise Refusal("ntp_fixture_default_route_present")
+    result = {"default_routes": False}
+    if applied:
+        peer = _address(plan["peer_address"])
+        source = _address(plan["current_address"])
+        routes = json.loads(session.command(f"ip -j -4 route get {peer}"))
+        if len(routes) != 1:
+            raise Refusal("ntp_fixture_management_route_unverified")
+        route = routes[0]
+        if (route.get("dst") != peer or route.get("dev") != "eth0" or str(route.get("table")) != "100"
+                or route.get("prefsrc") != source or route.get("gateway") or route.get("via")):
+            raise Refusal("ntp_fixture_management_route_unverified")
+        result.update(peer=peer, source=source, interface="eth0", table=100)
+    return result
+
+
 def admit_plan(plan: dict) -> dict:
     """Admit the new NTP fixture's own original receipts before authentication.
 
@@ -788,6 +815,7 @@ def run(plan: dict, output: Path, password: str, *, appliance_password: str | No
                     if routing.get("state") != "proven-absent":
                         raise Refusal("ntp_fixture_routing_intent_present")
                     result["routing_absence"] = {"state": "proven-absent"}
+                    result["initial_routing"] = verify_gateway_free_routing(session, plan)
                     result["stage"] = "management_https_readiness"
                     client, result["management_readiness"] = wait_management_client(peer, plan)
                     client.login(plan["username"], password)
@@ -800,6 +828,7 @@ def run(plan: dict, output: Path, password: str, *, appliance_password: str | No
                     if first["status"] != "succeeded":
                         raise Refusal("ntp_fixture_cold_apply_failed")
                     result["cold_apply"] = first
+                    result["cold_routing"] = verify_gateway_free_routing(session, plan, applied=True)
                     result["cold_clock"] = native_clock(session, ssh_password, plan["peer_address"])
                     result["cold_acquisition"] = acquisition_observation(session, ssh_password, cold_checkpoint)
                     clean_baseline(client)

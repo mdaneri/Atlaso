@@ -137,7 +137,8 @@ def peer_files(args: argparse.Namespace) -> dict[str, str]:
         "dhcp-leasefile=/var/lib/misc/dnsmasq.leases\n"
         "dhcp-authoritative\n"
     )
-    if getattr(args, "no_dhcp_router", False):
+    # dnsmasq otherwise advertises itself as the router by default.
+    if getattr(args, "no_dhcp_router", False) or (serve_ntp and vmware_vix):
         dnsmasq += "dhcp-option=option:router\n"
     extra_packages = ""
     extra_write_files = ""
