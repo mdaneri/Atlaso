@@ -4790,7 +4790,10 @@ routing-domain isolation does not acquire an orphaned guard merely from rollback
 <p>Dedicated-management connected routes use table <code>100</code>; Access, Route, and VLAN connected routes use table <code>200</code>.
 Connected routes remain available without a gateway and when forwarding is disabled. A configured management gateway
 adds the off-subnet default route. Networkd owns DHCP/IPv6 router-advertisement routes and their expiry in the same
-domain tables; the management default also remains available to appliance connections that have not selected a source.</p>
+domain tables; the management default also remains available to appliance connections that have not selected a source.
+For local IPv4 connections that have yet to select a source, a miss in the main table can use a more specific route
+from the dedicated management table. This lets NTPsec select an on-link peer on a gateway-free management network.
+The fallback excludes default routes and leaves source-bound and forwarded traffic under their existing domain rules.</p>
 <h3 id="convert-dhcp-management-to-access">Convert DHCP management to Access<a class="headerlink" href="#convert-dhcp-management-to-access" title="Permanent link">&para;</a></h3>
 <p>To keep the current management address while moving the interface into the Access routing domain, stage both desired
 state changes before one global Apply:</p>

@@ -4889,7 +4889,12 @@ transaction guards; source and namespace admission concern this task's original 
 the generic lifecycle <code>SiteCidr</code> setting does not select this mode's fixed service address. Source policy and polling
 intervals remain unchanged. The peer retains its existing Chrony upstreams and must prove a current selected real
 upstream, normal leap, fresh reference, low measured offset and a nonce-matched UDP reply before appliance edits.
-VMware periodic and one-shot synchronization are disabled in both new VM configurations before their first boot.</p>
+The private DHCP peer omits the router option. The acceptance check requires both IP families to have no default
+route before Apply and after the successful cold Apply. The appliance's unbound IPv4 lookup for the peer must select
+the original DHCP source and on-link route in management table <code>100</code>.
+VMware periodic and one-shot synchronization are disabled in both new VM configurations before their first boot.
+The Alpine peer starts with its virtual RTC in UTC so package downloads can validate HTTPS before Chrony starts.
+Chrony then acquires time from its configured real upstreams.</p>
 <p>Before invoking the mode, follow the ownership section of <a href="../../contribute/completed-task-cleanup/#prepare-durable-ownership-evidence">completed-task cleanup</a>.
 Prepare a new source directory beneath the task's originally receipted <code>test-results</code> root and record its original
 <code>WindowsFiles</code> directory identity at creation, outside the worktree and all disposable roots. Then run
