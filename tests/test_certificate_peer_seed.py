@@ -275,6 +275,9 @@ def test_ntp_retained_instance_cache_is_opt_in_and_limited_to_qualified_peer_mod
         "ssh": {"emit_keys_to_console": False},
         "network": {"config": "disabled"},
     }
+    dnsmasq = next(item["content"] for item in user_data["write_files"]
+                   if item["path"] == "/usr/local/etc/atlaso-certificate-peer.conf")
+    assert "dhcp-option=option:router" in dnsmasq.splitlines()
     assert "manual_cache_clean" not in user_data
     assert yaml.safe_load(files["meta-data"])["instance-id"] == common["instance_id"]
 

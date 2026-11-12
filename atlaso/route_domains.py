@@ -35,6 +35,10 @@ INTENT_PATH = Path("/etc/atlaso/route-domains.json")
 LOCK_PATH = Path("/run/atlaso-route-domains.lock")
 IP_COMMAND = "/usr/sbin/ip"
 PROTOCOL = 2
+# IPv4 source discovery keeps the original main lookup first. These slots
+# precede exact source rules, but match only a locally originated zero source.
+UNBOUND_IPV4_MAIN_PRIORITY = 4998
+UNBOUND_IPV4_MANAGEMENT_PRIORITY = 4999
 PRIORITY_START = 5000
 PRIORITY_END = 6000
 TRANSITION_PRIORITY = 6004
@@ -772,6 +776,8 @@ def preflight() -> None:
             owned_rules(rows, family)
             transition_guard_present(rows, family)
             transition_exemptions_present(rows, family)
+            if family == 4:
+                unbound_ipv4_rules_present(rows)
 
 
 def preflight_capacity(
@@ -851,6 +857,31 @@ def preflight_capacity(
             raise ReconcileError("candidate source conflicts with live routing domain")
         reserved = {rule.source for rule in existing} | set(live) | candidates
         plan_rules({source: None for source in reserved}, existing)
+
+
+def unbound_ipv4_rules_present(rows: list[dict[str, Any]]) -> set[int]:
+    """Admit only the local IPv4 source-discovery lookups at the reserved priorities.
+
+    Args:
+        rows: Validated native IPv4 policy rule records.
+    """
+    present: set[int] = set()
+    for row in rows:
+        priority = row["priority"]
+        if priority not in {UNBOUND_IPV4_MAIN_PRIORITY, UNBOUND_IPV4_MANAGEMENT_PRIORITY}:
+            continue
+        management = priority == UNBOUND_IPV4_MANAGEMENT_PRIORITY
+        allowed = {"priority", "src", "srclen", "iif", "table", "protocol"}
+        if management:
+            allowed.add("suppress_prefixlen")
+        if (priority in present or set(row) - allowed
+                or row.get("src") != "0.0.0.0" or row.get("srclen", 32) != 32
+                or row.get("iif") != "lo" or str(row.get("protocol")) not in {str(PROTOCOL), "kernel"}
+                or str(row.get("table")) not in ({"100"} if management else {"254", "main"})
+                or (management and row.get("suppress_prefixlen") != 0)):
+            raise ReconcileError("unbound IPv4 routing priority ownership conflict")
+        present.add(priority)
+    return present
 
 
 def transition_guard_present(rows: Any, family: int) -> bool:
@@ -1024,6 +1055,13 @@ def transition_guard_state() -> bool:
             expected = set(range(PRIORITY_END, TRANSITION_PRIORITY)) if present else set()
             if exemptions != expected:
                 raise ReconcileError("routing-domain transition guard inventory is incomplete")
+            if family == 4:
+                unbound_rules = unbound_ipv4_rules_present(rows)
+                # Upgrading an already active legacy guard starts with neither lookup.
+                if unbound_rules and (not present or unbound_rules != {
+                    UNBOUND_IPV4_MAIN_PRIORITY, UNBOUND_IPV4_MANAGEMENT_PRIORITY,
+                }):
+                    raise ReconcileError("unbound IPv4 routing inventory is incomplete")
             states.append(present)
         if states[0] != states[1]:
             raise ReconcileError("routing-domain transition guard families disagree")
@@ -1056,6 +1094,25 @@ def transition_guard(enable: bool, seed_interfaces: Any = None) -> None:
             _set_guard_locked(family, enable)
 
 
+def _set_unbound_ipv4_rules(present: set[int], enable: bool) -> None:
+    """Reconcile the local source-discovery lookups inside the guard lock.
+
+    Args:
+        present: Previously admitted lookup priorities.
+        enable: Whether the owning routing guard is being enabled.
+    """
+    lookups = (
+        (UNBOUND_IPV4_MAIN_PRIORITY, ["table", "main"]),
+        (UNBOUND_IPV4_MANAGEMENT_PRIORITY, ["table", "100", "suppress_prefixlength", "0"]),
+    )
+    # Install main first and retire it last to preserve its precedence.
+    for priority, lookup in lookups if enable else reversed(lookups):
+        if (priority in present) != enable:
+            run_ip([IP_COMMAND, "-4", "rule", "add" if enable else "del",
+                    "priority", str(priority), "from", "0.0.0.0/32", "iif", "lo",
+                    "protocol", str(PROTOCOL), *lookup])
+
+
 def _set_guard_locked(family: int, enable: bool) -> None:
     """Change only the owned terminal guard while holding the reconciliation lock.
 
@@ -1067,6 +1124,7 @@ def _set_guard_locked(family: int, enable: bool) -> None:
     owned_rules(rows, family)
     present = transition_guard_present(rows, family)
     exemptions = transition_exemptions_present(rows, family)
+    unbound_rules = unbound_ipv4_rules_present(rows) if family == 4 else set()
     guard = [IP_COMMAND, f"-{family}", "rule", "priority", str(TRANSITION_PRIORITY),
              "from", "all", "iif", "lo", "protocol", str(PROTOCOL), "unreachable"]
     if enable and not present:
@@ -1086,6 +1144,8 @@ def _set_guard_locked(family: int, enable: bool) -> None:
                    "priority", str(destination_priority), "to", TRANSITION_DESTINATION_EXEMPTIONS[family],
                    "iif", "lo", "protocol", str(PROTOCOL), "table", "main"]
         run_ip(command)
+    if family == 4:
+        _set_unbound_ipv4_rules(unbound_rules, enable)
     if not enable and present:
         run_ip(guard[:3] + ["del"] + guard[3:])
 

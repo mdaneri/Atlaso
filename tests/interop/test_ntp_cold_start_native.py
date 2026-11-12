@@ -545,6 +545,7 @@ def fake_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, objec
     monkeypatch.setattr(fixture, "verify_peer_tunnel_scope", lambda _peer, _addresses: {"scope": "fixed"})
     monkeypatch.setattr(fixture, "verify_peer_time", lambda *_args: {"synchronized": True})
     monkeypatch.setattr(fixture, "payload_identity", lambda *_args: {"payload_verified": True})
+    monkeypatch.setattr(fixture, "verify_gateway_free_routing", lambda *_args, **_kwargs: {"default_routes": False})
     monkeypatch.setattr(fixture, "tls_name", lambda *_args: "appliance.fixture.test")
     monkeypatch.setattr(fixture, "Client", FakeRunClient)
     monkeypatch.setattr(fixture, "wait_management_client", lambda *_args: (FakeRunClient(), {"login_page_ready": True}))

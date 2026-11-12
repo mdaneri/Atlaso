@@ -200,7 +200,7 @@ function Assert-NtpPeerVmConfigBindings {
         @('ethernet1.present', 'TRUE'), @('ethernet1.connectionType', 'pvn'), @('ethernet1.pvnID', [string]$ownedLanSegments[0].Id),
         @('serial0.present', 'TRUE'), @('serial0.fileType', 'file'),
         @('serial0.fileName', [string]$ntpConsoleReceipts['peer'].Path), @('serial0.startConnected', 'TRUE'),
-        @('serial0.yieldOnMsrRead', 'TRUE'), @('tools.syncTime', 'FALSE'),
+        @('serial0.yieldOnMsrRead', 'TRUE'), @('rtc.diffFromUTC', '0'), @('tools.syncTime', 'FALSE'),
         @('time.synchronize.continue', 'FALSE'), @('time.synchronize.restore', 'FALSE'),
         @('time.synchronize.resume.disk', 'FALSE'), @('time.synchronize.shrink', 'FALSE'),
         @('time.synchronize.tools.startup', 'FALSE'), @('time.synchronize.tools.enable', 'FALSE'),
@@ -314,6 +314,11 @@ function Initialize-NtpFixtureConsole {
                 @('time.synchronize.tools.startup', 'FALSE'), @('time.synchronize.tools.enable', 'FALSE'),
                 @('time.synchronize.resume.host', 'FALSE'))) {
             Set-VmxValue -Path $Vmx -Key $entry[0] -Value $entry[1]
+        }
+        if ($Role -ceq 'peer') {
+            # Alpine reads the RTC as UTC before apk verifies HTTPS. Use host UTC
+            # at first boot so the host's local offset cannot invalidate TLS.
+            Set-VmxValue -Path $Vmx -Key 'rtc.diffFromUTC' -Value '0'
         }
         $ntpConsoleReceipts[$Role] = @{
             Intent = $intent; Vmx = $Vmx; Path = $serial; Ownership = $owner

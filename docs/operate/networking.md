@@ -173,6 +173,9 @@ Dedicated-management connected routes use table `100`; Access, Route, and VLAN c
 Connected routes remain available without a gateway and when forwarding is disabled. A configured management gateway
 adds the off-subnet default route. Networkd owns DHCP/IPv6 router-advertisement routes and their expiry in the same
 domain tables; the management default also remains available to appliance connections that have not selected a source.
+For local IPv4 connections that have yet to select a source, a miss in the main table can use a more specific route
+from the dedicated management table. This lets NTPsec select an on-link peer on a gateway-free management network.
+The fallback excludes default routes and leaves source-bound and forwarded traffic under their existing domain rules.
 
 ### Convert DHCP management to Access
 

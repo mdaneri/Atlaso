@@ -841,6 +841,7 @@ function Start-WorkstationVm { param([string]$Path) $script:events.Add('start');
 function Get-NtpConsolePublicKey { param([string]$Role) return [pscustomobject]@{PublicKey='ssh-ed25519 synthetic-public-key';Fingerprint='SHA256:synthetic-public-fingerprint'} }
 
 Initialize-NtpFixtureConsole -Vmx $certificatePeerVmx -Role peer
+$peerUsesUtcRtc = @(Get-Content -LiteralPath $certificatePeerVmx | Where-Object { $_ -ceq 'rtc.diffFromUTC = "0"' }).Count -eq 1
 $script:peerRunning=$true
 Initialize-NtpPeerConsolePin
 $script:events.Clear()
@@ -862,6 +863,9 @@ if($scenario -eq 'vmx-rewrite'){
 if($scenario -eq 'foreign-vmx-binding'){
  $foreignVmxText=[IO.File]::ReadAllText($certificatePeerVmx).Replace('ethernet0.vnet = "VMnet7"','ethernet0.vnet = "VMnet8"')
  [IO.File]::WriteAllText($certificatePeerVmx,$foreignVmxText,[Text.UTF8Encoding]::new($false))
+}
+if($scenario -eq 'rtc-drift'){
+ Set-VmxValue -Path $certificatePeerVmx -Key 'rtc.diffFromUTC' -Value '-28800'
 }
 if($scenario -eq 'duplicate-journal'){
  [IO.File]::WriteAllText((Join-Path $evidenceRoot 'peer-tools-bootstrap-restart-intent.json'),'synthetic prior immutable intent')
@@ -902,7 +906,7 @@ $result=[ordered]@{
  terminal_cloud_init=$terminalCloudInit;terminal_seed_attached=$terminalSeedAttached
  journal_vmx_birth_identity=$journalVmxBirthIdentity;journal_vmx_observed_identity=$journalVmxObservedIdentity
  vmx_observed_identity=$vmxObservedIdentity;vmx_birth_identity=$vmxBirthIdentity
- intent_has_seed_binding=$false
+ intent_has_seed_binding=$false;peer_uses_utc_rtc=$peerUsesUtcRtc
  error=$errorMessage
 }
 $consoleIntent=Get-Content -LiteralPath $ntpConsoleReceipts['peer'].Intent.Path -Raw|ConvertFrom-Json
@@ -914,7 +918,7 @@ $result|ConvertTo-Json -Compress -Depth 6
 for($index=$runtimeConsumerPins.Count-1;$index -ge 0;$index--){$runtimeConsumerPins[$index].Dispose()}
 Release-NtpPeerBootstrapSeedPin
 """
-    for scenario in ("success", "vmx-rewrite", "seed-drift", "soft-failure", "post-stop-attachment-drift", "foreign-vmx-binding", "duplicate-journal"):
+    for scenario in ("success", "vmx-rewrite", "seed-drift", "soft-failure", "post-stop-attachment-drift", "foreign-vmx-binding", "rtc-drift", "duplicate-journal"):
         result = subprocess.run(
             [pwsh, "-NoProfile", "-NonInteractive", "-Command", program],
             cwd=ROOT,
@@ -928,6 +932,7 @@ Release-NtpPeerBootstrapSeedPin
         observed = json.loads(result.stdout)
         assert observed["scenario"] == scenario
         assert observed["intent_has_seed_binding"] is True
+        assert observed["peer_uses_utc_rtc"] is True
         assert observed["seed_exists"] is True
         if scenario in {"success", "vmx-rewrite"}:
             assert observed["accepted"] is True
@@ -964,7 +969,7 @@ Release-NtpPeerBootstrapSeedPin
             assert observed["stop_count"] == 0
             assert observed["intent_exists"] is True
             assert observed["terminal_state"] == ""
-        elif scenario == "foreign-vmx-binding":
+        elif scenario in {"foreign-vmx-binding", "rtc-drift"}:
             assert observed["stop_count"] == 0
             assert observed["start_count"] == 0
 
