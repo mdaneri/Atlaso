@@ -37,6 +37,17 @@ native Workstation cleanup, hostname, Photon build, and credential fixtures with
 fixture gives the hostname provider exit-code case time for one complete observation and reports the observed
 diagnostic on failure. Separate cases exercise short readiness deadlines with stalled providers.
 
+For task-owned local validation, first create an empty root with the existing
+[`PytestGitFixtures` owner](completed-task-cleanup.md#disposable-pytest-git-fixtures), preserving its original receipt
+outside every removal root. Pass that root and its original native identity as `-FixtureRoot` and
+`-OriginalFixtureIdentity`, together with `-FixtureOwnerReceipt`, `-FixturePythonPath` (Python 3.14), and
+`-FixtureConfigPath` (the active supported Codex configuration). The regression immediately registers its synthetic
+Git repository and receipts each internal redirect before use. Owned mode retains the graph instead of recursively
+deleting it. After the test process is terminal, run `scripts.photon_build_state_test_fixtures seal` with the same
+`--config` and `--receipt`: it retires only the four original redirect leaves, then seals the graph through its
+existing Git owner. Preserve the manifest and digest for normal completed-task cleanup. A failed creation, changed
+link, missing receipt or incomplete seal requires retention; never reconstruct ownership from the surviving tree.
+
 When a Python test extracts a production PowerShell block, load its real helper dependencies and supply the valid
 public inputs that the full script normally initializes. For example, the Windows ownership fixtures load
 `Atlaso.WorkstationFirstBoot.ps1` and bind the VM name before running parent preflight and restored-root admission.

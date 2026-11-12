@@ -23,6 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from certificate_ca_baseline import baseline_address, baseline_mode  # noqa: E402 - Pinned sibling module.
 from certificate_peer_transport import (  # noqa: E402 - The pinned sibling module lives beside this script.
     PeerHTTPSConnection,
     PeerTransportRefusal,
@@ -261,6 +262,10 @@ def admit_fixture(plan: dict) -> dict:
         raise Refusal("peer_fixture_invalid")
     appliance = original_vm(plan, "appliance", fixture["appliance_vmx"])
     peer = original_vm(plan, "peer", fixture["peer_vmx"])
+    # original_iso_vm already binds the appliance's immutable creation source
+    # to the reviewed harness. A subsequently created peer keeps its own source.
+    original_iso = (plan.get("trust_model") == "trusted-host"
+                    and appliance.get("phase") == "original-installation-vm-created")
     from scripts.completed_task_files import FileRefusal, WindowsFiles
 
     copy_path = Path(str(fixture.get("client_vmdk_copy") or ""))
@@ -271,7 +276,7 @@ def admit_fixture(plan: dict) -> dict:
     except (FileRefusal, OSError) as exc:
         raise Refusal("fixture_copied_disk_identity_unavailable") from exc
     if (
-        appliance.get("source_commit") != fixture["source_commit"]
+        (not original_iso and appliance.get("source_commit") != fixture["source_commit"])
         or peer.get("source_commit") != fixture["source_commit"]
         or plan["appliance_ownership"]["sha256"] != fixture["appliance_ownership_sha256"]
         or plan["peer_ownership"]["sha256"] != fixture["peer_ownership_sha256"]
@@ -360,6 +365,12 @@ def admit_fixture(plan: dict) -> dict:
     elif identity.get("observation") != "owned-vmware-tools-and-agent-ssh-after-management-restart":
         raise Refusal("peer_original_identity_mismatch")
     admit_peer_key(plan, fixture)
+    if "iso_wheel_deployment" in plan:
+        # The producer preflight runs before its bounded credential bridge.
+        # Original ISO identity and the distinct active wheel are both required.
+        from certificate_iso_deployment import admit_deployment
+
+        admit_deployment(plan)
     return fixture
 
 
@@ -401,35 +412,83 @@ def admit_peer_key(plan: dict, fixture: dict) -> None:
 
 
 def admit_receipts(plan: dict) -> tuple[dict, dict]:
-    """Pin the observed fixture, bootstrap runtime and management transition.
+    """Pin the observed fixture, bootstrap runtime and management baseline.
 
     Args:
         plan: Validated task plan bound to the owned test resources.
     """
     fixture = admit_fixture(plan)
     bootstrap = bound_json(plan["bootstrap_runtime"])
-    rewire_intent = bound_json(plan["rewire_intent"])
-    rewire = bound_json(plan["rewired_runtime"])
+    mode = baseline_mode(plan)
+    if mode == "dhcp":
+        observation = bound_json(plan["dhcp_baseline_observation"])
+        if (
+            bootstrap.get("phase") != "iso-dhcp-baseline-observed"
+            or observation.get("kind") != "certificate-dhcp-baseline-observation"
+            or observation.get("phase") != "iso-dhcp-baseline-observed"
+            or observation.get("ordinary_ca_baseline_mode") != "dhcp"
+            or observation.get("apply_state") != "clean-applied-baseline"
+            or observation.get("mutation_state") != "none"
+            or observation.get("bootstrap_runtime_sha256") != plan["bootstrap_runtime"]["sha256"]
+            or observation.get("predeployment_sha256") != bootstrap.get("predeployment_sha256")
+            or not re.fullmatch(r"[0-9a-f]{64}", str(bootstrap.get("predeployment_sha256") or ""))
+            or observation.get("task_id") != plan.get("task_id")
+            or observation.get("repository") != "mdaneri/Atlaso"
+            or observation.get("pr") != plan_pr(plan)
+            or observation.get("source_commit") != plan.get("source_commit")
+            or observation.get("deployed_commit") != plan.get("deployed_commit")
+            or observation.get("vmx_path") != fixture["appliance_vmx"]
+            or observation.get("vm_ownership_sha256") != fixture["appliance_ownership_sha256"]
+            or observation.get("interface") != "eth0"
+            or observation.get("observed_address") != baseline_address(plan, fixture)
+            or observation.get("mac", "").replace("-", ":").lower() != fixture["appliance_mac"].replace("-", ":").lower()
+            or observation.get("native_observation", {}).get("address") != baseline_address(plan, fixture)
+            or observation.get("native_observation", {}).get("interface") != "eth0"
+            or observation.get("native_observation", {}).get("mac", "").replace("-", ":").lower()
+            != fixture["appliance_mac"].replace("-", ":").lower()
+            or observation.get("native_observation", {}).get("prefixlen")
+            != ipaddress.IPv4Interface(fixture["peer_cidr"]).network.prefixlen
+            or observation.get("original_fields", {}).get("ipv4_method") != "dhcp"
+            or observation.get("original_fields", {}).get("ip_cidr") not in ("", None)
+            or observation.get("original_fields", {}).get("gateway") not in ("", None)
+            or observation.get("original_fields", {}).get("ipv6_enabled") is not False
+            or observation.get("native_observation", {}).get("lease_state") != "unexpired_reserved_for_original_mac"
+            or observation.get("native_observation", {}).get("connected_route") != "management_table_on_link"
+            or observation.get("native_observation", {}).get("default_routes") != 0
+        ):
+            raise Refusal("dhcp_baseline_observation_invalid")
+        if plan.get("rewire_intent") or plan.get("rewired_runtime"):
+            raise Refusal("dhcp_baseline_must_not_claim_rewire")
+        rewire_intent = {}
+        rewire = observation
+    else:
+        rewire_intent = bound_json(plan["rewire_intent"])
+        rewire = bound_json(plan["rewired_runtime"])
     identity_reference = plan["peer_identity"]
     if (
         bootstrap.get("schema") != 1
         or bootstrap.get("vmx_path") != fixture["appliance_vmx"]
         or bootstrap.get("vm_ownership_sha256") != fixture["appliance_ownership_sha256"]
-        or rewire_intent.get("kind") != "certificate-management-rewire-intent"
-        or rewire_intent.get("bootstrap_runtime_sha256") != plan["bootstrap_runtime"]["sha256"]
-        or rewire_intent.get("peer_fixture_sha256") != plan["peer_fixture"]["sha256"]
-        or rewire_intent.get("peer_identity_sha256") != identity_reference["sha256"]
-        or rewire.get("kind") != "certificate-rewired-runtime"
-        or rewire.get("rewire_intent_sha256") != plan["rewire_intent"]["sha256"]
-        or rewire.get("peer_identity_sha256") != identity_reference["sha256"]
-        or rewire.get("bootstrap_runtime_sha256") != plan["bootstrap_runtime"]["sha256"]
-        or rewire.get("predeployment_sha256") != bootstrap.get("predeployment_sha256")
-        or not re.fullmatch(r"[0-9a-f]{64}", str(rewire.get("predeployment_sha256") or ""))
+        or (mode == "static" and (
+            rewire_intent.get("kind") != "certificate-management-rewire-intent"
+            or rewire_intent.get("bootstrap_runtime_sha256") != plan["bootstrap_runtime"]["sha256"]
+            or rewire_intent.get("peer_fixture_sha256") != plan["peer_fixture"]["sha256"]
+            or rewire_intent.get("peer_identity_sha256") != identity_reference["sha256"]
+            or rewire.get("kind") != "certificate-rewired-runtime"
+            or rewire.get("rewire_intent_sha256") != plan["rewire_intent"]["sha256"]
+            or rewire.get("peer_identity_sha256") != identity_reference["sha256"]
+            or rewire.get("bootstrap_runtime_sha256") != plan["bootstrap_runtime"]["sha256"]
+            or rewire.get("predeployment_sha256") != bootstrap.get("predeployment_sha256")
+            or not re.fullmatch(r"[0-9a-f]{64}", str(rewire.get("predeployment_sha256") or ""))
+            or rewire.get("address_ownership_state") != "unproven"
+        ))
         or rewire.get("vmx_path") != fixture["appliance_vmx"]
         or rewire.get("interface") != "eth0"
-        or rewire.get("mac", "").lower() != fixture["appliance_mac"].replace(":", "-").lower()
-        or rewire.get("observed_address") != (plan["baseline_address"] if plan.get("trust_model") == "trusted-host" else fixture["lease_address"])
-        or rewire.get("address_ownership_state") != "unproven"
+        or rewire.get("mac", "").replace(":", "-").lower() != fixture["appliance_mac"].replace(":", "-").lower()
+        or rewire.get("observed_address") != (
+            baseline_address(plan, fixture) if plan.get("trust_model") == "trusted-host"
+            else fixture["lease_address"]
+        )
         or bootstrap.get("deployed_commit") != plan["deployed_commit"]
         or rewire.get("deployed_commit") != plan["deployed_commit"]
     ):
@@ -465,12 +524,14 @@ def read_native(plan: dict, fixture: dict, peer: PinnedPeerTransport, appliance:
     topology = inspect_trusted_host(plan) if trusted else None
     isolation = verify_peer_isolation(peer) if trusted else None
     network = ipaddress.IPv4Interface(fixture["peer_cidr"])
-    baseline = str(ipaddress.IPv4Address(plan["baseline_address"]))
+    mode = baseline_mode(plan)
+    baseline = baseline_address(plan, fixture)
+    static_baseline = str(ipaddress.IPv4Address(plan["baseline_address"]))
     candidate = str(ipaddress.IPv4Address(plan["static_candidate_address"]))
     dhcp = str(ipaddress.IPv4Address(fixture["lease_address"]))
-    tunnel_scope = verify_peer_tunnel_scope(peer, [dhcp, baseline, candidate]) if trusted else None
-    if len({str(network.ip), baseline, candidate, dhcp}) != 4 or any(
-        ipaddress.IPv4Address(value) not in network.network for value in (baseline, candidate, dhcp)
+    tunnel_scope = verify_peer_tunnel_scope(peer, [dhcp, static_baseline, candidate]) if trusted else None
+    if len({str(network.ip), dhcp, static_baseline, candidate}) != 4 or any(
+        ipaddress.IPv4Address(value) not in network.network for value in (dhcp, static_baseline, candidate)
     ):
         raise Refusal("private_candidate_addresses_invalid")
     mac = fixture["appliance_mac"].lower()
@@ -480,8 +541,11 @@ def read_native(plan: dict, fixture: dict, peer: PinnedPeerTransport, appliance:
         f"dhcp-host={mac},{dhcp},12h", "dhcp-leasefile=/var/lib/misc/dnsmasq.leases",
         "dhcp-authoritative",
     ]
+    allowed_configs = [expected_config + ["dhcp-option=option:router"]]
+    if mode == "static":
+        allowed_configs.append(expected_config)
     config = peer.command("cat /etc/dnsmasq.conf").decode("utf-8")
-    if config.splitlines() != expected_config:
+    if config.splitlines() not in allowed_configs:
         raise Refusal("peer_static_only_dhcp_changed")
     if "started" not in peer.command("rc-service dnsmasq status").decode("utf-8"):
         raise Refusal("peer_dhcp_daemon_inactive")
@@ -503,17 +567,28 @@ def read_native(plan: dict, fixture: dict, peer: PinnedPeerTransport, appliance:
         item.get("local") == baseline and item.get("prefixlen") == network.network.prefixlen
         for item in addr[0].get("addr_info", [])
     ):
-        raise Refusal("appliance_static_baseline_missing")
+        raise Refusal("appliance_dhcp_baseline_missing" if mode == "dhcp" else "appliance_static_baseline_missing")
+    if (mode == "dhcp" or plan.get("scenario") == "ordinary-ca-rotation") and len(addr[0].get("addr_info", [])) != 1:
+        raise Refusal("appliance_management_address_scope_changed")
     # A device-filtered iproute2 response can omit dev. Read the dedicated
     # management table without that filter, then match its owned prefix.
     routes = json.loads(appliance.command("ip -j -4 route show table 100"))
-    if not any(
+    matching_routes = [route for route in routes if
         route.get("dev") == "eth0" and route.get("dst") == str(network.network)
         and route.get("prefsrc", route.get("src")) == baseline and route.get("scope") == "link"
         and not route.get("gateway") and not route.get("via")
-        for route in routes
-    ):
+    ]
+    if mode == "dhcp":
+        if len(matching_routes) != 1 or len(routes) != 1:
+            raise Refusal("appliance_eth0_route_missing")
+    elif not matching_routes:
         raise Refusal("appliance_eth0_route_missing")
+    if mode == "dhcp" and json.loads(appliance.command("ip -j -4 route show default")):
+        raise Refusal("appliance_dhcp_default_route_present")
+    if (mode == "dhcp" or plan.get("scenario") == "ordinary-ca-rotation") and json.loads(
+        appliance.command("ip -j -6 route show default")
+    ):
+        raise Refusal("appliance_management_ipv6_default_route_present")
     ca_bytes = Path(plan["ca_path"]).read_bytes()
     if digest(ca_bytes) != plan["ca_sha256"].lower() or b"PRIVATE KEY" in ca_bytes or b"-----BEGIN CERTIFICATE-----" not in ca_bytes:
         raise Refusal("public_ca_pin_invalid")
@@ -529,21 +604,29 @@ def read_native(plan: dict, fixture: dict, peer: PinnedPeerTransport, appliance:
     finally:
         connection.close()
     result = {
-        "schema": 1, "kind": "certificate-private-address-proof", "phase": "static-baseline-preflight",
+        "schema": 1, "kind": "certificate-private-address-proof",
+        "phase": "dhcp-baseline-preflight" if mode == "dhcp" else "static-baseline-preflight",
         "task_id": plan["task_id"], "repository": "mdaneri/Atlaso", "pr": plan_pr(plan),
         "vmx_path": fixture["appliance_vmx"], "addresses": [candidate, dhcp],
         "address_ownership_state": "unproven",
         "baseline_address": baseline, "baseline_interface": "eth0", "appliance_mac": mac,
         "dhcp_reservation": dhcp, "dhcp_server": str(network.ip),
-        "dhcp_lease_observation": "unexpired-before-static-baseline",
+        "dhcp_lease_observation": "unexpired-before-management-baseline",
         "candidate_observation_limit": "lease and topology do not prove exclusive LAN attachment or absence of static address and MAC conflicts",
         "peer_fixture_sha256": plan["peer_fixture"]["sha256"],
-        "rewired_runtime_sha256": plan["rewired_runtime"]["sha256"],
         "lan_segment_receipt_sha256": fixture["lan_segment_receipt_sha256"].lower(),
         "peer_dhcp_config_sha256": digest(config.encode()),
         "ca_sha256": plan["ca_sha256"].lower(),
         "peer_routed_baseline_https": "explicit-ca-and-ip-hostname-verified",
     }
+    if mode == "dhcp":
+        result.update(
+            ordinary_ca_baseline_mode="dhcp",
+            dhcp_baseline_observation_sha256=plan["dhcp_baseline_observation"]["sha256"],
+            dhcp_lease_observation="unexpired-original-mac-lease-and-live-eth0-before-ca-rotation",
+        )
+    else:
+        result.update(ordinary_ca_baseline_mode="static", rewired_runtime_sha256=plan["rewired_runtime"]["sha256"])
     if trusted:
         assert_same_topology(topology, inspect_trusted_host(plan))
         result.update(trust_model="trusted-host", address_ownership_state="trusted-host-controlled",
@@ -616,13 +699,14 @@ def main() -> int:
         if not admin_password or len(admin_password) < 12 or admin_password != admin_password.strip():
             raise Refusal("bounded_credential_bridge_required")
         peer_plan = plan["peer_transport"]
+        address = baseline_address(plan, fixture)
         with PinnedPeerTransport(
             peer_plan["host"], peer_plan["user"], peer_plan["ssh_public_key"],
             peer_plan["ssh_host_key"], peer_plan["private_subnet"],
             **({"authentication_mode": peer_plan["authentication_mode"]} if "authentication_mode" in peer_plan else {}),
         ) as peer:
             with PinnedApplianceSession(
-                peer, plan["baseline_address"], plan["appliance_user"],
+                peer, address, plan["appliance_user"],
                 admin_password, plan["appliance_ssh_host_key"],
             ) as appliance:
                 proof = read_native(plan, fixture, peer, appliance)
@@ -635,12 +719,27 @@ def main() -> int:
                 or proof.get("candidate_conflict_state") != "clear-current"):
             raise Refusal("exclusive_private_lan_and_candidate_ownership_unproven")
         proof_sha = publish(address_path, proof)
-        controlled = dict(rewire)
-        controlled.update(
-            kind="certificate-controlled-runtime", url=f"https://{plan['baseline_address']}",
-            observed_address=plan["baseline_address"], address_ownership_state=proof["address_ownership_state"],
-            address_proof_sha256=proof_sha, rewired_runtime_sha256=plan["rewired_runtime"]["sha256"],
-        )
+        if baseline_mode(plan) == "dhcp":
+            controlled = dict(bound_json(plan["bootstrap_runtime"]))
+            controlled.update({
+                "schema": 1, "kind": "certificate-controlled-runtime",
+                "phase": "dhcp-baseline-native-observed", "task_id": plan["task_id"],
+                "repository": "mdaneri/Atlaso", "pr": plan_pr(plan),
+                "source_commit": plan["source_commit"], "deployed_commit": plan["deployed_commit"],
+                "vmx_path": fixture["appliance_vmx"], "interface": "eth0",
+                "mac": fixture["appliance_mac"], "url": f"https://{address}",
+                "observed_address": address, "address_ownership_state": proof["address_ownership_state"],
+                "ordinary_ca_baseline_mode": "dhcp",
+                "dhcp_baseline_observation_sha256": plan["dhcp_baseline_observation"]["sha256"],
+                "address_proof_sha256": proof_sha,
+            })
+        else:
+            controlled = dict(rewire)
+            controlled.update(
+                kind="certificate-controlled-runtime", url=f"https://{address}",
+                observed_address=address, address_ownership_state=proof["address_ownership_state"],
+                address_proof_sha256=proof_sha, rewired_runtime_sha256=plan["rewired_runtime"]["sha256"],
+            )
         runtime_sha = publish(runtime_path, controlled)
         print(json.dumps({"address_evidence": {"path": str(address_path), "sha256": proof_sha},
                           "runtime_evidence": {"path": str(runtime_path), "sha256": runtime_sha}}))

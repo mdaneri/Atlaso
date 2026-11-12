@@ -1,6 +1,6 @@
 [project]
 name = "atlaso"
-version = "0.9.497"
+version = "0.9.498"
 description = "Atlaso supports POC, lab, and test environments by simplifying deployment, maintenance, and validation."
 readme = "README.md"
 license = "MIT"
@@ -104,12 +104,16 @@ files = [
   "atlaso/important_events.py",
   "atlaso/app/services/important_task_events.py",
   "scripts/pytest_git_fixtures.py",
+  "scripts/photon_build_state_test_fixtures.py",
   "scripts/onepassword_task_configuration.py",
   "scripts/pytest_directory_probes.py",
   "scripts/zensical_cache.py",
   "atlaso/app/services/dhcp_pool_verification.py",
   "scripts/interop/dedicated_host_contract.py",
   "scripts/interop/dedicated_host_proof.py",
+  "scripts/interop/certificate_ca_baseline.py",
+  "scripts/interop/certificate_iso_deployment.py",
+  "scripts/interop/certificate_iso_transport.py",
   "atlaso/app/services/routing_permissions.py",
   "atlaso/app/routers/api_v1/routing_permissions.py",
   "atlaso/app/routing_permission_schemas.py",

@@ -162,7 +162,11 @@ def test_photon_and_deployment_entry_points_bound_service_tokens() -> None:
     )[0]
     assert "Invoke-AtlasoBoundedStreamingProcess `" in password_deploy
     assert "-TimeoutSeconds $DeploymentTimeoutSeconds `" in password_deploy
-    assert "'-RepositoryRoot', $WorkingDirectory" in password_deploy
+    assert (
+        "'-RepositoryRoot', $(if ($ConfigurationRepositoryRoot) "
+        "{ $ConfigurationRepositoryRoot } else { $WorkingDirectory })"
+    ) in password_deploy
+    assert "-ConfigurationRepositoryRoot $resolvedRepoRoot" in deploy
 
 
 def test_export_rejects_inherited_service_tokens_before_dispatch() -> None:

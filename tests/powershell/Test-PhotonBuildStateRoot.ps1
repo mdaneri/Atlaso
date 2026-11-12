@@ -7,11 +7,20 @@ Atlaso repository root containing the supported Photon build wrapper.
 Optional existing empty task-owned fixture directory beneath RepositoryRoot, originally receipted before use.
 .PARAMETER OriginalFixtureIdentity
 Original native identity of FixtureRoot, supplied together with that exact directory.
+.PARAMETER FixtureOwnerReceipt
+Original PytestGitFixtures creation receipt for retained task-owned validation.
+.PARAMETER FixturePythonPath
+Python 3.14 executable used for the original fixture owner.
+.PARAMETER FixtureConfigPath
+Active supported Codex configuration originally admitted by the fixture owner.
 #>
 param(
     [Parameter(Mandatory = $true)][string]$RepositoryRoot,
     [string]$FixtureRoot = '',
-    [string]$OriginalFixtureIdentity = ''
+    [string]$OriginalFixtureIdentity = '',
+    [string]$FixtureOwnerReceipt = '',
+    [string]$FixturePythonPath = '',
+    [string]$FixtureConfigPath = ''
 )
 
 Set-StrictMode -Version Latest
@@ -213,6 +222,38 @@ $fixtureRoot = if ($FixtureRoot) { [IO.Path]::GetFullPath($FixtureRoot) } else {
     Join-Path $resolvedRepositoryRoot ('.atlaso-local\photon-build-state-test-' + [guid]::NewGuid().ToString('N'))
 }
 if ($PSBoundParameters.ContainsKey('FixtureRoot') -xor [bool]$OriginalFixtureIdentity) { throw 'Pass both original fixture selectors.' }
+if (($FixtureOwnerReceipt -or $FixturePythonPath -or $FixtureConfigPath) -and
+    (-not $FixtureOwnerReceipt -or -not $OriginalFixtureIdentity -or -not $FixturePythonPath -or -not $FixtureConfigPath)) {
+    throw 'Owned validation requires all original fixture and owner selectors.'
+}
+<#
+.SYNOPSIS
+Invoke one creation-bound owner operation without running a build or guest command.
+.PARAMETER Operation
+Validate the original root, register its Git fixture, or receipt an internal redirect before use.
+.PARAMETER Path
+Exact newly created repository or new internal redirect path.
+.PARAMETER Target
+Exact original internal target when creating a redirect.
+#>
+function Invoke-PhotonBuildStateFixtureOwner {
+    param(
+        [Parameter(Mandatory = $true)][ValidateSet('validate', 'register', 'link')][string]$Operation,
+        [Parameter(Mandatory = $true)][string]$Path,
+        [string]$Target = ''
+    )
+    if ($FixtureOwnerReceipt) {
+        $arguments = @('-I', '-S', '-B', '-c',
+            'import runpy,sys;sys.path.insert(0,sys.argv.pop(1));runpy.run_module("scripts.photon_build_state_test_fixtures",run_name="__main__")',
+            $resolvedRepositoryRoot, $Operation, '--config', $FixtureConfigPath,
+            '--receipt', $FixtureOwnerReceipt, '--path', $Path)
+        if ($Target) { $arguments += @('--target', $Target) }
+        & $FixturePythonPath @arguments
+        if ($LASTEXITCODE -ne 0) { throw 'Original Photon regression fixture operation failed; preserve its evidence.' }
+    } elseif ($Operation -eq 'link') {
+        [void](New-Item -ItemType Junction -Path $Path -Target $Target -ErrorAction Stop)
+    }
+}
 if ($OriginalFixtureIdentity) {
     Assert-AtlasoStrictDescendantPath -ParentPath $resolvedRepositoryRoot -ChildPath $fixtureRoot `
         -FailureMessage 'Original Photon fixture escaped the repository'
@@ -223,6 +264,7 @@ if ($OriginalFixtureIdentity) {
     }
     finally { $fixturePin.Dispose() }
 }
+Invoke-PhotonBuildStateFixtureOwner -Operation validate -Path $fixtureRoot
 try {
     $selectiveRepository = Join-Path $fixtureRoot 'selective-ignore-repository'
     [void][System.IO.Directory]::CreateDirectory($selectiveRepository)
@@ -230,6 +272,7 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw 'Could not initialize selective-ignore fixture repository.'
     }
+    Invoke-PhotonBuildStateFixtureOwner -Operation register -Path $selectiveRepository
     [System.IO.File]::WriteAllText(
         (Join-Path $selectiveRepository '.gitignore'),
         "/state/*`n!/state/credentials/`n!/state/credentials/**`n",
@@ -324,7 +367,7 @@ try {
     [void][System.IO.Directory]::CreateDirectory($junctionContainer)
     [void][System.IO.Directory]::CreateDirectory($junctionTarget)
     $junctionParent = Join-Path $junctionContainer 'credentials'
-    [void](New-Item -ItemType Junction -Path $junctionParent -Target $junctionTarget -ErrorAction Stop)
+    Invoke-PhotonBuildStateFixtureOwner -Operation link -Path $junctionParent -Target $junctionTarget
     $cleanupLeaf = 'atlaso-photon-build-credentials-' + [guid]::NewGuid().ToString('N')
     $cleanupTarget = Join-Path $junctionTarget $cleanupLeaf
     [void][System.IO.Directory]::CreateDirectory($cleanupTarget)
@@ -576,7 +619,7 @@ try {
     $markerEscape = Join-Path $fixtureRoot 'marker-escape'
     $redirectedMarkerDirectory = Join-Path $fixtureRoot 'redirected-markers'
     [void][System.IO.Directory]::CreateDirectory($markerEscape)
-    [void](New-Item -ItemType Junction -Path $redirectedMarkerDirectory -Target $markerEscape)
+    Invoke-PhotonBuildStateFixtureOwner -Operation link -Path $redirectedMarkerDirectory -Target $markerEscape
     $redirectedMarkerPath = Join-Path $redirectedMarkerDirectory 'cleanup.json'
     [System.IO.File]::WriteAllText(
         $redirectedMarkerPath,
@@ -945,11 +988,7 @@ try {
     }
     $renamedSensitiveRoot = Join-Path $sensitiveCredentialRoot 'sensitive-build-retained'
     Move-Item -LiteralPath $sensitiveBuildRoot -Destination $renamedSensitiveRoot -ErrorAction Stop
-    [void](New-Item `
-            -ItemType Junction `
-            -Path $sensitiveBuildRoot `
-            -Target $sensitiveEscapeRoot `
-            -ErrorAction Stop)
+    Invoke-PhotonBuildStateFixtureOwner -Operation link -Path $sensitiveBuildRoot -Target $sensitiveEscapeRoot
     $sensitivePathError = ''
     try {
         Assert-AtlasoPhotonSensitiveBuildPathIdentity `
@@ -973,11 +1012,7 @@ try {
     [void][System.IO.Directory]::CreateDirectory($stagingBuildState)
     [void][System.IO.Directory]::CreateDirectory($stagingEscape)
     $redirectedCredentialParent = Join-Path $stagingBuildState 'credentials'
-    [void](New-Item `
-            -ItemType Junction `
-            -Path $redirectedCredentialParent `
-            -Target $stagingEscape `
-            -ErrorAction Stop)
+    Invoke-PhotonBuildStateFixtureOwner -Operation link -Path $redirectedCredentialParent -Target $stagingEscape
     $escapedCredentialRoot = Join-Path $redirectedCredentialParent (
         'atlaso-photon-build-credentials-' + [guid]::NewGuid().ToString('N')
     )
@@ -1005,7 +1040,9 @@ finally {
         if ($OriginalFixtureIdentity -and [Atlaso.WorkstationFileIdentity]::Get($fixtureRoot) -cne $OriginalFixtureIdentity) {
             throw 'Original Photon fixture identity changed; preserve it.'
         }
-        Remove-Item -LiteralPath $fixtureRoot -Recurse -Force
+        if (-not $FixtureOwnerReceipt) { Remove-Item -LiteralPath $fixtureRoot -Recurse -Force }
+        # Owned mode retains the Git graph. Its owner retires only the four
+        # original redirect leaves before sealing, then owns later cleanup.
     }
 }
 

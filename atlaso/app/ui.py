@@ -809,6 +809,7 @@ MANAGEMENT_HANDOFF_APPLIANCE_SETTINGS_KEYS = {
     "management_https_enabled",
     "management_https_cert_path",
     "management_https_key_path",
+    "management_https_ca_path",
     "web_terminal_interfaces",
     "web_terminal_addresses",
 }
@@ -2680,6 +2681,10 @@ def appliance_settings_context(
         management_https_key_path=management_https_key_path,
         web_terminal_options=terminal_options,
     )
+    if settings.management_https_enabled:
+        appliance_settings_preview["management_https_ca_path"] = str(
+            PurePosixPath(ca_settings.storage_path) / "root-ca.pem"
+        )
     if appliance_settings_preview["resolver_mode"] != "dhcp":
         observed_dhcp_dns_servers = []
     return {
@@ -10476,24 +10481,25 @@ def rotated_ca_certificate_consumers(ca_unit: dict[str, Any], ca_baseline: dict[
         if isinstance(row, dict) and row.get("managed_owner")
     }
     owner_units = {
-        "appliance:https": "public_services",
-        "oidc:https": "public_services",
-        "ca_portal:https": "public_services",
-        "vcf_offline_depot:https": "public_services",
-        "kms:server": "kms",
-        "ldap:ldaps": "ldap",
-        "ntp:nts": "ntpd",
-        "vcf_private_registry:https": "vcf_private_registry",
+        "appliance:https": {"appliance_settings", "public_services"},
+        "oidc:https": {"public_services"},
+        "ca_portal:https": {"public_services"},
+        "vcf_offline_depot:https": {"public_services"},
+        "kms:server": {"kms"},
+        "ldap:ldaps": {"ldap"},
+        "ntp:nts": {"ntpd"},
+        "vcf_private_registry:https": {"vcf_private_registry"},
     }
-    owner_units.update({row["managed_owner"]: "public_services" for row in current.get("certificates", [])
+    owner_units.update({row["managed_owner"]: {"public_services"} for row in current.get("certificates", [])
                         if isinstance(row, dict) and str(row.get("managed_owner") or "").startswith("reverse_proxy:")})
     return {
-        owner_units[row["managed_owner"]]
+        unit_id
         for row in current.get("certificates", [])
         if isinstance(row, dict)
         and row.get("managed_owner") in owner_units
         and row.get("fingerprint")
         and row["fingerprint"] != previous_fingerprints.get(row["managed_owner"])
+        for unit_id in owner_units[row["managed_owner"]]
     }
 
 
@@ -11161,9 +11167,48 @@ def management_handoff_completes_appliance_settings(
     if not previous or not current:
         return False
     for key in MANAGEMENT_HANDOFF_APPLIANCE_SETTINGS_KEYS:
-        if key in previous or key in current:
-            previous[key] = current.get(key)
+        if key in current:
+            previous[key] = current[key]
+        else:
+            previous.pop(key, None)
     return previous == current
+
+
+def management_address_only_appliance_settings_change(
+    current_preview: str, baseline: dict[str, Any] | None,
+) -> bool:
+    """Identify Settings differences derived entirely from the Network address.
+
+    Args:
+        current_preview: Current redacted Appliance Settings preview.
+        baseline: Last successful Appliance Settings baseline.
+    """
+    previous = json_config_object(str((baseline or {}).get("config_preview") or ""))
+    current = json_config_object(current_preview)
+    if not previous or not current:
+        return False
+    changed_keys = {key for key in previous.keys() | current.keys() if previous.get(key) != current.get(key)}
+    if "web_terminal_addresses" in changed_keys:
+        old_address = str(previous.get("management_ip") or "")
+        new_address = str(current.get("management_ip") or "")
+        old_addresses = previous.get("web_terminal_addresses")
+        if (
+            previous.get("web_terminal_enabled") is not True
+            or current.get("web_terminal_enabled") is not True
+            or previous.get("management_interface") != current.get("management_interface")
+            or not old_address or not new_address
+            or not isinstance(old_addresses, list)
+            or any(not isinstance(address, str) for address in old_addresses)
+            or old_address not in old_addresses
+        ):
+            return False
+        derived_addresses = list(dict.fromkeys(
+            new_address if address == old_address else address for address in old_addresses
+        ))
+        if current.get("web_terminal_addresses") != derived_addresses:
+            return False
+        changed_keys.remove("web_terminal_addresses")
+    return bool(changed_keys) and changed_keys <= {"management_interface", "management_ip", "management_ip_cidr"}
 
 
 def management_address_label(signature: dict[str, str]) -> str:
@@ -18241,6 +18286,22 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         "A rotated CA certificate has an applied listener missing from this task. "
                         "Submit the appliance changes again."
                     )
+                # A protected handoff publishes CA and its bundled consumers
+                # together at the group's first row, in the helper-owned order.
+                ca_publication_index = min(
+                    selected_order.index(unit_id) for unit_id in handoff_unit_ids
+                ) if "ca" in handoff_unit_ids else selected_order.index("ca")
+                if any(
+                    selected_order.index(unit_id) < ca_publication_index
+                    and not (
+                        "ca" in handoff_unit_ids and appliance_apply_listener_shuts_down(current_by_id[unit_id])
+                    )
+                    for unit_id in ca_reload_units - handoff_unit_ids
+                ):
+                    raise ApplianceApplyJobError(
+                        "CA publication must precede every rotated-certificate listener. "
+                        "Submit the appliance changes again."
+                    )
             for index, unit in enumerate(selected_units, start=1):
                 # A bundled transaction already completed these rows. A later request
                 # must not turn their successful final result into cancellation.
@@ -19230,6 +19291,25 @@ def proxy_socket_takeover_dependencies(
     return proxy_socket_release_dependencies(projected, unit_map)
 
 
+def appliance_apply_listener_shuts_down(unit: dict[str, Any]) -> bool:
+    """Check whether desired state explicitly disables the unit's listener.
+
+    Args:
+        unit: Appliance Apply unit with its current desired context.
+    """
+    context = unit.get("context", {})
+    if unit["id"] == "esxi_pxe":
+        return context.get("esxi_pxe_boot", {}).get("enabled") is False
+    keys = {
+        "dnsmasq": ("dns_settings", "dhcp_settings"),
+        "esx_storage": ("esx_storage_settings",), "kms": ("kms_settings",),
+        "ldap": ("ldap_settings",), "ntpd": ("ntp_settings",),
+        "vcf_backups": ("vcf_backup_settings",), "vcf_offline_depot": ("vcf_depot_settings",),
+        "vcf_private_registry": ("vcf_registry_settings",),
+    }.get(unit["id"], ())
+    return bool(keys) and all(getattr(context.get(key), "enabled", None) is False for key in keys)
+
+
 def appliance_apply_execution_plan(
     db: Session, units: list[dict[str, Any]], selected_ids: set[str], *, enforce_consent: bool = True, consented_ids: set[str] | None = None,
 ) -> dict[str, Any]:
@@ -19317,6 +19397,7 @@ def appliance_apply_execution_plan(
     if https_ca_required:
         # The CA unit materializes newly issued management TLS files.
         selected_ids.add("ca")
+    ca_consumers: set[str] = set()
     if "ca" in selected_ids:
         ca_consumers = rotated_ca_certificate_consumers(
             unit_map["ca"], apply_baselines.get("ca")
@@ -19326,6 +19407,17 @@ def appliance_apply_execution_plan(
             if unit_id in unit_map and unit_map[unit_id]["has_baseline"]
             and unit_map[unit_id]["changed"] and unit_id not in selected_ids
         }
+        if (
+            "appliance_settings" in pending_ca_consumers
+            and unit_map.get("network", {}).get("management_handoff_required")
+            and management_address_only_appliance_settings_change(
+                str(unit_map["appliance_settings"].get("config_preview") or ""),
+                apply_baselines.get("appliance_settings"),
+            )
+        ):
+            # The CA-bearing protected handoff below already carries Network's
+            # address into Settings. Independent Settings edits still need consent.
+            pending_ca_consumers.remove("appliance_settings")
         selected_ids.update(pending_ca_consumers if not enforce_consent else pending_ca_consumers & approved_ids)
         if enforce_consent and pending_ca_consumers - approved_ids:
             detail = "Select the changed listener units before applying rotated CA certificates."
@@ -19694,23 +19786,10 @@ def appliance_apply_execution_plan(
         if management_handoff:
             # Only shutdowns can precede the CA-bearing group. Enabled consumers
             # may need newly deployed certificates, even for a listener change.
-            shutdown_settings = {
-                "dnsmasq": ("dns_settings", "dhcp_settings"),
-                "esx_storage": ("esx_storage_settings",), "kms": ("kms_settings",),
-                "ldap": ("ldap_settings",), "ntpd": ("ntp_settings",),
-                "vcf_backups": ("vcf_backup_settings",),
-                "vcf_offline_depot": ("vcf_depot_settings",),
-                "vcf_private_registry": ("vcf_registry_settings",),
-            }
             shutdown_ids = {
-                unit_id for unit_id in release_ids
-                if unit_id in shutdown_settings and all(
-                    getattr(unit_map.get(unit_id, {}).get("context", {}).get(key), "enabled", None) is False
-                    for key in shutdown_settings[unit_id]
-                )
+                unit_id for unit_id in release_ids | {"esxi_pxe"}
+                if unit_id in unit_map and appliance_apply_listener_shuts_down(unit_map[unit_id])
             }
-            if unit_map.get("esxi_pxe", {}).get("context", {}).get("esxi_pxe_boot", {}).get("enabled") is False:
-                shutdown_ids.add("esxi_pxe")
             pending_moves = proxy_release_ids - shutdown_ids
             if pending_moves:
                 labels = ", ".join(unit_map[unit_id]["label"] for unit_id in sorted(pending_moves))
@@ -19738,7 +19817,10 @@ def appliance_apply_execution_plan(
         group_ids = {*MANAGEMENT_HANDOFF_UNIT_IDS, "dnsmasq", "wan", "nat"}
         last_group = max(index for index, unit in enumerate(selected_ordered_units) if unit["id"] in group_ids)
         selected_ordered_units[last_group + 1:last_group + 1] = takers
-    if https_ca_required and not management_handoff:
+    if not management_handoff and (
+        https_ca_required
+        or ("appliance_settings" in selected_ids and "appliance_settings" in ca_consumers)
+    ):
         # Settings validates the management certificate files on disk; publish
         # the pending CA state before enabling HTTPS.
         selected_ordered_units = [unit for unit in selected_ordered_units if unit["id"] != "ca"]
@@ -19757,6 +19839,7 @@ def appliance_apply_execution_plan(
         "applied_baseline_fingerprint": appliance_snapshot_hash(apply_baselines),
         "skipped_changed_units": skipped_changed_units,
         "generated_dns_only": generated_dns_only,
+        "ca_certificate_consumers": sorted(ca_consumers & selected_ids),
         "dns_resolver_activation": dns_resolver_activation,
         "management_handoff": management_handoff,
         "traffic_publishing_pair": traffic_publishing_pair,
@@ -19827,6 +19910,8 @@ def appliance_apply_review_plan(db: Session, selected_units: list[str] | None = 
                 reason = "Establish the listener addresses and routing targets used by this task."
             elif unit_id == "ca":
                 reason = "Deploy the certificates required by the selected listeners."
+            elif unit_id in plan["ca_certificate_consumers"]:
+                reason = "Activate the rotated CA certificate on the applied listener."
             elif unit_id == "dnsmasq":
                 reason = "Publish dependent DNS records after listener readiness."
             elif unit_id == "appliance_settings":
