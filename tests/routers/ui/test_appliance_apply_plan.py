@@ -123,7 +123,12 @@ def test_proxy_review_requires_shutdown_and_orders_it_before_protected_group(cli
         executed = []
 
         def stop_before_handoff(unit, **_kwargs):
-            """Record the first execution without touching a host."""
+            """Record the first execution without touching a host.
+
+            Args:
+                unit: Apply unit passed to the executor.
+                **_kwargs: Adapter and database arguments unused by this stub.
+            """
             executed.append(unit["id"])
             return {"unit_id": unit["id"], "success": False, "dry_run": True}
 
