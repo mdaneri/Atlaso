@@ -104,6 +104,17 @@ preference, passwordless web-terminal preference, and root SSH login preference.
 behavior. The app-owned appliance DNS record is derived from that identity, but DNS/DHCP still owns the rendered dnsmasq
 record and service reload boundary.
 
+An `appliance:https` leaf rotation has two nginx consumers: Appliance Settings owns the dedicated management site,
+and Public Services owns its enabled public and flagged-management listeners. The ordinary Apply plan replays both
+applied consumers after CA publication, including an absent Public Services site. Pending consumer edits require
+explicit review consent. The worker rejects a missing or incorrectly ordered consumer before execution and defers
+the CA baseline until all consumers succeed. Ordinary Settings readiness captures the deployed leaf before activation,
+checks every external scoped management address with the configured managed CA, and requires fresh TLS 1.2-or-newer
+connections to serve that exact leaf. Retained nginx loopback sockets stay outside certificate identity checks; the
+separate Atlaso loopback upstream health check remains required. A previous but still trusted leaf cannot satisfy
+readiness; the existing front-door rollback path
+handles activation or readiness failure.
+
 The web terminal is disabled globally by default. Enabling it requires management HTTPS and always includes the
 management interface; administrators may also select addressed access/route physical interfaces or enabled VLANs.
 Appliance Settings creates a dedicated Ed25519 OpenSSH user CA under `/etc/atlaso/ssh`, installs `TrustedUserCAKeys`
@@ -393,8 +404,8 @@ the most recently updated DNS-bearing source as a migration fallback.
 If another Appliance Settings field differs from its baseline, that unit remains pending after a successful handoff so
 the full hostname, resolver, SSH, Web Terminal trust, and telemetry apply remains pending. A staged resolver-mode or
 server change is part of the successful handoff's Appliance Settings baseline when all unrelated settings already
-match, but is not baseline-committed when another unrelated setting also differs. Rollback restores the snapshotted
-networkd resolver directives, reverts the candidate link's transient
+match. The same rule covers the CA trust path added or removed by a management HTTPS toggle. Rollback restores the
+snapshotted networkd resolver directives, reverts the candidate link's transient
 resolver override, and reconfigures the restored links before checking the previous listener.
 
 Readiness is fail-closed and bounded. Every host-facing probe includes the previous or candidate configured public port.

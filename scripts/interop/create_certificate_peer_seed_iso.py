@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import ipaddress
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -136,9 +137,8 @@ def peer_files(args: argparse.Namespace) -> dict[str, str]:
         "dhcp-leasefile=/var/lib/misc/dnsmasq.leases\n"
         "dhcp-authoritative\n"
     )
-    if serve_ntp and vmware_vix:
-        # The Workstation NTP fixture needs a gateway-free lease. dnsmasq
-        # otherwise advertises itself as the router by default.
+    # dnsmasq otherwise advertises itself as the router by default.
+    if getattr(args, "no_dhcp_router", False) or (serve_ntp and vmware_vix):
         dnsmasq += "dhcp-option=option:router\n"
     extra_packages = ""
     extra_write_files = ""
@@ -313,6 +313,9 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ntp-probe-cidr")
     parser.add_argument("--instance-id")
     parser.add_argument("--retain-instance-cache", action="store_true")
+    parser.add_argument(
+        "--no-dhcp-router", action="store_true", help="Omit the default router from the private lease."
+    )
     return parser
 
 
@@ -330,11 +333,18 @@ def main() -> int:
         raise FileExistsError(output)
     output.parent.mkdir(parents=True, exist_ok=True)
     iso = pycdlib.PyCdlib()
-    iso.new(interchange_level=3, joliet=3, vol_ident="cidata")
-    for name, iso_name in (("user-data", "USERDATA"), ("meta-data", "METADATA"), ("network-config", "NETCFG")):
-        add_file(iso, name, files[name], iso_name)
-    iso.write(str(output))
-    iso.close()
+    try:
+        iso.new(interchange_level=3, joliet=3, vol_ident="cidata")
+        for name, iso_name in (("user-data", "USERDATA"), ("meta-data", "METADATA"), ("network-config", "NETCFG")):
+            add_file(iso, name, files[name], iso_name)
+        # Retain exclusive creation through ISO serialization; a concurrent
+        # insertion after the preliminary existence check must be preserved.
+        with output.open("xb") as stream:
+            iso.write_fp(stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+    finally:
+        iso.close()
     print(output)
     return 0
 

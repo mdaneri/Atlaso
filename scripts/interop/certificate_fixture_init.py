@@ -162,12 +162,54 @@ def replace_fields(fields: list[tuple[str, str]], changes: dict[str, str], remov
     return [(key, value) for key, value in fields if key not in omitted] + list(changes.items())
 
 
-def prepare_forms(client, peer_address: str) -> tuple[dict, dict]:
+def _prepare_settings_form(form: FixtureForm, peer_address: str,
+                           web_terminal_enabled: bool | None) -> list[tuple[str, str]]:
+    """Prepare the ordinary Settings POST while preserving unrelated controls.
+
+    Args:
+        form: Parsed existing Settings form.
+        peer_address: Admitted private peer used as the resolver.
+        web_terminal_enabled: Explicit fixture choice, or ``None`` to preserve it.
+    """
+    if web_terminal_enabled is None:
+        return replace_fields(form.fields, {"external_dns_servers": peer_address})
+    if type(web_terminal_enabled) is not bool:
+        raise Refusal("fixture_web_terminal_choice_invalid")
+    changes = {"external_dns_servers": peer_address}
+    remove = {"web_terminal_enabled", "web_terminal_interfaces_present", "web_terminal_interfaces"}
+    fields = replace_fields(form.fields, changes, remove)
+    fields.append(("web_terminal_interfaces_present", "1"))
+    if web_terminal_enabled:
+        fields.extend((("web_terminal_enabled", "on"), ("web_terminal_interfaces", "eth0")))
+    return fields
+
+
+def _web_terminal_form_state(form: FixtureForm) -> dict:
+    """Return only the public Web Terminal checkbox and selected interfaces.
+
+    Args:
+        form: Parsed existing Settings form.
+    """
+    fields = form.fields
+    enabled_values = [value for key, value in fields if key == "web_terminal_enabled"]
+    if len(enabled_values) > 1 or any(value not in {"on", "true", "1"} for value in enabled_values):
+        raise Refusal("fixture_web_terminal_readback_invalid")
+    enabled = bool(enabled_values)
+    interfaces = [value for key, value in fields if key == "web_terminal_interfaces"]
+    if (any(not isinstance(value, str) or not value for value in interfaces)
+            or len(interfaces) != len(set(interfaces))):
+        raise Refusal("fixture_web_terminal_readback_invalid")
+    return {"enabled": enabled, "interfaces": interfaces}
+
+
+def prepare_forms(client, peer_address: str, *,
+                  web_terminal_enabled: bool | None = None) -> tuple[dict, dict]:
     """Prepare the existing DNS, appliance-settings and NTP forms without edits.
 
     Args:
         client: Authenticated, CA-validated management client.
         peer_address: Admitted private peer providing real NTP.
+        web_terminal_enabled: Optional explicit Web Terminal state for this fixture.
     """
     forms = {}
     public = {}
@@ -181,6 +223,13 @@ def prepare_forms(client, peer_address: str) -> tuple[dict, dict]:
                    if key not in {"csrf", "nts_server_key_path", "nts_server_cert_path"}]
         public[page] = {"form_sha256": hashlib.sha256(json.dumps(visible, separators=(",", ":")).encode()).hexdigest()}
     settings = dict(forms["settings"].fields)
+    if web_terminal_enabled is not None and type(web_terminal_enabled) is not bool:
+        raise Refusal("fixture_web_terminal_choice_invalid")
+    public["settings"].update(
+        web_terminal_enabled_requested=web_terminal_enabled,
+        web_terminal_enabled_original=_web_terminal_form_state(forms["settings"])["enabled"],
+        web_terminal_interfaces_original=_web_terminal_form_state(forms["settings"])["interfaces"],
+    )
     if settings.get("management_https_enabled") not in {"on", "true", "1"}:
         raise Refusal("fixture_management_https_required")
     ntp = dict(forms["ntp"].fields)
@@ -210,7 +259,7 @@ def prepare_forms(client, peer_address: str) -> tuple[dict, dict]:
                     "use_nts": False, "description": "Isolated certificate fixture peer"})
     prepared = {
         "dns": replace_fields(forms["dns"].fields, {"enabled": "", "upstream_servers": peer_address}),
-        "settings": replace_fields(forms["settings"].fields, {"external_dns_servers": peer_address}),
+        "settings": _prepare_settings_form(forms["settings"], peer_address, web_terminal_enabled),
         "ntp": replace_fields(forms["ntp"].fields, {
             "enabled": "", "nts_server_enabled": "", "time_source": "ntp_client",
             "upstream_servers": peer_address, "upstream_sources_json": json.dumps(sources, separators=(",", ":")),
@@ -332,9 +381,19 @@ def admit_initialization(plan: dict, output: Path) -> tuple[dict, str]:
             or plan.get("vmx_path") != fixture["appliance_vmx"]
             or plan.get("mac", "").replace("-", ":").lower() != fixture["appliance_mac"].lower()
             or bound_json(plan["appliance_ownership"]).get("phase") != "original-installation-vm-created"
-            or requested != {"peer_time_address": peer_address, "resolver_address": peer_address,
-                             "disable_dns_server": True, "disable_ntp_server": True}
+            or not isinstance(requested, dict)
+            or set(requested) not in (
+                {"peer_time_address", "resolver_address", "disable_dns_server", "disable_ntp_server"},
+                {"peer_time_address", "resolver_address", "disable_dns_server", "disable_ntp_server",
+                 "web_terminal_enabled"},
+            )
+            or {key: requested.get(key) for key in
+                ("peer_time_address", "resolver_address", "disable_dns_server", "disable_ntp_server")}
+            != {"peer_time_address": peer_address, "resolver_address": peer_address,
+                "disable_dns_server": True, "disable_ntp_server": True}
             or any(type(requested.get(key)) is not bool for key in ("disable_dns_server", "disable_ntp_server"))
+            or ("web_terminal_enabled" in requested
+                and type(requested["web_terminal_enabled"]) is not bool)
             or plan.get("current_address") != fixture["lease_address"]):
         raise Refusal("fixture_initialization_plan_invalid")
     addresses = [ipaddress.IPv4Address(plan[key]) for key in ("current_address", "baseline_address", "static_candidate_address")]
@@ -466,6 +525,7 @@ def initialize(plan: dict, output: Path, password: str, *, execute: bool, recove
     result_name = "fixture-recovery-result.json" if recovery else "fixture-initialization-result.json"
     inspection_name = "fixture-recovery-inspection.json" if recovery else "fixture-initialization-inspection.json"
     requested = plan.get("fixture_initialization")
+    terminal_choice = requested.get("web_terminal_enabled")
     if execute and any((output / name).exists() for name in (
         started, prefix + "-apply-submitted.json", result_name,
     )):
@@ -509,10 +569,14 @@ def initialize(plan: dict, output: Path, password: str, *, execute: bool, recove
             original = saved_fields(original)
             if original["role"] != "management" or original["ipv4_method"] != "dhcp" or original["ipv6_enabled"]:
                 raise Refusal("fixture_original_interface_invalid")
-            prepared, public = prepare_forms(client, peer_address)
+            prepared, public = prepare_forms(client, peer_address, web_terminal_enabled=terminal_choice)
             result.update(stage="inspected_no_mutation", original_interface=original, original_forms=public,
                           original_tls=client.tls_identity(), guest_identity=facts)
             if recovery:
+                prior_choice = failure.get("original_forms", {}).get("settings", {}).get(
+                    "web_terminal_enabled_requested")
+                if terminal_choice != prior_choice:
+                    raise Refusal("fixture_recovery_web_terminal_intent_changed")
                 result["recovery_admission"] = inspect_recovery(
                     client, failure, review, public, original, result["original_tls"], peer_address)
                 result["failed_initialization_sha256"] = plan["fixture_initialization_failure"]["sha256"]
@@ -546,7 +610,7 @@ def initialize(plan: dict, output: Path, password: str, *, execute: bool, recove
                 if page == "settings":
                     _, body = client.request("/ui/management/settings")
                     form = FixtureForm(body, "/ui/management/settings")
-                    prepared[page] = (form.form_action, replace_fields(form.fields, {"external_dns_servers": peer_address}))
+                    prepared[page] = (form.form_action, _prepare_settings_form(form, peer_address, terminal_choice))
                 path, fields = prepared[page]
                 _, saved = client.json(path, fields, autosave=True)
                 if saved.get("valid") is False:
@@ -569,6 +633,18 @@ def initialize(plan: dict, output: Path, password: str, *, execute: bool, recove
             dns = dns_baseline(client)
             if dns != {"external_dns_servers": [peer_address], "upstream_servers": [peer_address]}:
                 raise Refusal("fixture_dns_readback_changed")
+            _, settings_body = client.request("/ui/management/settings")
+            settings_form = FixtureForm(settings_body, "/ui/management/settings")
+            terminal_readback = _web_terminal_form_state(settings_form)
+            expected_terminal = (
+                {"enabled": terminal_choice, "interfaces": ["eth0"] if terminal_choice else []}
+                if terminal_choice is not None else
+                {"enabled": public["settings"]["web_terminal_enabled_original"],
+                 "interfaces": public["settings"]["web_terminal_interfaces_original"]}
+            )
+            if terminal_readback != expected_terminal:
+                raise Refusal("fixture_web_terminal_readback_changed")
+            result["web_terminal_readback"] = terminal_readback
             result["clock"] = wait_clock(client)
             with PinnedApplianceSession(peer, plan["current_address"], plan["appliance_user"], password,
                                         plan["appliance_ssh_host_key"]) as appliance:

@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Inspect or execute the receipt-bound native certificate handoff for the admitted task.
+Inspect or execute receipt-bound native certificate acceptance for the admitted task.
 .PARAMETER Plan
 Existing nonsecret plan within the original task-owned test-results tree.
 .PARAMETER RepositoryRoot
@@ -14,7 +14,8 @@ Explicit pinned 1Password Environment selector.
 .PARAMETER PythonPath
 Task-owned isolated Python virtual environment with locked native dependencies.
 .PARAMETER Execute
-Run the guarded native mutation and restoration; default inspects only.
+Run the guarded native mutation; default inspects only. Address cases restore through their original path.
+Ordinary CA rotation preserves revocation history and leaves a failed fixture for reconciliation.
 #>
 [CmdletBinding()]
 param(
@@ -90,6 +91,7 @@ try {
             'scripts/windows/vmware/Invoke-AtlasoOnePasswordCredentials.ps1',
             'scripts/windows/vmware/Atlaso.WorkstationFirstBoot.ps1',
             'scripts/windows/vmware/Atlaso.SourceSnapshot.psm1',
+            'scripts/windows/vmware/Atlaso.LifecycleOwnership.ps1',
             'scripts/windows/vmware/Atlaso.WorkstationCleanup.psm1',
             'scripts/windows/vmware/Atlaso.WorkstationLanSegments.ps1'
         )) {
@@ -125,17 +127,19 @@ try {
     $snapshot = New-AtlasoCertificateInspectorSnapshot -RepositoryRoot $repoRoot -EvidenceRoot $evidenceRoot `
         -SourceCommit ([string]$planIdentity.source_commit) -TaskId ([string]$planIdentity.task_id)
     try {
-    foreach ($pin in (Protect-AtlasoCertificateProofInputs -Plan $Plan -EvidenceRoot $evidenceRoot)) {
+    foreach ($pin in (Protect-AtlasoCertificateProofInputs -Plan $Plan -EvidenceRoot $evidenceRoot -PythonPath $PythonPath)) {
         $snapshot.Pins.Add($pin)
     }
     $scriptPath = Join-Path $snapshot.Root 'scripts/interop/certificate_handoff_native.py'
     $arguments = New-AtlasoCertificatePythonArguments -Runtime $runtime -ScriptPath $scriptPath `
         -ScriptArguments @('--plan', $Plan, '--evidence', $Evidence)
     $admissionEvidence = $Evidence + '.admission-' + [guid]::NewGuid().ToString('N') + '.json'
+    # Match the bounded original media inspection used by ISO deployment.
+    $admissionTimeout = if ($planIdentity.trust_model -ceq 'trusted-host') { 180 } else { 30 }
     Invoke-AtlasoBoundedProcess -FilePath $PythonPath `
         -ArgumentList (New-AtlasoCertificatePythonArguments -Runtime $runtime -ScriptPath $scriptPath `
             -ScriptArguments @('--plan', $Plan, '--evidence', $admissionEvidence, '--preflight-only')) `
-        -TimeoutSeconds 30 -Action 'Certificate canonical identity admission' -DiscardOutput | Out-Null
+        -TimeoutSeconds $admissionTimeout -Action 'Certificate canonical identity admission' -DiscardOutput | Out-Null
     $null = Assert-AtlasoSourceSnapshot -Root $snapshot.Root -ExpectedSha256 $snapshot.Sha256 `
         -ExpectedFileCount $snapshot.FileCount
     if ($Execute) { $arguments += '--execute' }

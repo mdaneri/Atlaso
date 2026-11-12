@@ -115,6 +115,7 @@ try {
             'scripts/windows/vmware/Invoke-AtlasoOnePasswordCredentials.ps1',
             'scripts/windows/vmware/Atlaso.WorkstationFirstBoot.ps1',
             'scripts/windows/vmware/Atlaso.SourceSnapshot.psm1',
+            'scripts/windows/vmware/Atlaso.LifecycleOwnership.ps1',
             'scripts/windows/vmware/Atlaso.WorkstationCleanup.psm1',
             'scripts/windows/vmware/Atlaso.WorkstationLanSegments.ps1'
         )) {
@@ -150,7 +151,7 @@ try {
     $snapshot = New-AtlasoCertificateInspectorSnapshot -RepositoryRoot $repoRoot -EvidenceRoot $evidenceRoot `
         -SourceCommit ([string]$planIdentity.source_commit) -TaskId ([string]$planIdentity.task_id)
     try {
-    foreach ($pin in (Protect-AtlasoCertificateProofInputs -Plan $Plan -EvidenceRoot $evidenceRoot)) {
+    foreach ($pin in (Protect-AtlasoCertificateProofInputs -Plan $Plan -EvidenceRoot $evidenceRoot -PythonPath $PythonPath)) {
         $snapshot.Pins.Add($pin)
     }
     $scriptPath = Join-Path $snapshot.Root $(if ($InitializeFixture -or $RecoverFixture) { 'scripts/interop/certificate_fixture_init.py' }
@@ -161,8 +162,10 @@ try {
     if ($RecoverFixture) { $scriptArguments += '--recover' }
     $arguments = New-AtlasoCertificatePythonArguments -Runtime $runtime -ScriptPath $scriptPath `
         -ScriptArguments $scriptArguments
+    # Original ISO admission reads the complete media and installed wheel.
+    $admissionTimeout = if ($planIdentity.trust_model -ceq 'trusted-host') { 180 } else { 30 }
     Invoke-AtlasoBoundedProcess -FilePath $PythonPath -ArgumentList ($arguments + '--preflight-only') `
-        -TimeoutSeconds 30 -Action 'Certificate original peer admission' -DiscardOutput | Out-Null
+        -TimeoutSeconds $admissionTimeout -Action 'Certificate original peer admission' -DiscardOutput | Out-Null
     $null = Assert-AtlasoSourceSnapshot -Root $snapshot.Root -ExpectedSha256 $snapshot.Sha256 `
         -ExpectedFileCount $snapshot.FileCount
     if ($ExecuteBootstrap -or $ExecuteInitialization -or $ExecuteRecovery) { $arguments += '--execute' }

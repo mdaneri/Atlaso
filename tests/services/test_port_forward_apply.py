@@ -164,11 +164,11 @@ def test_listener_only_apply_does_not_infer_forwarding_from_unreadable_snapshot(
             assert not result["traffic_publishing_pair"]
 
 
-@pytest.mark.parametrize("management_move,release_listener,enable_nts,cancel_after_pair", [
-    (management, listener, nts, False)
+@pytest.mark.parametrize("management_move,release_listener,enable_nts,cancel_after_pair,unreviewed_settings", [
+    (management, listener, nts, False, False)
     for management in (False, True) for listener in (False, True) for nts in (False, True)
-] + [(False, False, False, True)])
-def test_global_submission_publishes_captured_port_forward_pair(client, monkeypatch, management_move, release_listener, enable_nts, cancel_after_pair):
+] + [(False, False, False, True, False), (True, False, True, False, True), (True, True, True, False, True)])
+def test_global_submission_publishes_captured_port_forward_pair(client, monkeypatch, management_move, release_listener, enable_nts, cancel_after_pair, unreviewed_settings):
     """The real submission and task runner keep Firewall/NAT baselines together.
 
     Args:
@@ -178,10 +178,12 @@ def test_global_submission_publishes_captured_port_forward_pair(client, monkeypa
         cancel_after_pair: Verify completion wins when the pair was the final work.
         release_listener: Disable KMS while assigning its previous endpoint to forwarding.
         enable_nts: Preserve CA deployment before first NTS enablement.
+        unreviewed_settings: Refuse independent Settings edits despite a required address handoff.
     """
     from sqlalchemy import select
 
     from atlaso.app.models import (
+        ApplianceSettings,
         KmsSettings,
         NtpSettings,
         PhysicalInterface,
@@ -262,6 +264,9 @@ def test_global_submission_publishes_captured_port_forward_pair(client, monkeypa
         if management_move:
             management = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
             management.ip_cidr = "192.168.49.21/24"
+        if unreviewed_settings:
+            settings = db.scalar(select(ApplianceSettings))
+            settings.root_ssh_enabled = not settings.root_ssh_enabled
         db.commit()
     selected = ["nat"] + (["kms"] if release_listener or enable_nts else []) + (["ntpd"] if enable_nts else [])
     if enable_nts:
@@ -271,6 +276,12 @@ def test_global_submission_publishes_captured_port_forward_pair(client, monkeypa
             assert not errors, errors
     response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": selected},
                            headers={"Accept": "application/json"})
+    if unreviewed_settings:
+        assert response.status_code == 422, response.text
+        assert response.json()["detail"] == "Select the changed listener units before applying rotated CA certificates."
+        with SessionLocal() as db:
+            assert not db.scalars(select(Job).where(Job.type == "appliance-apply")).all()
+        return
     assert response.status_code == 202, response.text
     with SessionLocal() as db:
         job = db.get(Job, response.json()["job_id"])

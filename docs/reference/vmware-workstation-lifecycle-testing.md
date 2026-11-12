@@ -113,8 +113,9 @@ private DHCP, Tools and the real Chrony setup before publishing the public marke
 one graceful bootstrap restart with the original seed still attached. This stage does not establish readiness:
 the restarted peer must pass the existing Tools-address, pinned SSH and completed cloud-init checks before the separate
 seed-retirement restart. Original seed identity, digest and attachment must survive the bootstrap restart unchanged.
-Only the NTP mode opts into retaining its original cloud-init instance cache (`manual_cache_clean: true`) across
-seed retirement. Its explicit unique instance ID and pristine, never-booted source are mandatory: this peer is never
+The NTP mode and standalone certificate-peer factory retain their original cloud-init instance cache
+(`manual_cache_clean: true`) across seed retirement. An explicit unique instance ID and pristine, never-booted source
+are mandatory: this peer is never
 cloned or reused after initialization. Retaining the admitted NoCloud instance avoids a fallback-datasource warning
 after the public-only seed is removed; both readiness checks still require successful cloud-init completion.
 The NTP address lookup uses VMware's `getGuestIPAddress -wait` with the existing ten-second child timeout inside
@@ -554,8 +555,10 @@ Key-backed Windows
 transfers keep `scp` sources and destinations separate and cross the PowerShell login shell through a secret-free
 base64 `sh -lc` wrapper. Password-backed SSH supports one password-only keyboard-interactive challenge, rejects OTP/MFA
 prompts, and uses a separate deployment timeout from the readiness allowance with a non-PTY
-`sudo -S` handoff. Do not pass a password argument, create a local `.env` file, or use the retired
-`ATLASO_DEPLOY_SSH_PASSWORD` fallback. The PowerShell parent performs local build and input preparation without the
+`sudo -S` handoff. The original-ISO upload verifier preserves its encoded Python program as one native argument through
+the appliance administrator's PowerShell login shell and POSIX shells, before admitting deployment-engine execution.
+Do not pass a password argument, create a local `.env` file, or use the retired `ATLASO_DEPLOY_SSH_PASSWORD` fallback.
+The PowerShell parent performs local build and input preparation without the
 credential, then invokes the isolated Python child directly. That child obtains `DEFAULT_ADMIN_PASSWORD` with a
 human-approved 1Password desktop authorization prompt and keeps it in process memory only. Python starts with `-I -S`
 and an explicit dependency path so startup hooks and inherited `PYTHONPATH` cannot observe the value. The beta-only

@@ -7,6 +7,7 @@ import os
 import subprocess
 from pathlib import Path
 
+from certificate_iso_deployment import admit_deployment
 from certificate_peer_proof import bound_json
 
 
@@ -26,9 +27,12 @@ def reviewed_helper_identity(plan: dict) -> dict:
             media = ownership["installation_iso"]
             expected = helper_inputs(Path(media["path"]), media["sha256"])
             installed = bound_json(plan["installed_inspection"])
-            if (expected["source_commit"] != plan["deployed_commit"]
-                    or installed.get("source_commit") != expected["source_commit"]
+            if (installed.get("source_commit") != expected["source_commit"]
                     or installed.get("wheel_sha256") != expected["wheel_sha256"]):
+                raise ValueError("original ISO software identity differs")
+            if "iso_wheel_deployment" in plan:
+                admit_deployment(plan)
+            elif expected["source_commit"] != plan["deployed_commit"]:
                 raise ValueError("original ISO software identity differs")
             commit = expected["installer_source_commit"]
     environment = {key: value for key, value in os.environ.items() if not key.startswith("ATLASO_NATIVE_")}

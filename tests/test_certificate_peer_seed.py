@@ -4,6 +4,11 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
+import json
+import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -15,6 +20,75 @@ from create_certificate_peer_seed_iso import (
     build_argument_parser,  # noqa: E402 - Local interop import after path setup.
     peer_files,
 )
+
+FACTORY_SCRIPT = Path(__file__).resolve().parents[1] / "scripts/windows/vmware/create-certificate-peer.ps1"
+
+
+@pytest.mark.skipif(not shutil.which("pwsh"), reason="The factory's real PowerShell argument producer is required")
+def test_factory_arguments_produce_tools_and_retained_instance_profile(tmp_path, monkeypatch):
+    """Run the shipped argument assignments and inspect the actual generated NoCloud ISO.
+
+    Args:
+        tmp_path: Originally owned output namespace for the public seed.
+        monkeypatch: Supply the produced arguments to the real seed command.
+    """
+    import create_certificate_peer_seed_iso as seed
+    import pycdlib
+
+    factory_literal = "'" + str(FACTORY_SCRIPT).replace("'", "''") + "'"
+    output_literal = "'" + str(tmp_path / "peer.iso").replace("'", "''") + "'"
+    command = f"""
+$ErrorActionPreference='Stop'
+$tokens=$null; $errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile({factory_literal},[ref]$tokens,[ref]$errors)
+if ($errors.Count) {{ throw 'Factory did not parse.' }}
+$assignments=@($ast.FindAll({{ param($node)
+    $node -is [Management.Automation.Language.AssignmentStatementAst] -and
+    $node.Left.Extent.Text -ceq '$seedArguments' -and $node.Operator -eq 'Equals'
+}},$true))
+$loops=@($ast.FindAll({{ param($node)
+    $node -is [Management.Automation.Language.ForEachStatementAst] -and
+    $node.Extent.Text.Contains('$seedArguments +=')
+}},$true))
+if ($assignments.Count -ne 1 -or $loops.Count -ne 1) {{ throw 'Expected unique seed argument producers.' }}
+$seedPath={output_literal}
+$publicKey='ssh-ed25519 {'A' * 44} test-key'
+$validation=[pscustomobject]@{{ peer_hostname='certificate-peer';peer_user='alpine';
+    server_cidr='192.168.77.1/24';lease_address='192.168.77.10';appliance_mac='00:50:56:2a:11:22';
+    management_addresses=@('192.168.77.10','192.168.77.30','192.168.77.40') }}
+$context=[pscustomobject]@{{ InvocationId='{'e' * 32}' }}
+. ([scriptblock]::Create($assignments[0].Extent.Text))
+. ([scriptblock]::Create($loops[0].Extent.Text))
+ConvertTo-Json -InputObject @($seedArguments) -Compress
+"""
+    result = subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-Command", command],
+                            capture_output=True, text=True, timeout=30, check=True,
+                            env=dict(os.environ, PSModuleAnalysisCachePath=str(tmp_path / "PSModuleAnalysis.cache"),
+                                     TEMP=str(tmp_path), TMP=str(tmp_path), TMPDIR=str(tmp_path)))
+    arguments = json.loads(result.stdout)
+    monkeypatch.setattr(sys, "argv", ["seed", *arguments])
+    assert seed.main() == 0
+    iso = pycdlib.PyCdlib()
+    iso.open(str(tmp_path / "peer.iso"))
+    try:
+        contents = io.BytesIO()
+        iso.get_file_from_iso_fp(contents, joliet_path="/user-data")
+        rendered = yaml.safe_load(contents.getvalue().decode())
+    finally:
+        iso.close()
+    assert "open-vm-tools-vix" in rendered["packages"]
+    assert "open-vm-tools-timesync" not in rendered["packages"]
+    dhcp_config = next(row["content"] for row in rendered["write_files"]
+                       if row["path"] == "/usr/local/etc/atlaso-certificate-peer.conf")
+    assert dhcp_config.splitlines().count("dhcp-option=option:router") == 1
+    retained = next(row["content"] for row in rendered["write_files"]
+                    if row["path"] == "/etc/cloud/cloud.cfg.d/99-atlaso-certificate-retained-peer.cfg")
+    assert yaml.safe_load(retained)["manual_cache_clean"] is True
+    assert len(rendered["runcmd"]) == 1
+    bootstrap = rendered["runcmd"][0]
+    marker = "/usr/local/sbin/atlaso-certificate-peer-publish-host-key"
+    assert bootstrap.startswith("set -eu\n") and bootstrap.splitlines()[-1] == marker
+    assert bootstrap.index("rc-service open-vm-tools restart") < bootstrap.index(marker)
 
 
 def _args(**overrides: object) -> argparse.Namespace:
@@ -32,6 +106,65 @@ def _args(**overrides: object) -> argparse.Namespace:
     }
     values.update(overrides)
     return argparse.Namespace(**values)
+
+
+def test_seed_serializes_valid_nocloud_image_through_its_exclusive_output(monkeypatch, tmp_path):
+    """Read the generated ISO back instead of inferring success from its filename.
+
+    Args:
+        monkeypatch: Supply the public command-line inputs.
+        tmp_path: Originally owned pytest output directory.
+    """
+    import create_certificate_peer_seed_iso as seed
+    import pycdlib
+
+    target = tmp_path / "peer-seed.iso"
+    args = _args()
+    monkeypatch.setattr(sys, "argv", ["seed", "--output", str(target), "--hostname", args.hostname,
+                        "--server-cidr", args.server_cidr, "--lease-address", args.lease_address,
+                        "--client-mac", args.client_mac, "--public-key", args.public_key])
+    assert seed.main() == 0
+    iso = pycdlib.PyCdlib()
+    iso.open(str(target))
+    try:
+        contents = io.BytesIO()
+        iso.get_file_from_iso_fp(contents, joliet_path="/user-data")
+        assert contents.getvalue().decode() == peer_files(args)["user-data"]
+    finally:
+        iso.close()
+
+
+def test_seed_serialization_preserves_a_concurrent_output_insertion(monkeypatch, tmp_path):
+    """An output created after inspection is never overwritten by ISO serialization.
+
+    Args:
+        monkeypatch: Substitute the exact insertion boundary in the real ISO builder.
+        tmp_path: Originally owned pytest output directory.
+    """
+    import create_certificate_peer_seed_iso as seed
+    import pycdlib
+
+    target = tmp_path / "peer-seed.iso"
+    original_new = pycdlib.PyCdlib.new
+
+    def insert_before_serialization(iso, **kwargs):
+        """Create a competing file after the builder's initial absence check.
+
+        Args:
+            iso: Actual pycdlib image being prepared.
+            **kwargs: Normal new-image parameters.
+        """
+        original_new(iso, **kwargs)
+        target.write_bytes(b"preserve concurrent output")
+
+    monkeypatch.setattr(pycdlib.PyCdlib, "new", insert_before_serialization)
+    args = _args()
+    monkeypatch.setattr(sys, "argv", ["seed", "--output", str(target), "--hostname", args.hostname,
+                        "--server-cidr", args.server_cidr, "--lease-address", args.lease_address,
+                        "--client-mac", args.client_mac, "--public-key", args.public_key])
+    with pytest.raises(FileExistsError):
+        seed.main()
+    assert target.read_bytes() == b"preserve concurrent output"
 
 
 def test_peer_has_exact_mac_static_only_dhcp_on_private_interface() -> None:
