@@ -3055,10 +3055,32 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#create-an-offline-peer-for-a-fresh-iso-fixture" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Create an offline peer for a fresh ISO fixture
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#initialize-a-fresh-appliance-fixture" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Initialize a fresh appliance fixture
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#deploy-the-reviewed-app-wheel-before-private-lan-preparation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Deploy the reviewed app wheel before private-LAN preparation
       </span>
     </span>
   </a>
@@ -3078,6 +3100,17 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#run-and-accept-ordinary-ca-rotation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Run and accept ordinary CA rotation
+      </span>
+    </span>
+  </a>
   
 </li>
       
@@ -4337,10 +4370,32 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#create-an-offline-peer-for-a-fresh-iso-fixture" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Create an offline peer for a fresh ISO fixture
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#initialize-a-fresh-appliance-fixture" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Initialize a fresh appliance fixture
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#deploy-the-reviewed-app-wheel-before-private-lan-preparation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Deploy the reviewed app wheel before private-LAN preparation
       </span>
     </span>
   </a>
@@ -4360,6 +4415,17 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#run-and-accept-ordinary-ca-rotation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Run and accept ordinary CA rotation
+      </span>
+    </span>
+  </a>
   
 </li>
       
@@ -4620,7 +4686,11 @@ from the earlier PR #871 independent-control path remain bound to that task. The
 must not weaken legacy independent-control admission.</p>
 <p>When the reviewed harness advances after lab creation, retain the original receipt bytes and creation source in
 <code>resource_source_commit</code>; <code>source_commit</code> identifies the currently reviewed harness. Admission requires the creation
-source to remain an ancestor of that harness. Never change a receipt's source to match a later head.</p>
+source to remain an ancestor of that harness. Never change a receipt's source to match a later head.
+The peer fixture and LAN retain their own creation source; their source need not equal the original ISO appliance's
+independently admitted creation source. Legacy independent-control admission still requires matching VM sources.
+Trusted-host inventory admission verifies the original peer fixture's digest, task, VM and LAN selectors before using
+its LAN creation source, and requires that source to remain an ancestor of the reviewed harness.</p>
 <h2 id="prepare-the-iso-appliance-adapter">Prepare the ISO appliance adapter<a class="headerlink" href="#prepare-the-iso-appliance-adapter" title="Permanent link">&para;</a></h2>
 <p>For a new fixture, create and install the appliance through <code>invoke-installation-iso-test.ps1</code> with
 <code>-Scenario AutoReboot</code> and <code>-InspectInstalled</code>. For the existing manually installed ISO appliance, verify its
@@ -4659,6 +4729,79 @@ extra adapters, an unknown MAC, or mismatched original evidence:</p>
 together with the original boot and segment selectors. This transition changes only the original adapter's attachment
 and connected state, preserving its generated MAC and all original ownership records.</p>
 <h2 id="bootstrap-the-iso-static-baseline">Bootstrap the ISO static baseline<a class="headerlink" href="#bootstrap-the-iso-static-baseline" title="Permanent link">&para;</a></h2>
+<h3 id="create-an-offline-peer-for-a-fresh-iso-fixture">Create an offline peer for a fresh ISO fixture<a class="headerlink" href="#create-an-offline-peer-for-a-fresh-iso-fixture" title="Permanent link">&para;</a></h3>
+<p><code>scripts/windows/vmware/create-certificate-peer.ps1</code> prepares a new peer for this ISO workflow without entering the
+legacy PR-871 clone scenario. Complete its code review before VM use. It creates an offline peer and a new owned LAN;
+it never starts, rewires, or adopts the appliance. The original ISO intent, ownership and installed-boot receipts must
+already belong to the same task and PR. Keep that appliance stopped while its ordinary VMX is pinned for admission.</p>
+<p>Use an independently admitted Alpine source prepared with <code>prepare-tiny-linux-client.ps1</code> in a new originally receipted
+task root, without <code>-Force</code>. Preserve its original JSON result outside that root as <code>peer_source_preparation</code>. The factory
+authenticates the QCOW2 against the repository's pinned release digest, requires a standalone monolithic sparse VMDK,
+and uses <code>qemu-img compare</code> to prove the VMDK's logical contents match that QCOW2. The supplied VMDK SHA-256 and the
+public-key file SHA-256 are independent selectors; no existing disk becomes cleanup-owned. An ordinary file pin excludes
+writes and replacement through copying. Host disk admission reserves the full sparse-disk maximum plus 2 GiB, and
+creation requires 2 GiB free RAM.</p>
+<p>Prepare a public JSON plan under the task's originally receipted inputs root. Replace every example selector with the
+exact original value; the factory never discovers or relabels another task's receipts:</p>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="p">{</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">&quot;schema&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="nt">&quot;trust_model&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;trusted-host&quot;</span><span class="p">,</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span><span class="nt">&quot;repository&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;mdaneri/Atlaso&quot;</span><span class="p">,</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span><span class="nt">&quot;pr&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">123</span><span class="p">,</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">  </span><span class="nt">&quot;task_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;exact-current-task-id&quot;</span><span class="p">,</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">  </span><span class="nt">&quot;source_commit&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;FULL_REVIEWED_HEAD_SHA&quot;</span><span class="p">,</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">  </span><span class="nt">&quot;appliance_vmx&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;ABSOLUTE_ORIGINAL_ISO_VMX&quot;</span><span class="p">,</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">  </span><span class="nt">&quot;appliance_mac&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;00:50:56:20:30:40&quot;</span><span class="p">,</span>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">  </span><span class="nt">&quot;appliance_intent&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;path&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;ABSOLUTE_ORIGINAL_INTENT&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;sha256&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;ORIGINAL_SHA256&quot;</span><span class="p">},</span>
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">  </span><span class="nt">&quot;appliance_ownership&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;path&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;ABSOLUTE_ORIGINAL_OWNERSHIP&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;sha256&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;ORIGINAL_SHA256&quot;</span><span class="p">},</span>
+</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="w">  </span><span class="nt">&quot;appliance_installed_boot&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;path&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;ABSOLUTE_ORIGINAL_BOOT&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;sha256&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;ORIGINAL_SHA256&quot;</span><span class="p">},</span>
+</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="w">  </span><span class="nt">&quot;peer_source_preparation&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;path&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;ABSOLUTE_ORIGINAL_SOURCE_RESULT&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;sha256&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;ORIGINAL_SHA256&quot;</span><span class="p">},</span>
+</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="w">  </span><span class="nt">&quot;peer_vmdk_sha256&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;INDEPENDENTLY_VERIFIED_SOURCE_DISK_SHA256&quot;</span><span class="p">,</span>
+</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="w">  </span><span class="nt">&quot;peer_public_key_path&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;ABSOLUTE_EXISTING_ED25519_PUBLIC_KEY&quot;</span><span class="p">,</span>
+</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="w">  </span><span class="nt">&quot;peer_public_key_sha256&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;INDEPENDENTLY_VERIFIED_PUBLIC_FILE_SHA256&quot;</span><span class="p">,</span>
+</span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="w">  </span><span class="nt">&quot;server_cidr&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;192.168.77.1/24&quot;</span><span class="p">,</span>
+</span><span id="__span-1-18"><a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="w">  </span><span class="nt">&quot;lease_address&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;192.168.77.10&quot;</span><span class="p">,</span>
+</span><span id="__span-1-19"><a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="w">  </span><span class="nt">&quot;management_addresses&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;192.168.77.10&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;192.168.77.30&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;192.168.77.40&quot;</span><span class="p">],</span>
+</span><span id="__span-1-20"><a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a><span class="w">  </span><span class="nt">&quot;management_vmnet&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;vmnet3&quot;</span><span class="p">,</span>
+</span><span id="__span-1-21"><a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a><span class="w">  </span><span class="nt">&quot;peer_user&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;alpine&quot;</span><span class="p">,</span>
+</span><span id="__span-1-22"><a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a><span class="w">  </span><span class="nt">&quot;peer_hostname&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;atlaso-pr-123-certificate-peer&quot;</span>
+</span><span id="__span-1-23"><a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a><span class="p">}</span>
+</span></code></pre></div>
+<p>The three private addresses are the admitted DHCP, static baseline and static candidate. Select an existing separate
+management VMnet; no host network is created or changed. The existing selected public key must be available in the SSH
+agent before creation. No private key or password enters the plan, seed or factory process arguments.</p>
+<p>From the clean reviewed task checkout, first inspect without creating resources:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p">&amp;</span> <span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">create-certificate-peer</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-Mode</span> <span class="n">Plan</span> <span class="n">-Plan</span> <span class="nv">$peerPlan</span> <span class="n">-PythonPath</span> <span class="nv">$nativePython</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="c"># After checking the projection, source and capacity, close the Workstation UI normally.</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="p">&amp;</span> <span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">create-certificate-peer</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-Mode</span> <span class="n">Create</span> <span class="n">-Plan</span> <span class="nv">$peerPlan</span> <span class="p">`</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">-PythonPath</span> <span class="nv">$nativePython</span> <span class="n">-QemuImgPath</span> <span class="nv">$qemuImg</span> <span class="n">-Confirm</span><span class="p">:</span><span class="nv">$false</span>
+</span></code></pre></div>
+<p>Create independently verifies the open same-repository PR head, source bytes, original ISO bindings, public key and
+source disks before mutation. Preserve the emitted original intent/directory/VM, LAN and prepared-fixture selectors in
+the task inventory. Records live outside the peer removal root. A failure preserves its original receipts and any
+partial output; an existing destination is refused, never adopted or replaced. The seed publishes the public SSH host
+key to the VMX-bound serial file, uses a task-unique NoCloud instance, constrains local SSH tunnels to the three addresses,
+and configures only the peer's genuinely synchronized Chrony service to serve time on its private interface.
+It installs the existing GuestInfo/VIX profile and restarts Tools before publishing the host-key marker, so native
+address and graceful-power operations can use the installed plugins. The unique NoCloud instance cache is retained
+across seed retirement; the original SSH keys, interface configuration and successful cloud-init state must survive
+the separate seed-removal restart.
+The peer's DHCP reservation suppresses the router option. The appliance retains only its on-link management route.
+The peer VMX declares UTF-8 for the supported offline ISO seed-retirement tools.
+The LAN receipt binds the verified configured worktree root, which contains the appliance and peer outputs;
+the original receipt remains outside both VM removal scopes.</p>
+<p>Creation is not readiness or native acceptance. Admit the original VMX and serial endpoint before starting the new peer,
+then capture and pin its actual public host key before SSH. Follow the existing two-member topology, seed retirement,
+clock, private-LAN rewire and bootstrap procedures above. Do not accept a network-discovered host key or infer appliance
+address control from the seed. The prepared fixture's state remains <code>offline-prepared-not-native-acceptance</code>.</p>
+<p>Use <code>-Mode Inspect</code> with <code>-OriginalReceiptPath</code> and <code>-OriginalReceiptSha256</code> for receipt-bound readback. Once the peer is
+no longer needed and its consumers are inactive, the same selectors with <code>-Mode Cleanup -VmrunPath $vmrun</code> invoke the
+existing checked VM remover for this exact peer only. Its source plan and original appliance/source references must
+remain available. If creation stopped before the VMX existed, <code>-Mode CleanupPrepared</code> uses the original preparation
+directory receipt selectors and the existing empty-directory remover. It refuses nonempty output; a VMX without its
+original VM receipt remains preserved for maintainer recovery. Keep the LAN receipt separately; remove that segment
+through its existing owning procedure only after
+every appliance/peer reference is absent. Never use peer cleanup to remove the appliance, source disk or evidence.</p>
 <p>Prepare the one task-owned Linux peer on the dedicated management VMnet and test LAN. Its test-LAN adapter runs DHCP
 only for the admitted appliance MAC; its control adapter remains on the separate management VMnet. When generating
 the peer's NoCloud seed with <code>scripts/interop/create_certificate_peer_seed_iso.py</code>, enable
@@ -4702,6 +4845,8 @@ or rejected; stop and reconcile the approved key and its receipts.</p>
 <h3 id="initialize-a-fresh-appliance-fixture">Initialize a fresh appliance fixture<a class="headerlink" href="#initialize-a-fresh-appliance-fixture" title="Permanent link">&para;</a></h3>
 <p>A manual ISO installation can still have pending first-run DNS/DHCP and NTP settings. Establish the fixture baseline
 before the certificate bootstrap; its protected handoff bundle must not absorb those independent changes.
+With Web Terminal enabled, replacing only the management IP also replaces its derived terminal listener address in
+the handoff. Separate terminal enablement, selected-interface or other listener-address edits still require Settings consent.
 This preparation reuses the existing non-grid <strong>Appliance Settings</strong>, <strong>DNS</strong>, and <strong>NTP and NTS</strong> forms and normal
 <strong>Appliance Apply</strong> review.
 The initializer follows the Settings form's original ID across tabs, including external controls, so changing the
@@ -4718,12 +4863,12 @@ second peer for this step. The verifier requires both recent genuine synchroniza
 Chrony's <a href="https://chrony-project.org/doc/4.8/chrony.conf.html"><code>bindaddress</code> and <code>allow</code> directives</a>
 define this serving scope.</p>
 <p>Add this explicit initialization intent to the existing receipt-bound plan, using its admitted peer address:</p>
-<div class="language-json highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">&quot;fixture_initialization&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">&quot;peer_time_address&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;192.168.77.1&quot;</span><span class="p">,</span>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="nt">&quot;resolver_address&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;192.168.77.1&quot;</span><span class="p">,</span>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span><span class="nt">&quot;disable_dns_server&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span><span class="nt">&quot;disable_ntp_server&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="p">}</span>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">&quot;fixture_initialization&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">&quot;peer_time_address&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;192.168.77.1&quot;</span><span class="p">,</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="nt">&quot;resolver_address&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;192.168.77.1&quot;</span><span class="p">,</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span><span class="nt">&quot;disable_dns_server&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span><span class="nt">&quot;disable_ntp_server&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="p">}</span>
 </span></code></pre></div>
 <p>Using the reviewed Git-blob entrypoint and the same original resource references, run <code>-InitializeFixture</code> first.
 Review <code>fixture-initialization-inspection.json</code>, which contains public form fingerprints, original interface and TLS
@@ -4735,12 +4880,88 @@ peer, and selects an NTP client with only the real private peer enabled as its t
 controls and the factory upstream rows are preserved. It submits only the reviewed initialization roots: Appliance
 Settings, Network, CA, Firewall, Public Services, DNS/DHCP and NTP. A required disabled WAN/NAT replay is allowed only
 with the original routing-absence proof; independent pending work is refused.</p>
+<p>For the ordinary CA rotation cases, optionally add <code>"web_terminal_enabled": false</code> or
+<code>"web_terminal_enabled": true</code> to <code>fixture_initialization</code>. The value must be a JSON Boolean.
+This explicit choice uses the existing Settings form and initial Apply to prepare either no Web Terminal
+listener or only the mandatory <code>eth0</code> management listener. The inspection binds the choice, and execution
+verifies its applied readback. Omitting the field preserves the existing terminal settings. Use a fresh,
+originally receipted fixture for each selected baseline; never rerun initialization to change a completed case.</p>
 <p>Require a successful task, clean Apply state, unchanged DHCP management interface, original CA and payload pins,
 continued routing absence, a synchronized NTP client with no competing controller, and the private peer selected in
 native <code>ntpq</code> readback. This preparation does not establish certificate acceptance. DNS verification records the
 configured resolver and upstream values through the later address transitions.
 The initialization journals precede desired edits and Apply submission. An unknown task outcome requires reconciliation
 from those records; never rerun it or overwrite the evidence. Then continue with the static bootstrap below.</p>
+<h3 id="deploy-the-reviewed-app-wheel-before-private-lan-preparation">Deploy the reviewed app wheel before private-LAN preparation<a class="headerlink" href="#deploy-the-reviewed-app-wheel-before-private-lan-preparation" title="Permanent link">&para;</a></h3>
+<p>A development ISO has separate software identities: its signed original app wheel and its installer/helper source.
+To test a newer CA fix, retain both original identities and add a separate deployment receipt for the actual running
+PR wheel. Do this on a fresh originally receipted appliance, before its private-LAN rewire and fixture initialization.
+Use the <a href="../installation-iso/#inspect-a-separately-admitted-host-only-connection">separately admitted host-only procedure</a>
+first. Preserve its disconnected account/content checks, original VM, disk-baseline and installed-boot receipts,
+stopped unselected-disk verification, exact VMX backup and console network inspection. The selected existing host-only
+vmnet must have DHCP; both default routes must remain absent.</p>
+<p>The immutable public deployment plan retains <code>task_id</code>, positive <code>pr</code>, <code>trust_model: "trusted-host"</code>, the reviewed
+<code>source_commit</code> and identical <code>deployed_commit</code>, and the original appliance <code>mac</code>. Bind original receipt paths and
+SHA-256 digests under <code>appliance_intent</code>, <code>appliance_ownership</code>, <code>appliance_disk_baseline</code>,
+<code>appliance_installed_boot</code> and <code>installed_inspection</code>. Add <code>deployment_network_inspection</code> for the original console
+network report and <code>deployment_network_binding</code> with its native <code>vmnet</code>, <code>subnet</code> and integer <code>prefixlen</code>.
+Native admission retains the original appliance's canonical name and collision suffix. Keep the original VM identity
+when the reviewed harness advances; never rename it to fit a later invocation.</p>
+<p>Before the stopped host-only configuration transition, publish <code>host_only_transition</code> as a path/digest reference to
+an immutable public record. Its schema is <code>1</code>, kind is <code>certificate-iso-host-only-transition</code>, and it binds the exact
+task, repository, PR, source, <code>vmx_path</code>, selected <code>vmnet</code>, original <code>ownership</code> and <code>boot</code> references, and original
+<code>backup_path</code>/<code>backup_sha256</code>. Record <code>boot_configuration_sha256</code> from the original boot receipt and literal
+<code>stopped_vm_verified: true</code> and <code>unselected_disk_unchanged: true</code> only after their owning checks succeed. The backup
+captures the actual stopped VMX, including permitted VMware runtime fields; preserve its bytes independently of the
+boot transition's configuration digest. Missing pre-transition evidence prevents deployment; never reconstruct it
+from the later connected VM.</p>
+<p>Load the new owner from the exact reviewed Git commit, as with the certificate inspector:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nv">$relative</span> <span class="p">=</span> <span class="s1">&#39;scripts/windows/vmware/deploy-certificate-iso-wheel.ps1&#39;</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="nv">$bytes</span> <span class="p">=</span> <span class="p">@(&amp;</span> <span class="n">git</span> <span class="n">-C</span> <span class="nv">$repoRoot</span> <span class="n">show</span> <span class="s2">&quot;${reviewedCommit}:$relative&quot;</span><span class="p">)</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="k">if</span> <span class="p">(</span><span class="nv">$LASTEXITCODE</span> <span class="o">-ne</span> <span class="n">0</span><span class="p">)</span> <span class="p">{</span> <span class="k">throw</span> <span class="s1">&#39;Reviewed deployment owner is unavailable.&#39;</span> <span class="p">}</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="nv">$deployOwner</span> <span class="p">=</span> <span class="no">[scriptblock]</span><span class="p">::</span><span class="n">Create</span><span class="p">((</span><span class="nv">$bytes</span> <span class="n">-join</span> <span class="s2">&quot;</span><span class="se">`n</span><span class="s2">&quot;</span><span class="p">))</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="p">&amp;</span> <span class="nv">$deployOwner</span> <span class="n">-RepositoryRoot</span> <span class="nv">$repoRoot</span> <span class="n">-ReviewedSourceCommit</span> <span class="nv">$reviewedCommit</span> <span class="p">`</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    <span class="n">-Plan</span> <span class="nv">$deploymentPlan</span> <span class="n">-PythonPath</span> <span class="nv">$pythonPath</span> <span class="n">-EnvironmentId</span> <span class="nv">$environmentId</span> <span class="p">`</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>    <span class="n">-RuntimeDependencyDirectory</span> <span class="nv">$originalSignedCp314Wheelhouse</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="c"># Inspect the public original-media/network report before the explicit deployment.</span>
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="p">&amp;</span> <span class="nv">$deployOwner</span> <span class="n">-RepositoryRoot</span> <span class="nv">$repoRoot</span> <span class="n">-ReviewedSourceCommit</span> <span class="nv">$reviewedCommit</span> <span class="p">`</span>
+</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>    <span class="n">-Plan</span> <span class="nv">$deploymentPlan</span> <span class="n">-PythonPath</span> <span class="nv">$pythonPath</span> <span class="n">-EnvironmentId</span> <span class="nv">$environmentId</span> <span class="p">`</span>
+</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>    <span class="n">-RuntimeDependencyDirectory</span> <span class="nv">$originalSignedCp314Wheelhouse</span> <span class="n">-Execute</span>
+</span></code></pre></div>
+<p>Use a prepared, originally owned isolated Python environment beneath this worktree's <code>test-results</code> with the locked
+native inspector and wheel-build dependencies, including the build backend's <code>packaging</code> parser. The runtime and
+immutable Git archive stay pinned through every
+consumer. The owner creates and receipts a fresh artifact root before use, builds one wheel from that archive, and
+requires its dependency declarations to match the original signed app except requirements whose entire marker is
+<code>extra == "dev"</code>. The deployer installs only the bare wheel with <code>--no-deps</code>; it never selects the development extra.
+Runtime changes, other extras, broader marker expressions and malformed requirements remain refusals. The complete
+offline cp314 wheelhouse must
+match the original ISO's release inventory. Native VM admission uses the separately pinned canonical checkout owner
+and its complete checkout/parsed-code validation; the wheel builder and deployment child use the immutable archive
+from that same reviewed commit. The existing direct deployer keeps its bootstrap, deployment-lock and
+Appliance Update guards. Local-wheel installation disables package-index access and pip's online version check,
+so the no-default-route appliance does not spend its deployment budget checking the network for every wheel.
+It verifies the original console-observed SSH key before authentication, uses one private
+remote staging directory, verifies every uploaded file, and retains the original helper and console/boot assets.
+This exclusive mode-0700 staging directory lives under <code>/var/tmp</code>, preserving the same verified wheel archive across
+the private-LAN handoff reboot for subsequent payload measurements. <code>/tmp</code> staging is refused for this workflow.</p>
+<p>The original-fixture claim is exclusive across output directories. Process ownership is published while the child
+is suspended, before credential access or guest mutation. Success requires a quiescent process job, unchanged source
+guards and native VM/network binding, exact active wheel payload and original public machine/helper/assets identity.
+Preserve <code>deployment.json</code> separately and bind its path/digest as <code>iso_wheel_deployment</code> in the later certificate plan.
+Keep <code>installed_inspection</code> unchanged: it continues to describe the original signed software. Subsequent certificate
+admission measures the active PR wheel again before and after rotation.</p>
+<p>Both static and DHCP bootstrap publish their usable <code>proof-plan.json</code> only after trusted-host topology monitoring
+stops successfully. Late drift or an unjoined watcher preserves preliminary observations and a failed bootstrap
+result without publishing that plan; those observations alone do not establish an admitted baseline.</p>
+<p>On failure or an unknown outcome, preserve the fixture, exclusive claim and all process/intent records. Reconcile
+those records before any recovery; another output directory never permits redeployment. New attempts publish fixed
+<code>deployer-phase-*.json</code> records for credential retrieval, pinned SSH, original-media preflight, verified uploads,
+engine start/exit and final measurement. These contain only a fixed phase and optional numeric engine exit code;
+commands, guest output and credentials are never retained. A phase record does not establish deployment success,
+and missing later phases leave the outcome unproven. After success, stop the VM,
+restore and verify the original backed-up adapter declaration through the owning procedure, then use the existing
+private-LAN rewire. The host-only phase grants no host route, NAT or bridge to the private certificate LAN.</p>
 <h3 id="recover-a-terminal-initial-ntp-synchronization-timeout">Recover a terminal initial NTP synchronization timeout<a class="headerlink" href="#recover-a-terminal-initial-ntp-synchronization-timeout" title="Permanent link">&para;</a></h3>
 <p>If the initializer failed only because the selected NTP client did not synchronize within its 60-second guard,
 preserve its result and task ID. Read the existing task and native clock/routing observations first. An active or
@@ -4784,6 +5005,17 @@ fields. It submits only the validated protected Apply bundle selected by the ser
 terminal task and verifies the desired fields, TLS identity, <code>/openapi.json</code>, clean Apply state, route snapshot,
 installed wheel/helper identity, and trusted-host topology. Use the addresses from the admitted plan when the lab
 uses a different approved baseline subnet; do not copy the example address into another lab.</p>
+<p>For a fresh ordinary CA case that must retain DHCP, select <code>"scenario": "ordinary-ca-rotation"</code> and
+<code>"ordinary_ca_baseline_mode": "dhcp"</code> in its immutable plan. Keep <code>current_address</code> equal to the original peer fixture's
+fixed lease. The same bootstrap inspection/execution commands then observe the clean existing DHCP configuration;
+they submit no interface edit or Apply task. Success publishes <code>dhcp-baseline-observation.json</code> and a separate proof
+plan with phase <code>iso-dhcp-baseline-observed</code>, preserving the original MAC lease, connected route, absence of default
+routes, TLS identity and deployed payload. Do not substitute this observation for a static rewire receipt.</p>
+<p>Run each static/DHCP and Web Terminal disabled/enabled combination on a fresh original fixture. Ordinary rotation
+requires the running app to match the current reviewed source. DHCP admission checks the original lease and native
+address owner both before and after CA rotation; an extra address, changed lease owner, default route or changed
+deployed payload prevents success. The static baseline address remains distinct from the predeclared handoff candidate
+and DHCP lease; it need not appear in the candidate-only address list.</p>
 <p>Bootstrap inspection and execution require a clean applied baseline before editing the interface. The controlled
 interface edit can also change Atlaso-owned DNS records while local DNS is disabled. In that case the trusted-host
 harness explicitly includes the changed <strong>DNS/DHCP (dnsmasq)</strong> unit in the same reviewed handoff; disabled DNS does
@@ -4796,13 +5028,13 @@ it never submits again. Inactive peer transport, changed SSH trust, out-of-scope
 still stop the run. A failed observer result stays preserved even if later read-only reconciliation finds a successful
 task; reconcile the recorded state before planning another attempt.</p>
 <p>Using the verified in-memory <code>$entrypoint</code> and receipt-bound paths from the linked workflow:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p">&amp;</span> <span class="nv">$entrypoint</span> <span class="n">-RepositoryRoot</span> <span class="nv">$repoRoot</span> <span class="n">-ReviewedSourceCommit</span> <span class="nv">$reviewedCommit</span> <span class="p">`</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="n">-Plan</span> <span class="nv">$plan</span> <span class="n">-AddressEvidence</span> <span class="nv">$addressEvidence</span> <span class="n">-RuntimeEvidence</span> <span class="nv">$runtimeEvidence</span> <span class="p">`</span>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">-EnvironmentId</span> <span class="nv">$environmentId</span> <span class="n">-PythonPath</span> <span class="nv">$pythonPath</span> <span class="n">-Bootstrap</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="c"># Review inspection-result.json before this explicit configuration transition.</span>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="p">&amp;</span> <span class="nv">$entrypoint</span> <span class="n">-RepositoryRoot</span> <span class="nv">$repoRoot</span> <span class="n">-ReviewedSourceCommit</span> <span class="nv">$reviewedCommit</span> <span class="p">`</span>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">-Plan</span> <span class="nv">$plan</span> <span class="n">-AddressEvidence</span> <span class="nv">$addressEvidence</span> <span class="n">-RuntimeEvidence</span> <span class="nv">$runtimeEvidence</span> <span class="p">`</span>
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="n">-EnvironmentId</span> <span class="nv">$environmentId</span> <span class="n">-PythonPath</span> <span class="nv">$pythonPath</span> <span class="n">-Bootstrap</span> <span class="n">-ExecuteBootstrap</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="p">&amp;</span> <span class="nv">$entrypoint</span> <span class="n">-RepositoryRoot</span> <span class="nv">$repoRoot</span> <span class="n">-ReviewedSourceCommit</span> <span class="nv">$reviewedCommit</span> <span class="p">`</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>    <span class="n">-Plan</span> <span class="nv">$plan</span> <span class="n">-AddressEvidence</span> <span class="nv">$addressEvidence</span> <span class="n">-RuntimeEvidence</span> <span class="nv">$runtimeEvidence</span> <span class="p">`</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>    <span class="n">-EnvironmentId</span> <span class="nv">$environmentId</span> <span class="n">-PythonPath</span> <span class="nv">$pythonPath</span> <span class="n">-Bootstrap</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="c"># Review inspection-result.json before this explicit configuration transition.</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="p">&amp;</span> <span class="nv">$entrypoint</span> <span class="n">-RepositoryRoot</span> <span class="nv">$repoRoot</span> <span class="n">-ReviewedSourceCommit</span> <span class="nv">$reviewedCommit</span> <span class="p">`</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>    <span class="n">-Plan</span> <span class="nv">$plan</span> <span class="n">-AddressEvidence</span> <span class="nv">$addressEvidence</span> <span class="n">-RuntimeEvidence</span> <span class="nv">$runtimeEvidence</span> <span class="p">`</span>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>    <span class="n">-EnvironmentId</span> <span class="nv">$environmentId</span> <span class="n">-PythonPath</span> <span class="nv">$pythonPath</span> <span class="n">-Bootstrap</span> <span class="n">-ExecuteBootstrap</span>
 </span></code></pre></div>
 <p>The wrapper uses the existing bounded 1Password credential bridge; it does not put plaintext passwords on the
 command line or in evidence. Select a task-owned native-test Python environment with the locked credential and SSH
@@ -4828,11 +5060,42 @@ Any observed drift remains a failure even if the original topology is later rest
 exact connected prefix, <code>eth0</code>, preferred source, and on-link scope without a gateway. Keep this query unfiltered by
 device: iproute2 can omit <code>dev</code> when <code>dev eth0</code> is already a query filter. A main-table route alone does not prove the
 management routing-domain baseline.</p>
+<h2 id="run-and-accept-ordinary-ca-rotation">Run and accept ordinary CA rotation<a class="headerlink" href="#run-and-accept-ordinary-ca-rotation" title="Permanent link">&para;</a></h2>
+<p>For a CA-only management certificate change, use the same reviewed
+<code>inspect-certificate-handoff.ps1</code> entrypoint and full trusted-host admission with
+<code>scenario: "ordinary-ca-rotation"</code>. The immutable plan must name the original
+issued <code>management_certificate_id</code>, set <code>expected_web_terminal</code> to an explicit
+Boolean, and bind <code>interface: "eth0"</code> and its original MAC. Its peer baseline
+address must match the appliance's clean applied static IPv4 configuration.
+This case does not establish DHCP-address acceptance.</p>
+<p>Run inspection before execution. Keep the original ISO, appliance, peer, LAN,
+installed source/helper, address evidence, public CA and SSH trust receipts.
+The runner records original public certificate and configuration evidence before
+using <strong>Certificate requests → Revoke certificate → Replace</strong> for this disposable
+appliance's <code>appliance:https</code> certificate. It then reviews only CA changes and
+requires unchanged Appliance Settings and Public Services to replay after CA.
+Unrelated pending edits or missing dependencies refuse submission.
+The inventory read reconciles the replacement to <code>issued</code> before Apply. The runner
+pins that successor's inventory/public-PEM fingerprint and requires the same leaf
+after activation.</p>
+<p>Acceptance requires the same admitted task to succeed without dry-run results,
+a clean applied baseline, unchanged management address/MAC/configuration and Web
+Terminal state, and an unchanged root certificate matching the receipt-pinned
+CA. The replacement inventory fingerprint, authenticated public certificate PEM
+and strictly verified peer TLS leaf must all match and differ from the original
+leaf. Run separate cases with Web Terminal disabled and enabled on the sole
+management interface; apply each intended baseline before preparing its plan.</p>
+<p>Revocation retains certificate history and cannot be undone. On failure, retain
+the fixture and original evidence for diagnosis; never automatically restore,
+retry or resubmit this scenario. The existing static-address and DHCP-rejection
+scenarios keep their separate restoration requirements.</p>
 <h2 id="run-and-accept-the-static-address-case">Run and accept the static-address case<a class="headerlink" href="#run-and-accept-the-static-address-case" title="Permanent link">&para;</a></h2>
 <p>Protected handoff validation checks the staged candidate certificate's format, configured paths, and key pair without
 requiring it to authenticate the old listener addresses. The transaction preserves and verifies the old TLS path with
 its snapshotted certificate, then validates the candidate leaf against every actual candidate address before publishing
 that listener. An ordinary Appliance Settings certificate change still requires coverage of its retained listeners.
+Settings verifies CA-trusted availability on every external management listener, but checks its new leaf only on the
+HTTPS sockets owned by its site. Flagged Access sockets on port 443 receive their new leaf during Public Services apply.
 This separation also applies to DHCP: an unknown lease does not waive certificate validation after acquisition.</p>
 <p>Use the standard Atlaso <a href="../../operate/networking/">Network configuration</a> pages and <a href="../../operate/appliance-apply/">Appliance
 Apply</a> workflow for the admitted source. Match the reviewed native submission boundary:
@@ -4994,7 +5257,10 @@ a supported cleanup capability, or another release gate remains uncertain, recor
 reason, and retry condition and preserve it; uncertainty is neither cleanup authorization nor indefinite unrecorded
 retention. A terminal failed run does not waive any branch/worktree completion gate.</p>
 <p>The trusted-host bootstrap and proof wrappers admit the original ISO and peer receipt kinds for the current task and
-PR, then repeat inventory, reservation, identity, and trust checks before obtaining guest credentials. Receipts from
+PR, then repeat inventory, reservation, identity, and trust checks before obtaining guest credentials. The standalone
+peer fixture binds the LAN receipt at its original path under the configured Codex worktree root's <code>lan-segments</code>
+directory. Keep the plan, public CA, and byte-identical copies of its direct receipt inputs under <code>test-results</code>.
+Keep original paths in selectors that compare the factory or installer's recorded paths. Receipts from
 the older PR #871 independent-control path remain bound to that task and cannot be relabeled. Use the
 <a href="../vmware-workstation-lifecycle-testing/#single-command-run">VMware lifecycle certificate section</a> for the reviewed
 Git-blob entrypoint and bounded credential wrapper workflow.</p>

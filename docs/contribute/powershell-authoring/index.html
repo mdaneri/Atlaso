@@ -4257,6 +4257,16 @@ Python cases on the operating system as well as PowerShell availability. The Win
 native Workstation cleanup, hostname, Photon build, and credential fixtures with synthetic inputs. The readiness
 fixture gives the hostname provider exit-code case time for one complete observation and reports the observed
 diagnostic on failure. Separate cases exercise short readiness deadlines with stalled providers.</p>
+<p>For task-owned local validation, first create an empty root with the existing
+<a href="../completed-task-cleanup/#disposable-pytest-git-fixtures"><code>PytestGitFixtures</code> owner</a>, preserving its original receipt
+outside every removal root. Pass that root and its original native identity as <code>-FixtureRoot</code> and
+<code>-OriginalFixtureIdentity</code>, together with <code>-FixtureOwnerReceipt</code>, <code>-FixturePythonPath</code> (Python 3.14), and
+<code>-FixtureConfigPath</code> (the active supported Codex configuration). The regression immediately registers its synthetic
+Git repository and receipts each internal redirect before use. Owned mode retains the graph instead of recursively
+deleting it. After the test process is terminal, run <code>scripts.photon_build_state_test_fixtures seal</code> with the same
+<code>--config</code> and <code>--receipt</code>: it retires only the four original redirect leaves, then seals the graph through its
+existing Git owner. Preserve the manifest and digest for normal completed-task cleanup. A failed creation, changed
+link, missing receipt or incomplete seal requires retention; never reconstruct ownership from the surviving tree.</p>
 <p>When a Python test extracts a production PowerShell block, load its real helper dependencies and supply the valid
 public inputs that the full script normally initializes. For example, the Windows ownership fixtures load
 <code>Atlaso.WorkstationFirstBoot.ps1</code> and bind the VM name before running parent preflight and restored-root admission.

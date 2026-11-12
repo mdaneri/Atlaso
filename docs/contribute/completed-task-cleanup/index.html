@@ -4921,6 +4921,12 @@ retain them and report the missing provenance rather than generating a new recei
 <code>kind: "artifact"</code> and <code>cleanup_tool: "PytestGitFixtures"</code>; generic generated-tree removal continues to reject
 nested and bare repositories. This tool removes the complete owned fixture graph, including its internal Git
 registrations, through checked Windows handles. It never prunes or removes registrations in an external repository.</p>
+<p>The Photon build-state regression's opt-in owned mode uses this owner for its Git graph and
+<code>scripts.photon_build_state_test_fixtures</code> for exactly four internal directory-symbolic-link probes. Each probe gets
+an original identity and raw-target digest receipt before use. After the regression is terminal, the helper verifies
+the original root and every probe, pins all four link objects before deleting any, and never follows a target. It then
+seals the now-ordinary graph through <code>PytestGitFixtures</code>; final graph release remains that existing owner's operation.
+Junctions, external targets, changed links, missing creation evidence and incomplete retirement remain refusals.</p>
 <p>Before validation, construct the tool with the active Codex configuration, a new durable receipt filename outside
 the task worktree and every removal root, and verified <code>id</code>, <code>task_id</code>, <code>repository</code>, <code>source_commit</code>, and absolute <code>path</code>.
 The root and receipts must be beneath the configured worktree root. Call <code>create()</code> before using the new empty
