@@ -3250,7 +3250,7 @@ def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
     assert "'--no-index'" in script
     assert "'--find-links', $wheelDirectory" in script
     assert "'--target', $dependencyDirectory" in script
-    assert "'-I', '-S', $pythonDeploy" in script
+    assert "'-I', '-S', '-B', $pythonDeploy" in script
     assert "'--dependency-path', $pythonDependencyPath" in script
     assert "$env:PYTHONPATH" not in script
     assert "function Invoke-PasswordBackedDeploy" in script
@@ -3277,10 +3277,10 @@ def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
     assert "Remove-Item -LiteralPath $generatedRuntimeDependencyRoot -Recurse -Force" in script
     assert "Matched local and remote runtime dependency wheels are required." in script
     assert (
-        '"$python" -m pip install --force-reinstall --no-compile --no-deps '
+        '"$python" -m pip install --force-reinstall --no-compile --no-deps --no-index --disable-pip-version-check '
         '"$runtime_dependency_path"'
     ) in script
-    assert '"$python" -m pip install --force-reinstall --no-compile --no-deps "$wheel"' in script
+    assert '"$python" -m pip install --force-reinstall --no-compile --no-deps --no-index --disable-pip-version-check "$wheel"' in script
     assert "Atlaso site-packages resolved outside the active environment." in script
     assert 'find "$site_packages" -type f -name \'*.pyc\' -delete' in script
     assert "/etc/systemd/system/atlaso.service.d/atlaso-data-disks.conf" in script
@@ -3710,6 +3710,9 @@ def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install(
     """Verify that lifecycle vmware script supports routing wan only and esxi pxe install."""
     wrapper = Path("scripts/windows/vmware/invoke-lifecycle-test.ps1").read_text(encoding="utf-8")
     runner = Path("scripts/windows/vmware/run-lifecycle-test.ps1").read_text(encoding="utf-8")
+    fixture_wheel_module = Path(
+        "scripts/windows/vmware/Atlaso.FixtureWheel.psm1"
+    ).read_text(encoding="utf-8")
     cleanup_module = Path("scripts/windows/vmware/Atlaso.WorkstationCleanup.psm1").read_text(encoding="utf-8")
 
     assert "[switch]$RoutingWanOnly" in wrapper
@@ -3760,6 +3763,13 @@ def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install(
     assert "install -o root -g root -m 0755 $quotedTemp /opt/atlaso/bin/atlaso-helper" in runner
     assert "function Sync-ApplianceApplicationWheel" in runner
     assert "New-LifecycleSourceSnapshot -RepositoryRoot $repoRoot -Commit $sourceCommit" in runner
+    assert "function New-LifecycleSourceSnapshot" not in runner
+    assert "Export-ModuleMember -Function Assert-LifecycleSourcePins, New-LifecycleSourceSnapshot, Get-LifecycleBuiltWheel" in fixture_wheel_module
+    assert 'git -C $repoRoot show "${sourceCommit}:scripts/windows/vmware/Atlaso.FixtureWheel.psm1"' in runner
+    assert runner.index("Assert-LifecycleRunnerSource -RepositoryRoot $repoRoot") < runner.index("$fixtureWheelSource = @(& git")
+    module_load = runner.index("New-Module -Name Atlaso.FixtureWheel")
+    assert runner.index("$fixtureWheelSource = @(& git") < module_load
+    assert module_load < runner.index("$runtimeSourceRoot = New-LifecycleSourceSnapshot")
     assert "python -m pip wheel $wheelSource --no-deps -w $wheelRoot" in runner
     assert "pip install --force-reinstall --no-deps $quotedWheel" in runner
     assert "systemctl restart atlaso.service" in runner

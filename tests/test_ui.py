@@ -17827,12 +17827,14 @@ def test_ca_apply_task_captures_current_desired_state(client):
         assert "Atlaso Internal Root CA" in (job.result or "")
 
 
-def test_ca_apply_replays_applied_listeners_after_managed_leaf_rotation(client, monkeypatch):
+@pytest.mark.parametrize("consumer", ["appliance_settings", "public_services"])
+def test_ca_apply_replays_applied_listeners_after_managed_leaf_rotation(client, monkeypatch, consumer):
     """Keep an unchanged active listener paired with its rotated CA leaf.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
         monkeypatch: Pytest fixture used to replace the rotation detector.
+        consumer: Applied listener unit that must reload the rotated leaf.
     """
     from sqlalchemy import select
 
@@ -17845,7 +17847,7 @@ def test_ca_apply_replays_applied_listeners_after_managed_leaf_rotation(client, 
         ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
         db.commit()
 
-    monkeypatch.setattr(ui, "rotated_ca_certificate_consumers", lambda *_: {"public_services"})
+    monkeypatch.setattr(ui, "rotated_ca_certificate_consumers", lambda *_: {consumer})
     login(client)
     page = client.get("/certificate-authority")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -17854,16 +17856,19 @@ def test_ca_apply_replays_applied_listeners_after_managed_leaf_rotation(client, 
 
     with SessionLocal() as db:
         job = db.execute(select(Job).where(Job.type == "appliance-apply")).scalar_one()
+        assert job.status == "succeeded"
         selected = json.loads(job.result or "{}")["selected_units"]
-        assert selected.index("ca") < selected.index("public_services")
+        assert selected.index("ca") < selected.index(consumer)
 
 
-def test_ca_apply_requires_review_of_pending_listener_edits(client, monkeypatch):
+@pytest.mark.parametrize("consumer", ["appliance_settings", "public_services"])
+def test_ca_apply_requires_review_of_pending_listener_edits(client, monkeypatch, consumer):
     """Do not apply an unrelated pending listener edit with a rotated CA leaf.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
         monkeypatch: Pytest fixture used to simulate the pending listener edit.
+        consumer: Listener unit with an unrelated pending desired-state edit.
     """
     import atlaso.app.ui as ui
     from atlaso.app.database import SessionLocal
@@ -17875,7 +17880,7 @@ def test_ca_apply_requires_review_of_pending_listener_edits(client, monkeypatch)
 
     original_units = ui.appliance_apply_units
 
-    def pending_public_services(db, *, reconcile=True):
+    def pending_listener(db, *, reconcile=True):
         """Return apply units with an unreviewed listener change.
 
         Args:
@@ -17883,11 +17888,11 @@ def test_ca_apply_requires_review_of_pending_listener_edits(client, monkeypatch)
             reconcile: Whether the projection reconciles desired state.
         """
         units = original_units(db, reconcile=reconcile)
-        next(unit for unit in units if unit["id"] == "public_services")["changed"] = True
+        next(unit for unit in units if unit["id"] == consumer)["changed"] = True
         return units
 
-    monkeypatch.setattr(ui, "appliance_apply_units", pending_public_services)
-    monkeypatch.setattr(ui, "rotated_ca_certificate_consumers", lambda *_: {"public_services"})
+    monkeypatch.setattr(ui, "appliance_apply_units", pending_listener)
+    monkeypatch.setattr(ui, "rotated_ca_certificate_consumers", lambda *_: {consumer})
     login(client)
     page = client.get("/certificate-authority")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -17904,6 +17909,7 @@ def test_rotated_ca_certificate_consumers_only_selects_changed_managed_leaves():
 
     current = {
         "certificates": [
+            {"managed_owner": "appliance:https", "fingerprint": "new-appliance"},
             {"managed_owner": "oidc:https", "fingerprint": "new-oidc"},
             {"managed_owner": "ldap:ldaps", "fingerprint": "same-ldap"},
             {"managed_owner": "ntp:nts", "fingerprint": "new-ntp"},
@@ -17912,6 +17918,7 @@ def test_rotated_ca_certificate_consumers_only_selects_changed_managed_leaves():
     }
     previous = {
         "certificates": [
+            {"managed_owner": "appliance:https", "fingerprint": "old-appliance"},
             {"managed_owner": "oidc:https", "fingerprint": "old-oidc"},
             {"managed_owner": "ldap:ldaps", "fingerprint": "same-ldap"},
             {"managed_owner": "ntp:nts", "fingerprint": "old-ntp"},
@@ -17919,17 +17926,123 @@ def test_rotated_ca_certificate_consumers_only_selects_changed_managed_leaves():
     }
     assert ui.rotated_ca_certificate_consumers(
         {"config_preview": json.dumps(current)}, {"config_preview": json.dumps(previous)}
-    ) == {"public_services", "ntpd"}
+    ) == {"appliance_settings", "public_services", "ntpd"}
+
+    applied = json.loads(json.dumps(current))
+    assert ui.rotated_ca_certificate_consumers(
+        {"config_preview": json.dumps(applied)}, {"config_preview": json.dumps(applied)}
+    ) == set()
+
+
+@pytest.mark.parametrize("management_method", ["dhcp", "static"])
+@pytest.mark.parametrize("public_listener", ["absent", "web_terminal"])
+def test_ca_only_rotation_plan_replays_dedicated_management_and_public_services(
+    client, management_method, public_listener
+):
+    """Expand a real management-leaf rotation to listeners with no public site or an enabled public site.
+
+    Args:
+        client: HTTP test client that initializes the isolated database.
+        management_method: Management IPv4 addressing mode for the fixture.
+        public_listener: Whether the fixture has an enabled public Web Terminal listener.
+    """
+    from sqlalchemy import select
+
+    import atlaso.app.ui as ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import (
+        ApplianceSettings,
+        CaCertificate,
+        CaSettings,
+        PhysicalInterface,
+    )
+
+    with SessionLocal() as db:
+        settings = db.execute(select(ApplianceSettings)).scalar_one()
+        settings.management_https_enabled = True
+        settings.web_terminal_enabled = public_listener == "web_terminal"
+        settings.web_terminal_interfaces_json = (
+            '["eth0", "eth2"]' if public_listener == "web_terminal" else "[]"
+        )
+        db.execute(select(CaSettings)).scalar_one().enabled = True
+        management = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.role == "management")
+        ).scalar_one()
+        management.ipv4_method = management_method
+        if management_method == "dhcp":
+            management.ip_cidr = None
+            management.host_ip_cidr = "192.168.167.218/24"
+        else:
+            management.ip_cidr = "192.168.167.218/24"
+            management.host_ip_cidr = None
+        if public_listener == "web_terminal":
+            public_interface = db.execute(
+                select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+            ).scalar_one()
+            public_interface.role = "access"
+            public_interface.mode = "access"
+            public_interface.admin_state = "up"
+            public_interface.oper_state = "up"
+            public_interface.ip_cidr = "192.168.87.32/24"
+        db.commit()
+
+        assert ui.ensure_ca_state(db) == []
+        management_certificate = db.execute(
+            select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https")
+        ).scalar_one()
+        assert management_certificate.fingerprint
+
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        baselines = ui.load_appliance_apply_baselines(db)
+        prior_ca_preview = json.loads(baselines["ca"]["config_preview"])
+        prior_management_certificate = next(
+            row for row in prior_ca_preview["certificates"] if row["managed_owner"] == "appliance:https"
+        )
+        prior_management_certificate["fingerprint"] = "previous-applied-management-leaf"
+        baselines["ca"]["config_preview"] = json.dumps(prior_ca_preview)
+        ui.save_appliance_apply_baselines(db, baselines)
+        db.commit()
+
+        current_units = ui.appliance_apply_units(db)
+        by_id = {unit["id"]: unit for unit in current_units}
+        assert by_id["appliance_settings"]["changed"] is False
+        public_entries = by_id["public_services"]["context"]["public_service_entries"]
+        if public_listener == "web_terminal":
+            assert any(entry["web_terminal"] for entry in public_entries)
+        else:
+            assert not any(entry["services"] or entry["web_terminal"] for entry in public_entries)
+        plan = ui.appliance_apply_execution_plan(db, current_units, {"ca"}, enforce_consent=False)
+        selected = plan["selected_ids"]
+        order = [unit["id"] for unit in plan["selected_ordered_units"]]
+        assert {"ca", "appliance_settings", "public_services"} <= selected
+        assert "ntpd" not in selected
+        assert order.index("ca") < order.index("appliance_settings")
+
+        settings.vmware_ceip_enabled = not settings.vmware_ceip_enabled
+        db.commit()
+        pending_units = ui.appliance_apply_units(db)
+        with pytest.raises(ui.ApplianceApplyPlanError):
+            ui.appliance_apply_execution_plan(db, pending_units, {"ca"}, enforce_consent=True)
+
+        consented = ui.appliance_apply_execution_plan(
+            db, pending_units, {"ca", "appliance_settings"}, enforce_consent=True
+        )
+        consented_order = [unit["id"] for unit in consented["selected_ordered_units"]]
+        assert "appliance_settings" in consented["selected_ids"]
+        assert consented_order.index("ca") < consented_order.index("appliance_settings")
 
 
 @pytest.mark.parametrize("stop_mode", ["failure", "cancel"])
-def test_ca_baseline_waits_for_rotated_leaf_listener_reload(client, monkeypatch, stop_mode):
+@pytest.mark.parametrize("consumer", ["appliance_settings", "public_services"])
+def test_ca_baseline_waits_for_rotated_leaf_listener_reload(client, monkeypatch, stop_mode, consumer):
     """Keep the old CA fingerprint available after a failed or cancelled reload.
 
     Args:
         client: HTTP test client that initializes the isolated database.
         monkeypatch: Pytest fixture used to replace host apply operations.
         stop_mode: Whether the first task fails or is cancelled before reload.
+        consumer: Applied listener unit whose activation gates the CA baseline.
     """
     from sqlalchemy import select
 
@@ -17937,8 +18050,9 @@ def test_ca_baseline_waits_for_rotated_leaf_listener_reload(client, monkeypatch,
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus, JobStep
 
-    old_preview = json.dumps({"certificates": [{"managed_owner": "oidc:https", "fingerprint": "old"}]})
-    new_preview = json.dumps({"certificates": [{"managed_owner": "oidc:https", "fingerprint": "new"}]})
+    managed_owner = "appliance:https" if consumer == "appliance_settings" else "oidc:https"
+    old_preview = json.dumps({"certificates": [{"managed_owner": managed_owner, "fingerprint": "old"}]})
+    new_preview = json.dumps({"certificates": [{"managed_owner": managed_owner, "fingerprint": "new"}]})
     units = [
         {
             "id": unit_id,
@@ -17954,7 +18068,7 @@ def test_ca_baseline_waits_for_rotated_leaf_listener_reload(client, monkeypatch,
         }
         for unit_id, label, preview in [
             ("ca", "Certificate Authority", new_preview),
-            ("public_services", "Public Services", "certificate=/stable/path"),
+            (consumer, consumer, "certificate=/stable/path"),
         ]
     ]
     with SessionLocal() as db:
@@ -17962,7 +18076,7 @@ def test_ca_baseline_waits_for_rotated_leaf_listener_reload(client, monkeypatch,
             db,
             {
                 "ca": {"config_preview": old_preview},
-                "public_services": {"config_preview": "certificate=/stable/path"},
+                consumer: {"config_preview": "certificate=/stable/path"},
             },
         )
         db.commit()
@@ -17982,7 +18096,7 @@ def test_ca_baseline_waits_for_rotated_leaf_listener_reload(client, monkeypatch,
             with SessionLocal() as other_db:
                 other_db.get(Job, current_job_id).cancel_requested_at = ui.utcnow()
                 other_db.commit()
-        success = unit["id"] != "public_services" or not fail_listener
+        success = unit["id"] != consumer or not fail_listener
         return {
             "unit_id": unit["id"], "label": unit["label"],
             "status": "succeeded" if success else "failed", "success": success,
@@ -18038,7 +18152,10 @@ def test_ca_baseline_waits_for_rotated_leaf_listener_reload(client, monkeypatch,
         )
         baselines = ui.load_appliance_apply_baselines(db)
         assert baselines["ca"]["config_preview"] == old_preview
-        assert ui.rotated_ca_certificate_consumers(units[0], baselines["ca"]) == {"public_services"}
+        expected_consumers = {"public_services"}
+        if consumer == "appliance_settings":
+            expected_consumers.add("appliance_settings")
+        assert ui.rotated_ca_certificate_consumers(units[0], baselines["ca"]) == expected_consumers
         steps = db.scalars(
             select(JobStep).where(JobStep.job_id == "job_ca_listener_reload_failed").order_by(JobStep.position)
         ).all()
@@ -18055,12 +18172,14 @@ def test_ca_baseline_waits_for_rotated_leaf_listener_reload(client, monkeypatch,
         assert ui.rotated_ca_certificate_consumers(units[0], baselines["ca"]) == set()
 
 
-def test_ca_handoff_keeps_reload_pending_after_later_consumer_failure(client, monkeypatch):
+@pytest.mark.parametrize("settings_row_first", [False, True])
+def test_ca_handoff_keeps_reload_pending_after_later_consumer_failure(client, monkeypatch, settings_row_first):
     """A successful handoff must not hide a failed non-bundled listener reload.
 
     Args:
         client: HTTP test client that initializes the isolated database.
         monkeypatch: Pytest fixture used to replace host apply operations.
+        settings_row_first: Present Settings before CA while the helper still owns bundled ordering.
     """
     import atlaso.app.ui as ui
     from atlaso.app.adapters.system import AdapterResult
@@ -18068,14 +18187,19 @@ def test_ca_handoff_keeps_reload_pending_after_later_consumer_failure(client, mo
     from atlaso.app.models import Job, JobStatus, JobStep
 
     old_preview = json.dumps({"certificates": [
+        {"managed_owner": "appliance:https", "fingerprint": "old-appliance"},
         {"managed_owner": "oidc:https", "fingerprint": "old-oidc"},
         {"managed_owner": "kms:server", "fingerprint": "old-kms"},
     ]})
     new_preview = json.dumps({"certificates": [
+        {"managed_owner": "appliance:https", "fingerprint": "new-appliance"},
         {"managed_owner": "oidc:https", "fingerprint": "new-oidc"},
         {"managed_owner": "kms:server", "fingerprint": "new-kms"},
     ]})
     unit_ids = [*ui.MANAGEMENT_HANDOFF_UNIT_IDS, "kms"]
+    if settings_row_first:
+        unit_ids.remove("appliance_settings")
+        unit_ids.insert(0, "appliance_settings")
     units = [
         {
             "id": unit_id, "label": unit_id, "snapshot_hash": f"hash-{unit_id}",
@@ -18190,10 +18314,13 @@ def test_ca_handoff_keeps_reload_pending_after_later_consumer_failure(client, mo
         baselines = ui.load_appliance_apply_baselines(db)
         assert baselines["ca"]["config_preview"] == old_preview
         assert baselines["public_services"]["config_preview"] == "{}"
-        assert ui.rotated_ca_certificate_consumers(units[0], baselines["ca"]) == {"public_services", "kms"}
+        ca_unit = next(unit for unit in units if unit["id"] == "ca")
+        assert ui.rotated_ca_certificate_consumers(ca_unit, baselines["ca"]) == {
+            "appliance_settings", "public_services", "kms",
+        }
 
     fail_kms = False
-    submit_job("job_ca_handoff_reload_retry", ["ca", "kms", "public_services"], management_handoff=False)
+    submit_job("job_ca_handoff_reload_retry", ["ca", "kms", "appliance_settings", "public_services"], management_handoff=False)
     with SessionLocal() as db:
         assert db.get(Job, "job_ca_handoff_reload_retry").status == JobStatus.SUCCEEDED.value
         assert ui.load_appliance_apply_baselines(db)["ca"]["config_preview"] == new_preview
@@ -18219,6 +18346,7 @@ def test_ca_live_apply_stages_decrypted_private_keys_without_leaking_job_output(
 
     staged_path = tmp_path / "atlaso-ca.json"
     captured: dict[str, str] = {}
+    settings_calls: list[str] = []
 
     with SessionLocal() as db:
         units = ui.appliance_apply_units(db)
@@ -18243,11 +18371,25 @@ def test_ca_live_apply_stages_decrypted_private_keys_without_leaking_job_output(
         captured["apply_payload"] = Path(config_path).read_text(encoding="utf-8")
         return AdapterResult(command=["atlaso-helper", "ca", "apply", config_path], dry_run=False, stdout="applied")
 
+    def fake_settings_consumer(self, config_path: str):
+        """Model the newly required management listener without touching the host.
+
+        Args:
+            config_path: Task-local staged Settings configuration after CA publication.
+        """
+        assert Path(config_path).parent == tmp_path
+        assert "apply_payload" in captured
+        settings_calls.append(config_path)
+        return AdapterResult(command=["atlaso-helper", "appliance-settings"], dry_run=False, stdout="ready")
+
     monkeypatch.setenv("ATLASO_DRY_RUN_SYSTEM_ADAPTERS", "false")
     get_settings.cache_clear()
     monkeypatch.setattr("atlaso.app.ui.CA_STAGED_CONFIG_PATH", str(staged_path))
+    monkeypatch.setattr("atlaso.app.ui.APPLIANCE_SETTINGS_STAGED_CONFIG_PATH", str(tmp_path / "atlaso-settings.json"))
     monkeypatch.setattr("atlaso.app.ui.SystemAdapter.validate_ca_config", fake_validate_ca_config)
     monkeypatch.setattr("atlaso.app.ui.SystemAdapter.apply_ca_config", fake_apply_ca_config)
+    monkeypatch.setattr("atlaso.app.ui.SystemAdapter.validate_appliance_settings_config", fake_settings_consumer)
+    monkeypatch.setattr("atlaso.app.ui.SystemAdapter.apply_appliance_settings_config", fake_settings_consumer)
     monkeypatch.setattr("atlaso.app.ui.SystemAdapter.port_forward_status", lambda self: AdapterResult(
         command=["atlaso-helper", "nat", "status"], dry_run=False,
         stdout='{"runtime_has_port_forwards":false}',
@@ -18270,6 +18412,7 @@ def test_ca_live_apply_stages_decrypted_private_keys_without_leaking_job_output(
     assert "BEGIN PRIVATE KEY" in captured["apply_payload"]
     assert "[redacted]" not in captured["apply_payload"]
     assert not staged_path.exists()
+    assert len(settings_calls) == 2
 
     with SessionLocal() as db:
         job = db.execute(select(Job).where(Job.type == "appliance-apply")).scalar_one()

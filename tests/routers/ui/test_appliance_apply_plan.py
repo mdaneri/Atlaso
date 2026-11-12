@@ -76,6 +76,12 @@ def test_proxy_review_requires_shutdown_and_orders_it_before_protected_group(cli
             "enabled": True, "listen": {"addresses": ["192.0.2.10"], "port": 5696},
         } if service == "kms" else {"boot": {"enabled": True, "listen_address": "192.0.2.10", "http_port": 5696}}
         baselines[service]["config_preview"] = json.dumps(baseline)
+        if service == "kms":
+            preview = json.loads(unit_map["ca"]["config_preview"])
+            preview["certificates"] = [{"managed_owner": "kms:server", "fingerprint": "old-leaf"}]
+            baselines["ca"]["config_preview"] = json.dumps(preview)
+            preview["certificates"][0]["fingerprint"] = "new-leaf"
+            unit_map["ca"]["config_preview"] = json.dumps(preview)
         ui.save_appliance_apply_baselines(db, baselines)
         db.commit()
         with pytest.raises(ui.ApplianceApplyPlanError) as denied:
@@ -98,6 +104,7 @@ def test_proxy_review_requires_shutdown_and_orders_it_before_protected_group(cli
 
     from atlaso.app.models import Job
 
+    run_job = ui.run_appliance_apply_job
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
     preview = client.get(f"/appliance-apply/review?selected_units=public_services&selected_units={service}").json()
     assert not preview["plan_error"]
@@ -112,6 +119,22 @@ def test_proxy_review_requires_shutdown_and_orders_it_before_protected_group(cli
         submitted = json.loads(db.get(Job, response.json()["job_id"]).result)
         assert submitted["selected_units"] == effective
         assert submitted["management_handoff"] is True
+    if service == "kms":
+        executed = []
+
+        def stop_before_handoff(unit, **_kwargs):
+            """Record the first execution without touching a host.
+
+            Args:
+                unit: Apply unit passed to the executor.
+                **_kwargs: Adapter and database arguments unused by this stub.
+            """
+            executed.append(unit["id"])
+            return {"unit_id": unit["id"], "success": False, "dry_run": True}
+
+        monkeypatch.setattr(ui, "execute_appliance_apply_unit", stop_before_handoff)
+        run_job(response.json()["job_id"])
+        assert executed == ["kms"]
 
 
 @pytest.mark.parametrize("address", ["192.0.2.10", "2001:db8::10"])

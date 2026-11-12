@@ -2818,6 +2818,124 @@ def test_management_handoff_readiness_requires_consecutive_samples(monkeypatch):
     assert "https://198.51.100.10:8443/openapi.json" in urls
 
 
+@pytest.mark.parametrize("defect", ["none", "previous_leaf", "untrusted", "wrong_address"])
+def test_management_served_leaf_requires_exact_trusted_identity(tmp_path, defect):
+    """Authenticate a real TLS peer and reject stale, foreign, or misaddressed leaves.
+
+    Args:
+        tmp_path: Isolated public certificate and synthetic test-key files.
+        defect: Peer identity defect exercised by the real TLS handshake.
+    """
+    import socket
+    import ssl
+    import threading
+    from datetime import UTC, datetime, timedelta
+    from ipaddress import ip_address
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    helper = load_helper_module()
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Activation test CA")])
+    now = datetime.now(UTC)
+    builder = (x509.CertificateBuilder().issuer_name(name)
+               .public_key(key.public_key()).not_valid_before(now - timedelta(minutes=1))
+               .not_valid_after(now + timedelta(days=1)))
+    root = (builder.subject_name(name).serial_number(1).add_extension(x509.BasicConstraints(ca=True, path_length=None), True)
+            .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()), False)
+            .add_extension(x509.KeyUsage(True, False, False, False, False, True, True, False, False), True)
+            .sign(key, hashes.SHA256()))
+    ca_path = tmp_path / "root.pem"
+    ca_path.write_bytes(root.public_bytes(serialization.Encoding.PEM))
+    leaf_builder = builder.subject_name(
+        x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Management activation test")])
+    ).add_extension(
+        x509.SubjectAlternativeName([x509.IPAddress(ip_address("127.0.0.2" if defect == "wrong_address" else "127.0.0.1"))]),
+        False,
+    ).add_extension(x509.BasicConstraints(ca=False, path_length=None), True).add_extension(
+        x509.AuthorityKeyIdentifier.from_issuer_public_key(key.public_key()), False,
+    )
+    intended = leaf_builder.serial_number(2).sign(key, hashes.SHA256())
+    served = leaf_builder.serial_number(3 if defect == "previous_leaf" else 2).sign(
+        rsa.generate_private_key(public_exponent=65537, key_size=2048) if defect == "untrusted" else key,
+        hashes.SHA256(),
+    )
+    leaf_path = tmp_path / "leaf.pem"
+    leaf_path.write_bytes(served.public_bytes(serialization.Encoding.PEM))
+    key_path = tmp_path / "test-key.pem"
+    key_path.write_bytes(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                                          serialization.NoEncryption()))
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(leaf_path, key_path)
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        listener.settimeout(5)
+
+        def serve():
+            """Complete one bounded synthetic TLS handshake."""
+            connection, _address = listener.accept()
+            with connection:
+                try:
+                    with context.wrap_socket(connection, server_side=True):
+                        pass
+                except OSError:
+                    # A rejected identity is the expected client-side failure.
+                    pass
+
+        thread = threading.Thread(target=serve)
+        thread.start()
+        try:
+            expected = intended.public_bytes(serialization.Encoding.DER)
+            if defect == "none":
+                helper._management_served_leaf("127.0.0.1", listener.getsockname()[1], ca_path, expected)
+            elif defect == "previous_leaf":
+                with pytest.raises(ValueError, match="different certificate"):
+                    helper._management_served_leaf("127.0.0.1", listener.getsockname()[1], ca_path, expected)
+            else:
+                with pytest.raises(ssl.SSLCertVerificationError):
+                    helper._management_served_leaf("127.0.0.1", listener.getsockname()[1], ca_path, expected)
+        finally:
+            thread.join(timeout=6)
+            assert not thread.is_alive()
+
+
+def test_management_readiness_does_not_accept_previous_leaf(monkeypatch, tmp_path):
+    """An HTTP 200 cannot complete readiness while the intended TLS leaf is inactive.
+
+    Args:
+        monkeypatch: Replace HTTP and bounded observation dependencies.
+        tmp_path: Isolated public CA path passed to strict readiness.
+    """
+    helper = load_helper_module()
+    observations = []
+    clock = iter([0, 0, 46])
+    monkeypatch.setattr(helper.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(helper.shutil, "which", lambda _command: "curl")
+    monkeypatch.setattr(helper, "_console_management_http_status",
+                        lambda *_args, **kwargs: observations.append(kwargs) or "200")
+
+    def stale_leaf(*_args):
+        """Reject the still-active previous leaf despite successful HTTP readiness.
+
+        Args:
+            *_args: Captured strict TLS identity probe arguments.
+        """
+        raise ValueError("previous leaf")
+
+    monkeypatch.setattr(helper, "_management_served_leaf", stale_leaf)
+    with pytest.raises(ValueError, match="TLS certificate activation unverified"):
+        helper._management_handoff_readiness(
+            ["192.0.2.10"], True, 443, samples=1,
+            tls_ca_paths={"192.0.2.10": tmp_path / "root.pem"}, tls_expected_leaf=b"new leaf",
+        )
+    assert observations[-1] == {"ca_certificate": tmp_path / "root.pem"}
+
+
 def test_management_handoff_merges_previous_static_and_dynamic_addresses(monkeypatch):
     """Capture listener addresses without probing a flagged VLAN's trunk parent.
 
@@ -18601,15 +18719,189 @@ def test_management_front_door_rejects_unhealthy_upstream_before_mutation(
     assert not nginx_paths["management_site"].exists()
 
 
+def test_management_front_door_authenticates_external_scope_and_retains_loopbacks(monkeypatch, tmp_path):
+    """Retained diagnostic sockets cannot add loopback SAN requirements to ordinary Apply.
+
+    Args:
+        monkeypatch: Replace native activation while recording its exact readiness scope.
+        tmp_path: Originally owned test root containing synthetic public TLS intent.
+    """
+    helper = load_helper_module()
+    paths = patch_appliance_settings_nginx_paths(monkeypatch, helper, tmp_path)
+    managed = tmp_path / "managed"
+    managed.mkdir()
+    cert_path = managed / "leaf.pem"
+    cert_path.write_text("-----BEGIN CERTIFICATE-----\nbGVhZg==\n-----END CERTIFICATE-----\n", encoding="utf-8")
+    dropin = tmp_path / "systemd/atlaso.service.d/management-https.conf"
+    monkeypatch.setattr(helper, "CA_MANAGED_PATH_BASE", managed)
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_DROPIN_DIR", dropin.parent)
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_HTTPS_DROPIN_PATH", dropin)
+    monkeypatch.setattr(helper, "_factory_reset_runtime_cleanup_is_admitted", lambda: False)
+    monkeypatch.setattr(helper, "_grant_atlaso_service_key_read", lambda *_args: None)
+    monkeypatch.setattr(helper, "_management_certificate_covers_scoped_addresses", lambda *_args: None)
+    monkeypatch.setattr(helper, "_run", lambda command: subprocess.CompletedProcess(command, 0, "", ""))
+    upstream = []
+    monkeypatch.setattr(helper, "_management_handoff_upstream_readiness", lambda **kwargs: upstream.append(kwargs))
+
+    def install(path, text):
+        """Retain the complete scoped nginx configuration while avoiding a provider call.
+
+        Args:
+            path: Original task-owned management site.
+            text: Rendered scoped candidate, including diagnostic sockets.
+        """
+        helper._install_nginx_include()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return 0
+
+    checked = []
+
+    def ready(addresses, _https, _port, **kwargs):
+        """Record the independently authenticated external readiness targets.
+
+        Args:
+            addresses: Addresses whose served leaf must be authenticated.
+            _https: Enabled HTTPS mode.
+            _port: Configured public port.
+            **kwargs: Explicit CA and captured leaf intent.
+        """
+        checked.append((addresses, kwargs["tls_ca_paths"], kwargs["tls_expected_leaf"]))
+        return {"stable_samples": 3}
+
+    monkeypatch.setattr(helper, "_install_nginx_site", install)
+    monkeypatch.setattr(helper, "_management_handoff_readiness", ready)
+    payload = json.loads(appliance_settings_json(management_https_enabled=True,
+                        management_https_cert_path=str(cert_path), management_https_key_path=str(managed / "test.key")))
+    payload["management_https_ca_path"] = str(managed / "root.pem")
+    scope = ["127.0.0.1", "::1", "192.0.2.10", "2001:db8::10"]
+    assert helper._configure_atlaso_management_https(payload, listen_addresses=scope) == (0, None)
+    assert checked == [(["192.0.2.10", "2001:db8::10"],
+                        {address: managed / "root.pem" for address in scope[2:]}, b"leaf")]
+    assert upstream == [{"upstream_host": "127.0.0.1", "upstream_port": 8000}]
+    site = paths["management_site"].read_text(encoding="utf-8")
+    assert "listen 127.0.0.1:443 ssl" in site
+    assert "listen [::1]:443 ssl" in site
+
+
+@pytest.mark.parametrize("ownership,stale_owned", [
+    ("dedicated", False), ("all", False), ("public", False), ("dedicated", True),
+])
+def test_settings_leaf_readiness_preserves_public_services_ownership(monkeypatch, tmp_path, ownership, stale_owned):
+    """An FQDN rotation accepts the public site's previous leaf until its later Apply.
+
+    Args:
+        monkeypatch: Replace native commands and sockets while retaining real readiness admission.
+        tmp_path: Owned synthetic nginx and public certificate directory.
+        ownership: HTTPS sockets retained by the Settings site after a protected handoff.
+        stale_owned: Keep an obsolete leaf on a Settings-owned socket to prove refusal.
+    """
+    helper = load_helper_module()
+    paths = patch_appliance_settings_nginx_paths(monkeypatch, helper, tmp_path)
+    managed = tmp_path / "managed"
+    managed.mkdir()
+    cert = managed / "new-fqdn.pem"
+    cert.write_text("-----BEGIN CERTIFICATE-----\nbGVhZg==\n-----END CERTIFICATE-----\n", encoding="utf-8")
+    payload = json.loads(appliance_settings_json(
+        management_https_enabled=True, management_https_cert_path=str(cert),
+        management_https_key_path=str(managed / "new-fqdn.key"),
+    ))
+    payload["management_https_ca_path"] = str(managed / "root.pem")
+    payload["management_public_https_port"] = 8443 if ownership == "all" else 443
+    scope = ["127.0.0.1", "::1", "192.0.2.10", "2001:db8::10", "192.0.2.20"]
+    owned = scope if ownership == "all" else scope[:4] if ownership == "dedicated" else scope[:2]
+    site = paths["management_site"]
+    site.parent.mkdir(parents=True, exist_ok=True)
+    previous = helper._management_nginx_config(
+        dict(payload, fqdn="previous.example.test"), managed / "previous.pem", managed / "previous.key",
+        listen_addresses=scope, https_listen_addresses=owned,
+    )
+    site.write_text(previous, encoding="utf-8")
+    monkeypatch.setattr(helper, "CA_MANAGED_PATH_BASE", managed)
+    dropin = tmp_path / "systemd/atlaso.service.d/management-https.conf"
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_DROPIN_DIR", dropin.parent)
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_HTTPS_DROPIN_PATH", dropin)
+    monkeypatch.setattr(helper, "_factory_reset_runtime_cleanup_is_admitted", lambda: False)
+    monkeypatch.setattr(helper, "_grant_atlaso_service_key_read", lambda *_args: None)
+    monkeypatch.setattr(helper, "_management_certificate_covers_scoped_addresses", lambda *_args: None)
+    monkeypatch.setattr(helper, "_run", lambda command: subprocess.CompletedProcess(command, 0, "", ""))
+    monkeypatch.setattr(helper.shutil, "which", lambda _name: "/usr/bin/curl")
+    monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
+    ticks = iter(range(0, 1000, 5))
+    monkeypatch.setattr(helper.time, "monotonic", lambda: next(ticks))
+    urls, leaves = [], []
+
+    def status(_curl, url, **kwargs):
+        """Require CA trust on every external socket, including the public site's old leaf.
+
+        Args:
+            _curl: Unused native HTTP client executable.
+            url: Upstream or external management readiness endpoint.
+            **kwargs: Explicit CA trust and transport options supplied by readiness.
+        """
+        urls.append(url)
+        if url.startswith("https:"):
+            assert kwargs["ca_certificate"] == managed / "root.pem"
+            assert not kwargs.get("insecure")
+        return "200"
+
+    def leaf(address, _port, _ca, expected):
+        """Require the new leaf only on sockets owned by the activating site.
+
+        Args:
+            address: Listener address selected for exact-leaf verification.
+            _port: Unused public HTTPS port.
+            _ca: Unused CA path, checked by the separate availability probe.
+            expected: Captured DER bytes of the activating site's intended leaf.
+        """
+        leaves.append(address)
+        assert expected == b"leaf"
+        if address not in owned or stale_owned:
+            raise ValueError("previous FQDN leaf is still active")
+
+    def install(path, text):
+        """Publish the actual generated candidate under the owned test directory.
+
+        Args:
+            path: Owned management-site destination.
+            text: Rendered nginx candidate to install.
+        """
+        helper._install_nginx_include()
+        path.write_text(text, encoding="utf-8")
+        return 0
+
+    monkeypatch.setattr(helper, "_console_management_http_status", status)
+    monkeypatch.setattr(helper, "_management_served_leaf", leaf)
+    monkeypatch.setattr(helper, "_install_nginx_site", install)
+    preserved = helper._existing_management_scoped_addresses()
+    assert preserved is not None
+    result = helper._configure_atlaso_management_https(
+        payload, listen_addresses=preserved[0], https_listen_addresses=preserved[1],
+    )
+    assert result == ((1, None) if stale_owned else (0, None))
+    expected_addresses = set(owned) - {"127.0.0.1", "::1"}
+    assert set(leaves) == expected_addresses
+    port = payload["management_public_https_port"]
+    assert {f"https://{host}:{port}/openapi.json" for host in ["192.0.2.10", "[2001:db8::10]", "192.0.2.20"]} <= set(urls)
+    assert site.read_text(encoding="utf-8") == (previous if stale_owned else helper._management_nginx_config(
+        payload, cert, managed / "new-fqdn.key", listen_addresses=preserved[0], https_listen_addresses=preserved[1],
+    ).rstrip() + "\n")
+
+
+@pytest.mark.parametrize(("tls_rotation", "replace_pair"), [(False, False), (True, False), (True, True)])
 def test_management_front_door_rolls_back_failed_candidate_readiness(
     monkeypatch,
     tmp_path,
+    tls_rotation,
+    replace_pair,
 ):
     """Restore nginx and the service drop-in when the candidate cannot serve.
 
     Args:
         monkeypatch: Pytest fixture used to replace helper paths and probes.
         tmp_path: Temporary directory provided for isolated runtime files.
+        tls_rotation: Exercise TLS readiness for the replacement leaf.
+        replace_pair: Install the leaf inside the durable front-door transaction.
     """
     helper = load_helper_module()
     nginx_paths = patch_appliance_settings_nginx_paths(monkeypatch, helper, tmp_path)
@@ -18639,11 +18931,19 @@ def test_management_front_door_rolls_back_failed_candidate_readiness(
         "_management_handoff_upstream_readiness",
         lambda **_kwargs: {"status": "200", "stable_samples": 3},
     )
-    monkeypatch.setattr(
-        helper,
-        "_management_handoff_readiness",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("management 192.168.49.1=502")),
-    )
+    def reject_readiness(*_args, **kwargs):
+        """Refuse the candidate only after its exact TLS intent reaches readiness.
+
+        Args:
+            *_args: Candidate address and port.
+            **kwargs: Captured CA trust and intended leaf.
+        """
+        if tls_rotation:
+            assert kwargs["tls_expected_leaf"] == helper.ssl.PEM_cert_to_DER_cert(certificate)
+            assert kwargs["tls_ca_paths"] == {"192.168.49.1": managed / "root.pem"}
+        raise ValueError("TLS certificate activation unverified" if tls_rotation else "management 192.168.49.1=502")
+
+    monkeypatch.setattr(helper, "_management_handoff_readiness", reject_readiness)
     monkeypatch.setattr(helper, "_install_nginx_site", install_candidate)
     monkeypatch.setattr(
         helper,
@@ -18658,8 +18958,29 @@ def test_management_front_door_rolls_back_failed_candidate_readiness(
     )
     monkeypatch.setattr(helper, "_reload_nginx", lambda: 0)
 
+    material_writer = None
     payload = json.loads(appliance_settings_json(management_https_enabled=False))
-    assert helper._configure_atlaso_management_https(payload) == (1, None)
+    if tls_rotation:
+        managed = tmp_path / "managed"
+        managed.mkdir()
+        certificate = "-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----\n"
+        cert_path = managed / "leaf.pem"
+        cert_path.write_text("old leaf fixture" if replace_pair else certificate, encoding="utf-8")
+        if replace_pair:
+            def write_candidate() -> None:
+                """Install the new leaf after the durable snapshot exists."""
+                assert helper.MANAGEMENT_FRONT_DOOR_STATE_PATH.is_file()
+                cert_path.write_text(certificate, encoding="utf-8")
+
+            material_writer = write_candidate
+        monkeypatch.setattr(helper, "CA_MANAGED_PATH_BASE", managed)
+        monkeypatch.setattr(helper, "_grant_atlaso_service_key_read", lambda *_args: None)
+        payload.update(management_https_enabled=True, management_https_cert_path=str(cert_path),
+                       management_https_key_path=str(managed / "test.key"),
+                       management_https_ca_path=str(managed / "root.pem"))
+    assert helper._configure_atlaso_management_https(payload, material_writer=material_writer) == (1, None)
+    if replace_pair:
+        assert cert_path.read_text(encoding="utf-8") == "old leaf fixture"
 
     assert management_site.read_text(encoding="utf-8") == "previous management site\n"
     assert dropin.read_text(encoding="utf-8") == "previous service drop-in\n"

@@ -3,6 +3,12 @@
 Deploys the current Atlaso wheel and deployment assets to a VMware test appliance.
 .PARAMETER RepoRoot
 Repository checkout used for build and deployment inputs.
+.PARAMETER AdmittedSourceRoot
+Immutable source snapshot selected by the receipt-bound ISO fixture owner.
+.PARAMETER IsoFixtureDeploymentRequest
+Public original-ISO deployment request created and pinned by the fixture owner.
+.PARAMETER IsoFixtureDeploymentRequestSha256
+Independent SHA-256 of the fixture owner's immutable public request.
 .PARAMETER IpAddress
 Explicit appliance IP address.
 .PARAMETER VmxPath
@@ -73,6 +79,9 @@ Skips the final host-facing OpenAPI probe.
 [CmdletBinding()]
 param(
     [string]$RepoRoot = '',
+    [string]$AdmittedSourceRoot = '',
+    [string]$IsoFixtureDeploymentRequest = '',
+    [string]$IsoFixtureDeploymentRequestSha256 = '',
     [string]$IpAddress = '',
     [string]$VmxPath = '',
     [string]$VmrunPath = '',
@@ -457,15 +466,18 @@ Stages the vetted 1Password SDK deployment wheels.
 Python executable.
 .PARAMETER WorkingDirectory
 Repository working directory.
+.PARAMETER OutputDirectory
+Optional already owned wheel output directory, separate from immutable source.
 #>
 function Stage-PasswordDeployPythonWheels {
     param(
         [Parameter(Mandatory = $true)][string]$PythonCommand,
-        [Parameter(Mandatory = $true)][string]$WorkingDirectory
+        [Parameter(Mandatory = $true)][string]$WorkingDirectory,
+        [string]$OutputDirectory = ''
     )
 
     $lockPath = Join-Path $WorkingDirectory $script:PasswordDeployLockName
-    $wheelDirectory = Join-Path $WorkingDirectory 'dist'
+    $wheelDirectory = if ($OutputDirectory) { $OutputDirectory } else { Join-Path $WorkingDirectory 'dist' }
     $stagingDirectory = Join-Path ([System.IO.Path]::GetTempPath()) (
         "atlaso-onepassword-wheel-stage-$([guid]::NewGuid().ToString('N'))"
     )
@@ -491,6 +503,7 @@ function Stage-PasswordDeployPythonWheels {
             @($pipRuntime.ArgumentsPrefix)
             'download',
             '--disable-pip-version-check',
+            '--no-cache-dir',
             '--index-url', 'https://pypi.org/simple',
             '--find-links', $stagingDirectory,
             '--require-hashes',
@@ -516,15 +529,18 @@ Python executable.
 Repository working directory.
 .PARAMETER TemporaryDirectory
 Private temporary deployment directory.
+.PARAMETER WheelDirectory
+Optional owned SDK wheelhouse, separate from immutable source and credential configuration.
 #>
 function Initialize-PasswordDeployPythonPath {
     param(
         [Parameter(Mandatory = $true)][string]$PythonCommand,
         [Parameter(Mandatory = $true)][string]$WorkingDirectory,
-        [Parameter(Mandatory = $true)][string]$TemporaryDirectory
+        [Parameter(Mandatory = $true)][string]$TemporaryDirectory,
+        [string]$WheelDirectory = ''
     )
 
-    $wheelDirectory = Join-Path $WorkingDirectory 'dist'
+    $wheelDirectory = if ($WheelDirectory) { $WheelDirectory } else { Join-Path $WorkingDirectory 'dist' }
     $lockPath = Join-Path $WorkingDirectory $script:PasswordDeployLockName
     if (-not (Test-Path -LiteralPath $wheelDirectory -PathType Container)) {
         throw "The vetted password-deployment wheel directory does not exist: $wheelDirectory. Rerun without -SkipBuild."
@@ -640,6 +656,14 @@ Use desktop authorization or the current-user DPAPI service-account token.
 Validated ciphertext file read only by the service-account wrapper child.
 .PARAMETER TrustedHostKey
 Optional verified Ed25519 host key supplied from VMware guest-info.
+.PARAMETER ConfigurationRepositoryRoot
+Checkout owning the validated selector and DPAPI configuration when source is immutable.
+.PARAMETER SdkWheelDirectory
+Owned complete SDK wheelhouse admitted from the immutable source lock.
+.PARAMETER FixtureRequestPath
+Optional pinned original-ISO request for strict host-key and public payload measurements.
+.PARAMETER FixtureRequestSha256
+Independent digest of the original-ISO request.
 #>
 function Invoke-PasswordBackedDeploy {
     param(
@@ -683,7 +707,11 @@ function Invoke-PasswordBackedDeploy {
         [Parameter(Mandatory = $true)][ValidateSet('desktop', 'service-account')]
         [string]$AuthenticationMode,
         [AllowEmptyString()][string]$ServiceAccountTokenFile = '',
-        [string]$TrustedHostKey = ''
+        [string]$TrustedHostKey = '',
+        [string]$ConfigurationRepositoryRoot = '',
+        [string]$SdkWheelDirectory = '',
+        [string]$FixtureRequestPath = '',
+        [string]$FixtureRequestSha256 = ''
     )
 
     $passwordDeployDirectory = Join-Path ([System.IO.Path]::GetTempPath()) "atlaso-password-deploy-$([guid]::NewGuid().ToString('N'))"
@@ -779,6 +807,9 @@ parser.add_argument("--onepassword-authentication", choices=("desktop", "service
 parser.add_argument("--onepassword-account", default="")
 parser.add_argument("--onepassword-environment-id", required=True)
 parser.add_argument("--trusted-host-key", default="")
+parser.add_argument("--iso-fixture-request", default="")
+parser.add_argument("--iso-fixture-request-sha256", default="")
+parser.add_argument("--fixture-source-root", default="")
 parser.add_argument("--reset-vault-entries", action="store_true")
 parser.add_argument("--timeout", type=int, required=True)
 parser.add_argument("--readiness-timeout", type=int, required=True)
@@ -798,6 +829,22 @@ except ImportError as exc:
     raise SystemExit(
         "The isolated 1Password SDK and Paramiko deployment runtime could not be loaded."
     ) from exc
+
+fixture_request = None
+fixture_transport = None
+if args.iso_fixture_request:
+    # The owner pins every source directory and input through this child's exit.
+    # Admit public identity before the credential bridge is allowed to run.
+    sys.path[:0] = [args.fixture_source_root, str(pathlib.Path(args.fixture_source_root) / "scripts" / "interop")]
+    import certificate_iso_transport as fixture_transport
+    fixture_request = fixture_transport.admit_request(
+        pathlib.Path(args.iso_fixture_request), args.iso_fixture_request_sha256, args
+    )
+    def fixture_exception(category, value, traceback):
+        print("Original-ISO deployment failed; preserve its owner records before reconciliation.", file=sys.stderr)
+    sys.excepthook = fixture_exception
+elif args.iso_fixture_request_sha256 or args.fixture_source_root:
+    raise SystemExit("Original-ISO deployment requires its complete pinned request.")
 
 
 async def load_password():
@@ -843,7 +890,11 @@ async def load_password():
     return selected_password
 
 
+if fixture_request is not None:
+    fixture_transport.record_phase(fixture_request, "credentials-requested")
 password = asyncio.run(load_password())
+if fixture_request is not None:
+    fixture_transport.record_phase(fixture_request, "credentials-ready")
 
 uploads = [
     (pathlib.Path(args.local_wheel), args.remote_wheel),
@@ -873,7 +924,7 @@ if args.local_boot_installer:
             (pathlib.Path(args.local_boot_background), args.remote_boot_background),
         ]
     )
-def connect_password_or_keyboard_interactive(client, host, username, password):
+def connect_password_or_keyboard_interactive(client, host, username, password, fixture_request=None):
     sock = socket.create_connection((host, 22), timeout=15)
     transport = paramiko.Transport(sock)
     try:
@@ -883,7 +934,12 @@ def connect_password_or_keyboard_interactive(client, host, username, password):
             if host_key_entry:
                 known_key_entry = host_key_entry
                 break
-        if known_key_entry is not None:
+        if fixture_request is not None:
+            security_options = transport.get_security_options()
+            if "ssh-ed25519" not in security_options.key_types:
+                raise paramiko.SSHException("Original ISO SSH key type is unavailable.")
+            security_options.key_types = ["ssh-ed25519"]
+        elif known_key_entry is not None:
             # Match SSHClient.connect: negotiate the recorded host-key type first so a
             # different server key type cannot win before strict known-host checking.
             key_type = next(iter(known_key_entry.keys()))
@@ -902,13 +958,15 @@ def connect_password_or_keyboard_interactive(client, host, username, password):
 
         transport.start_client(timeout=15)
         server_key = transport.get_remote_server_key()
-        if known_key_entry is None:
+        if fixture_request is not None:
+            fixture_transport.verify_host_key(fixture_request, server_key)
+        if known_key_entry is None and fixture_request is None:
             raise paramiko.SSHException(
                 f"Unknown SSH host key for {host}; add the verified key to known_hosts "
                 "or pass the normal test VM's verified guest-info evidence with "
                 "-VmxPath and -UseVmwareGuestInfoHostKey."
             )
-        elif not any(server_key == expected_key for expected_key in known_key_entry.values()):
+        elif known_key_entry is not None and not any(server_key == expected_key for expected_key in known_key_entry.values()):
             expected_key = next(iter(known_key_entry.values()))
             raise paramiko.BadHostKeyException(host, server_key, expected_key)
 
@@ -962,10 +1020,19 @@ client.load_system_host_keys()
 client.set_missing_host_key_policy(paramiko.RejectPolicy())
 if args.trusted_host_key:
     add_trusted_host_key(client, args.host, args.trusted_host_key)
-connect_password_or_keyboard_interactive(client, args.host, args.user, password)
+if fixture_request is not None:
+    fixture_transport.record_phase(fixture_request, "ssh-connecting")
+connect_password_or_keyboard_interactive(client, args.host, args.user, password, fixture_request)
 try:
+    if fixture_request is not None:
+        fixture_transport.record_phase(fixture_request, "ssh-authenticated")
+        fixture_transport.preflight(client, fixture_request, password, args.timeout)
+        fixture_transport.record_phase(fixture_request, "preflight-passed")
     sftp = client.open_sftp()
     try:
+        if fixture_request is not None:
+            # mkdir must fail for a pre-existing namespace. Never reuse an upload.
+            sftp.mkdir(args.remote_dir, mode=0o700)
         for local_path, remote_path in uploads:
             if not local_path.exists():
                 raise SystemExit(f"Local deploy input is missing: {local_path}")
@@ -975,6 +1042,9 @@ try:
             sftp.chmod(args.remote_boot_installer, 0o755)
     finally:
         sftp.close()
+    if fixture_request is not None:
+        fixture_transport.verify_uploads(client, uploads, fixture_request, password, args.timeout)
+        fixture_transport.record_phase(fixture_request, "uploads-verified")
 
     remote_helper_argument = args.remote_helper if args.local_helper else ""
     remote_console_manager_argument = args.remote_console_manager if args.local_console_manager else ""
@@ -1002,17 +1072,27 @@ try:
         f"{shell_quote(remote_trust_keys_argument)} "
         f"{shell_quote('true' if args.reset_vault_entries else 'false')}"
     )
+    if fixture_request is not None:
+        fixture_transport.record_phase(fixture_request, "engine-starting")
     stdin, stdout, stderr = client.exec_command(command, get_pty=False, timeout=args.timeout)
     stdin.write(password + "\n")
     stdin.flush()
     stdin.channel.shutdown_write()
-    stdout_text, stderr_text, exit_code = read_paramiko_command_output(stdout.channel, args.timeout)
-    if stdout_text.strip():
+    if fixture_request is not None:
+        exit_code = fixture_transport.drain_engine(stdout.channel, args.timeout)
+        fixture_transport.record_phase(fixture_request, "engine-exited", exit_code=exit_code)
+        stdout_text, stderr_text = "", ""
+    else:
+        stdout_text, stderr_text, exit_code = read_paramiko_command_output(stdout.channel, args.timeout)
+    if fixture_request is None and stdout_text.strip():
         print(sanitized(stdout_text, password).strip())
-    if stderr_text.strip():
+    if fixture_request is None and stderr_text.strip():
         print(sanitized(stderr_text, password).strip(), file=sys.stderr)
     if exit_code:
         raise SystemExit(exit_code)
+    if fixture_request is not None:
+        fixture_transport.finish(client, fixture_request, password, args.timeout)
+        fixture_transport.record_phase(fixture_request, "measurement-passed")
 finally:
     client.close()
 '@
@@ -1022,9 +1102,10 @@ finally:
         $pythonDependencyPath = Initialize-PasswordDeployPythonPath `
             -PythonCommand $PythonCommand `
             -WorkingDirectory $WorkingDirectory `
-            -TemporaryDirectory $passwordDeployDirectory
+            -TemporaryDirectory $passwordDeployDirectory `
+            -WheelDirectory $SdkWheelDirectory
         $deployArguments = @(
-            '-I', '-S', $pythonDeploy,
+            '-I', '-S', '-B', $pythonDeploy,
             '--dependency-path', $pythonDependencyPath,
             '--onepassword-authentication', $AuthenticationMode,
             '--onepassword-account', $Account,
@@ -1063,6 +1144,11 @@ finally:
         if ($TrustedHostKey) {
             $deployArguments += @('--trusted-host-key', $TrustedHostKey)
         }
+        if ($FixtureRequestPath) {
+            $deployArguments += @('--iso-fixture-request', $FixtureRequestPath,
+                '--iso-fixture-request-sha256', $FixtureRequestSha256,
+                '--fixture-source-root', $WorkingDirectory)
+        }
         foreach ($runtimeDependencyPath in $LocalRuntimeDependencyPaths) {
             $deployArguments += @('--local-runtime-dependency', $runtimeDependencyPath)
         }
@@ -1098,7 +1184,7 @@ finally:
                     '-NoLogo', '-NoProfile', '-NonInteractive', '-File',
                     (Join-Path $PSScriptRoot 'Invoke-AtlasoServiceAccountCommand.ps1'),
                     '-TokenFile', $ServiceAccountTokenFile,
-                    '-RepositoryRoot', $WorkingDirectory,
+                    '-RepositoryRoot', $(if ($ConfigurationRepositoryRoot) { $ConfigurationRepositoryRoot } else { $WorkingDirectory }),
                     '-FilePath', $PythonCommand,
                     '-ArgumentsPath', $argumentsPath,
                     '-WorkingDirectory', $WorkingDirectory
@@ -1124,7 +1210,68 @@ if ($env:OP_SERVICE_ACCOUNT_TOKEN) {
     throw 'OP_SERVICE_ACCOUNT_TOKEN must not be supplied by the caller; use -OnePasswordServiceAccountTokenFile.'
 }
 
+$fixtureRequestPin = $null
+$fixtureOutputPin = $null
 $resolvedRepoRoot = Resolve-RepoRoot -Path $RepoRoot
+try {
+$assetSourceRoot = $resolvedRepoRoot
+$fixtureRequest = $null
+$sdkWheelDirectory = ''
+$fixtureMode = -not [string]::IsNullOrEmpty($IsoFixtureDeploymentRequest)
+if ($fixtureMode) {
+    if (-not $AdmittedSourceRoot -or $IsoFixtureDeploymentRequestSha256 -cnotmatch '^[0-9a-f]{64}$' -or
+        $AdmittedSourceRoot -cnotmatch '^[A-Za-z]:[\\/]' -or $IsoFixtureDeploymentRequest -cnotmatch '^[A-Za-z]:[\\/]' -or
+        -not $SkipBuild -or -not $WheelPath -or -not $IpAddress -or -not $VmxPath -or
+        -not $SkipHelperSync -or -not $SkipConsoleAssetSync -or -not $SkipBootBrandingSync -or
+        $ResetVaultEntries -or $UseVmwareGuestInfoHostKey -or -not $OnePasswordEnvironmentId) {
+        throw 'ISO fixture deployment requires its complete pinned owner request, direct address, original assets and bounded password bridge.'
+    }
+    Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
+    Import-Module (Join-Path $PSScriptRoot 'Atlaso.SourceSnapshot.psm1') -Force
+    . (Join-Path $PSScriptRoot 'Atlaso.LifecycleOwnership.ps1')
+    $configuredRoot = [IO.Path]::GetFullPath((Get-AtlasoLifecycleDurableRoot)).TrimEnd('\', '/')
+    $requestPath = [IO.Path]::GetFullPath($IsoFixtureDeploymentRequest)
+    if (-not (Test-AtlasoStrictDescendantPath -ParentPath $configuredRoot -ChildPath $requestPath)) {
+        throw 'ISO fixture request is outside the configured durable root.'
+    }
+    $fixtureRequestPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($requestPath, $true)
+    $requestInfo = Get-Item -LiteralPath $requestPath
+    if ($requestInfo.Length -gt 131072 -or
+        (Get-FileHash -LiteralPath $requestPath -Algorithm SHA256).Hash -ine $IsoFixtureDeploymentRequestSha256) {
+        throw 'ISO fixture request differs from its independently pinned bytes.'
+    }
+    $fixtureRequest = Get-Content -LiteralPath $requestPath -Raw | ConvertFrom-Json -AsHashtable
+    $assetSourceRoot = Resolve-RepoRoot -Path $AdmittedSourceRoot
+    $checkout = Get-AtlasoSourceCheckoutIdentity -RepositoryRoot $resolvedRepoRoot
+    $branch = ([string](& git -C $resolvedRepoRoot branch --show-current)).Trim()
+    $expectedOutputParent = Join-Path $resolvedRepoRoot 'test-results'
+    if (($fixtureRequest.schema -isnot [int] -and $fixtureRequest.schema -isnot [long]) -or $fixtureRequest.schema -ne 1 -or
+        $fixtureRequest.kind -cne 'certificate-iso-wheel-deployment-request' -or
+        $fixtureRequest.task_id -cne $env:CODEX_THREAD_ID -or $fixtureRequest.repository -cne 'mdaneri/Atlaso' -or
+        $fixtureRequest.source_commit -cne $checkout.Commit -or -not $branch -or $branch -ceq 'main' -or
+        [IO.Path]::GetFullPath($fixtureRequest.repository_root) -ine $resolvedRepoRoot -or
+        [IO.Path]::GetFullPath($fixtureRequest.source_root) -ine $assetSourceRoot -or
+        [IO.Path]::GetFullPath($fixtureRequest.wheel_path) -ine [IO.Path]::GetFullPath($WheelPath) -or
+        $fixtureRequest.host_address -cne $IpAddress -or
+        $fixtureRequest.host_key_sha256 -cnotmatch '^SHA256:[A-Za-z0-9+/]{43}$' -or
+        $fixtureRequest.remote_directory -cne $RemoteDirectory -or
+        -not (Test-AtlasoStrictDescendantPath -ParentPath $expectedOutputParent -ChildPath $fixtureRequest.output_root) -or
+        -not (Test-AtlasoStrictDescendantPath -ParentPath $fixtureRequest.output_root -ChildPath $assetSourceRoot) -or
+        -not (Test-AtlasoStrictDescendantPath -ParentPath $fixtureRequest.output_root -ChildPath $fixtureRequest.sdk_wheel_directory) -or
+        [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($fixtureRequest.inspection_output)) -ine
+            [IO.Path]::GetFullPath($fixtureRequest.output_root)) {
+        throw 'ISO fixture request does not match its task, source, wheel, network or owned output.'
+    }
+    $fixtureOutputPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($fixtureRequest.output_root, $true)
+    if ([Atlaso.WorkstationFileIdentity]::Get($fixtureRequest.output_root) -cne $fixtureRequest.output_root_identity) {
+        throw 'ISO fixture output changed from its original creation identity.'
+    }
+    $null = Assert-AtlasoSourceSnapshot -Root $assetSourceRoot -ExpectedSha256 $fixtureRequest.source_snapshot_sha256 `
+        -ExpectedFileCount $fixtureRequest.source_snapshot_file_count
+    $sdkWheelDirectory = $fixtureRequest.sdk_wheel_directory
+} elseif ($AdmittedSourceRoot -or $IsoFixtureDeploymentRequestSha256) {
+    throw 'Immutable fixture source selections require the original pinned deployment request.'
+}
 $RemoteDirectory = Resolve-RemoteDirectoryPath -Path $RemoteDirectory
 
 $UsePasswordDeploy = -not [string]::IsNullOrEmpty($OnePasswordEnvironmentId)
@@ -1132,7 +1279,7 @@ $resolvedOnePasswordPython = ''
 $onePasswordAuthentication = $null
 if ($UsePasswordDeploy) {
     Import-Module (
-        Join-Path $resolvedRepoRoot 'scripts\windows\vmware\Atlaso.OnePasswordCredentials.psm1'
+        Join-Path $assetSourceRoot 'scripts\windows\vmware\Atlaso.OnePasswordCredentials.psm1'
     ) -Force
     Assert-OnePasswordEnvironmentId -EnvironmentId $OnePasswordEnvironmentId
     $resolvedOnePasswordPython = Resolve-OnePasswordPython -PythonCommand $OnePasswordPython
@@ -1144,7 +1291,10 @@ if ($UseVmwareGuestInfoHostKey -and (-not $UsePasswordDeploy -or -not $VmxPath))
 }
 
 if ($UsePasswordDeploy) {
-    if ($SkipBuild) {
+    if ($fixtureMode) {
+        Stage-PasswordDeployPythonWheels -PythonCommand $resolvedOnePasswordPython `
+            -WorkingDirectory $assetSourceRoot -OutputDirectory $sdkWheelDirectory
+    } elseif ($SkipBuild) {
         $skipBuildWheelStage = Join-Path ([System.IO.Path]::GetTempPath()) (
             "atlaso-onepassword-wheel-stage-$([guid]::NewGuid().ToString('N'))"
         )
@@ -1279,21 +1429,21 @@ foreach ($runtimeDependencyPattern in @('authlib-*.whl', 'joserfc-*.whl', 'pycdl
         throw "The runtime dependency wheel set requires exactly one $runtimeDependencyPattern wheel."
     }
 }
-$helperPath = Join-Path $resolvedRepoRoot 'scripts\appliance\atlaso-helper'
-$consoleManagerPath = Join-Path $resolvedRepoRoot 'image\common\systemd\atlaso-console-manager.conf'
-$bootInstallerPath = Join-Path $resolvedRepoRoot 'scripts\appliance\atlaso-install-boot-branding'
-$bootThemePath = Join-Path $resolvedRepoRoot 'image\common\boot\grub\theme.txt'
-$bootBackgroundPath = Join-Path $resolvedRepoRoot 'image\common\boot\grub\atlaso.png'
-$trustKeyDirectory = Join-Path $resolvedRepoRoot 'image\common\update-trust'
+$helperPath = Join-Path $assetSourceRoot 'scripts\appliance\atlaso-helper'
+$consoleManagerPath = Join-Path $assetSourceRoot 'image\common\systemd\atlaso-console-manager.conf'
+$bootInstallerPath = Join-Path $assetSourceRoot 'scripts\appliance\atlaso-install-boot-branding'
+$bootThemePath = Join-Path $assetSourceRoot 'image\common\boot\grub\theme.txt'
+$bootBackgroundPath = Join-Path $assetSourceRoot 'image\common\boot\grub\atlaso.png'
+$trustKeyDirectory = Join-Path $assetSourceRoot 'image\common\update-trust'
 $trustKeyPaths = @(
     Get-ChildItem -LiteralPath $trustKeyDirectory -Filter '*.pem' -File -ErrorAction SilentlyContinue |
         Sort-Object Name |
         Select-Object -ExpandProperty FullName
 )
-$atlasoServicePath = Join-Path $resolvedRepoRoot 'image\common\systemd\atlaso.service'
-$workerServicePath = Join-Path $resolvedRepoRoot 'image\common\systemd\atlaso-worker.service'
-$atlasoServiceDropInPath = Join-Path $resolvedRepoRoot 'image\common\systemd\atlaso-require-data-disks.conf'
-$nginxServiceDropInPath = Join-Path $resolvedRepoRoot 'image\common\systemd\nginx-atlaso-data-disks.conf'
+$atlasoServicePath = Join-Path $assetSourceRoot 'image\common\systemd\atlaso.service'
+$workerServicePath = Join-Path $assetSourceRoot 'image\common\systemd\atlaso-worker.service'
+$atlasoServiceDropInPath = Join-Path $assetSourceRoot 'image\common\systemd\atlaso-require-data-disks.conf'
+$nginxServiceDropInPath = Join-Path $assetSourceRoot 'image\common\systemd\nginx-atlaso-data-disks.conf'
 if (-not $SkipHelperSync -and -not (Test-Path -LiteralPath $helperPath -PathType Leaf)) {
     throw "Atlaso helper script not found: $helperPath"
 }
@@ -1586,10 +1736,10 @@ fi
 old_ifs="$IFS"
 IFS=:
 for runtime_dependency_path in $runtime_dependency_paths; do
-    "$python" -m pip install --force-reinstall --no-compile --no-deps "$runtime_dependency_path"
+    "$python" -m pip install --force-reinstall --no-compile --no-deps --no-index --disable-pip-version-check "$runtime_dependency_path"
 done
 IFS="$old_ifs"
-"$python" -m pip install --force-reinstall --no-compile --no-deps "$wheel"
+"$python" -m pip install --force-reinstall --no-compile --no-deps --no-index --disable-pip-version-check "$wheel"
 find "$site_packages" -type f -name '*.pyc' -delete
 find "$site_packages" -depth -type d -name __pycache__ -empty -delete
 atlaso_was_active=false
@@ -1931,12 +2081,16 @@ try {
             -ReadinessTimeoutSeconds $ReadinessTimeoutSeconds `
             -DeploymentTimeoutSeconds $DeploymentTimeoutSeconds `
             -PollSeconds $ReadinessPollSeconds `
-            -WorkingDirectory $resolvedRepoRoot `
+            -WorkingDirectory $assetSourceRoot `
             -EnvironmentId $OnePasswordEnvironmentId `
             -Account $onePasswordAuthentication.Account `
             -AuthenticationMode $onePasswordAuthentication.Mode `
             -ServiceAccountTokenFile $onePasswordAuthentication.TokenFile `
-            -TrustedHostKey $trustedSshHostKey
+            -TrustedHostKey $trustedSshHostKey `
+            -ConfigurationRepositoryRoot $resolvedRepoRoot `
+            -SdkWheelDirectory $sdkWheelDirectory `
+            -FixtureRequestPath $IsoFixtureDeploymentRequest `
+            -FixtureRequestSha256 $IsoFixtureDeploymentRequestSha256
     } else {
         Write-Host "Uploading deployment files to $SshUser@$IpAddress`:$RemoteDirectory"
         Invoke-CheckedCommand -FilePath 'scp' -Arguments @($sshConnectionArguments + $uploadPaths + "${SshUser}@${IpAddress}:$RemoteDirectory/")
@@ -1991,4 +2145,8 @@ try {
     if ($generatedRuntimeDependencyRoot) {
         Remove-Item -LiteralPath $generatedRuntimeDependencyRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
+}
+} finally {
+    if ($fixtureOutputPin) { $fixtureOutputPin.Dispose() }
+    if ($fixtureRequestPin) { $fixtureRequestPin.Dispose() }
 }

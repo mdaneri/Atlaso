@@ -1,4 +1,4 @@
-"""Establish an ISO appliance's static certificate-test baseline through reviewed Apply.
+"""Observe a DHCP baseline or establish an ISO appliance's static baseline through reviewed Apply.
 
 Run only in the source-pinned, bounded credential child. Original VM, console,
 peer and LAN receipts precede both authentication and desired-state mutation.
@@ -15,6 +15,7 @@ import os
 import ssl
 import subprocess
 import sys
+import time
 import zlib
 from contextlib import contextmanager
 from pathlib import Path
@@ -23,6 +24,7 @@ from pathlib import Path
 # add this entrypoint's directory. Only its pinned sibling namespace is added.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from certificate_ca_baseline import baseline_address, baseline_mode
 from certificate_handoff_native import (
     Client,
     clean_baseline,
@@ -33,7 +35,14 @@ from certificate_handoff_native import (
     wait_task,
 )
 from certificate_handoff_native import Refusal as HandoffRefusal
+from certificate_iso_deployment import (
+    admit_deployment,
+    asset_program,
+    payload_program,
+    validate_measurement,
+)
 from certificate_iso_identity import reviewed_helper_identity
+from certificate_iso_transport import decode_report
 from certificate_peer_proof import Refusal as ProofRefusal
 from certificate_peer_proof import admit_fixture, admit_output, bound_json, publish
 from certificate_peer_transport import (
@@ -71,7 +80,7 @@ def watched_topology(plan: dict, original: dict):
 
 
 def initial_review(client) -> None:
-    """Require a clean applied baseline before the controlled interface edit.
+    """Require a clean applied baseline before observation or controlled interface edit.
 
     Args:
         client: Authenticated, CA-validated appliance UI client.
@@ -153,9 +162,11 @@ def guest_identity(session, plan: dict, password: str) -> dict:
     if helper != expected["helper_sha256"]:
         raise Refusal("bootstrap_reviewed_helper_mismatch")
     installed = bound_json(plan["installed_inspection"])
-    if (installed.get("source_commit") != plan["deployed_commit"]
-            or installed.get("host_key_sha256") != plan["appliance_ssh_host_key"]
+    if (installed.get("host_key_sha256") != plan["appliance_ssh_host_key"]
             or installed.get("installed_payload_sha256") != installed.get("wheel_payload_sha256")):
+        raise Refusal("bootstrap_iso_inspection_mismatch")
+    deployment = admit_deployment(plan)
+    if deployment is None and installed.get("source_commit") != plan["deployed_commit"]:
         raise Refusal("bootstrap_iso_inspection_mismatch")
     wheel_probe = (
         "import hashlib,json,pathlib; "
@@ -168,7 +179,85 @@ def guest_identity(session, plan: dict, password: str) -> dict:
     wheel = sudo_read(session, guest_python_command(wheel_probe), password).decode().strip()
     if wheel != installed.get("wheel_sha256"):
         raise Refusal("bootstrap_installed_wheel_changed")
+    if deployment is not None:
+        context = deployment["original"]
+        address = str(ipaddress.IPv4Address(session.private_ip))
+        if address not in {str(ipaddress.IPv4Address(plan["current_address"])), baseline_address(plan)}:
+            raise Refusal("bootstrap_payload_observation_address_invalid")
+        measurement = json.loads(sudo_read(session, payload_program(context["expected"], deployment["remote_wheel"], address), password))
+        validate_measurement(measurement, wheel_sha256=deployment["build"]["wheel_sha256"],
+                             helper_sha256=expected["helper_sha256"], installed=installed,
+                             address=address, mac=plan["mac"], version=deployment["build"]["version"])
+        from scripts.installation.content_inspection import validate_content_report
+
+        validate_content_report(decode_report(sudo_read(session, asset_program(context), password)), context["assets"])
+        wheel = deployment["build"]["wheel_sha256"]
     return {"route_snapshot": routing, "app_service": states, **expected, "wheel_sha256": wheel}
+
+
+def observe_dhcp_baseline(peer, appliance, fixture: dict, address: str, mac: str) -> dict:
+    """Verify the original fixed DHCP lease and live eth0 address without mutation.
+
+    Args:
+        peer: Authenticated pinned peer on the private LAN.
+        appliance: Authenticated pinned appliance SSH session.
+        fixture: Original ISO fixture with fixed lease and peer subnet.
+        address: Receipt-bound DHCP lease address.
+        mac: Original appliance MAC address.
+
+    Returns:
+        Sanitized lease, interface, address, and route observations.
+
+    Raises:
+        Refusal: If reservation, lease, MAC, address, prefix, or routes differ.
+    """
+    network = ipaddress.IPv4Interface(fixture["peer_cidr"])
+    canonical_mac = mac.replace("-", ":").lower()
+    lease_address = str(ipaddress.IPv4Address(fixture["lease_address"]))
+    if str(ipaddress.IPv4Address(address)) != lease_address:
+        raise Refusal("bootstrap_dhcp_lease_mismatch")
+    expected_config = [
+        "port=0", "interface=eth1", "bind-interfaces", "except-interface=eth0",
+        f"dhcp-range={network.network.network_address},static,{network.network.netmask},12h",
+        f"dhcp-host={canonical_mac},{lease_address},12h", "dhcp-leasefile=/var/lib/misc/dnsmasq.leases",
+        "dhcp-authoritative", "dhcp-option=option:router",
+    ]
+    config = peer.command("cat /etc/dnsmasq.conf").decode("utf-8")
+    if config.splitlines() != expected_config or "started" not in peer.command("rc-service dnsmasq status").decode("utf-8"):
+        raise Refusal("bootstrap_dhcp_reservation_invalid")
+    leases = peer.command("cat /var/lib/misc/dnsmasq.leases").decode("ascii").splitlines()
+    matching = [line.split() for line in leases if len(line.split()) >= 3
+                and line.split()[1].lower() == canonical_mac]
+    if (len(matching) != 1 or matching[0][2] != lease_address
+            or int(matching[0][0]) <= time.time()):
+        raise Refusal("bootstrap_dhcp_lease_unproven")
+    peer_interface = json.loads(peer.command("ip -j -4 addr show dev eth1"))
+    if (len(peer_interface) != 1 or not any(
+        item.get("local") == str(network.ip) and item.get("prefixlen") == network.network.prefixlen
+        for item in peer_interface[0].get("addr_info", [])
+    )):
+        raise Refusal("bootstrap_peer_address_changed")
+    observed_mac = appliance.command("cat /sys/class/net/eth0/address").decode("ascii").strip().lower()
+    if observed_mac != canonical_mac:
+        raise Refusal("bootstrap_appliance_mac_changed")
+    interfaces = json.loads(appliance.command("ip -j -4 addr show dev eth0"))
+    addresses = [item for row in interfaces for item in row.get("addr_info", [])]
+    if (len(interfaces) != 1 or len(addresses) != 1 or addresses[0].get("local") != lease_address
+            or addresses[0].get("prefixlen") != network.network.prefixlen):
+        raise Refusal("bootstrap_dhcp_native_address_changed")
+    routes = json.loads(appliance.command("ip -j -4 route show table 100"))
+    defaults = json.loads(appliance.command("ip -j -4 route show default"))
+    if (not isinstance(routes, list) or len(routes) != 1
+            or routes[0].get("dev") != "eth0" or routes[0].get("dst") != str(network.network)
+            or routes[0].get("prefsrc", routes[0].get("src")) != lease_address
+            or routes[0].get("scope") != "link" or routes[0].get("gateway") or routes[0].get("via")
+            or defaults):
+        raise Refusal("bootstrap_dhcp_routes_changed")
+    return {
+        "interface": "eth0", "mac": canonical_mac, "address": lease_address,
+        "prefixlen": network.network.prefixlen, "lease_state": "unexpired_reserved_for_original_mac",
+        "connected_route": "management_table_on_link", "default_routes": 0,
+    }
 
 
 def tls_name(peer, address: str, ca: str) -> str:
@@ -206,13 +295,17 @@ def setup(plan: dict, output: Path, password: str, *, execute: bool) -> dict:
         plan: Trusted-host plan containing original ISO, peer, LAN, and inspection refs.
         output: Existing task-owned evidence directory for immutable bootstrap records.
         password: Appliance administrator password held in memory from the bounded bridge.
-        execute: Whether to set and apply the initial static management baseline.
+        execute: Whether to publish the baseline observations or apply the initial static baseline.
 
     Returns:
         Public bootstrap status and observations suitable for task evidence.
     """
     if plan.get("trust_model") != "trusted-host" or plan.get("interface") != "eth0":
         raise Refusal("bootstrap_requires_trusted_iso_fixture")
+    try:
+        mode = baseline_mode(plan)
+    except ValueError as exc:
+        raise Refusal(str(exc)) from None
     admit_output(plan, output / "source.json", output / "bootstrap-runtime.json")
     fixture = admit_fixture(plan)
     if (plan.get("vmx_path") != fixture["appliance_vmx"]
@@ -222,7 +315,9 @@ def setup(plan: dict, output: Path, password: str, *, execute: bool) -> dict:
         raise Refusal("bootstrap_requires_original_iso")
     current = str(ipaddress.IPv4Address(plan["current_address"]))
     baseline = str(ipaddress.IPv4Address(plan["baseline_address"]))
-    if current != fixture["lease_address"] or current == baseline:
+    candidate = str(ipaddress.IPv4Address(plan["static_candidate_address"]))
+    if (current != fixture["lease_address"] or len({current, baseline, candidate}) != 3
+            or baseline_address(plan, fixture) != (current if mode == "dhcp" else baseline)):
         raise Refusal("bootstrap_address_plan_invalid")
     peer_plan = plan["peer_transport"]
     network = ipaddress.IPv4Network(peer_plan["private_subnet"])
@@ -243,9 +338,11 @@ def setup(plan: dict, output: Path, password: str, *, execute: bool) -> dict:
         ) as peer:
             peer.topology_guard = monitor.check
             verify_peer_isolation(peer)
-            verify_peer_tunnel_scope(peer, [current, baseline, plan["static_candidate_address"]])
+            verify_peer_tunnel_scope(peer, [current, baseline, candidate])
             with PinnedApplianceSession(peer, current, plan["appliance_user"], password, plan["appliance_ssh_host_key"]) as appliance:
                 facts = guest_identity(appliance, plan, password)
+                dhcp_observation = (observe_dhcp_baseline(peer, appliance, fixture, current, plan["mac"])
+                                    if mode == "dhcp" else None)
                 actual_ca = appliance.command("cat /etc/atlaso/ca/root.crt")
                 if (b"PRIVATE KEY" in actual_ca or b"-----BEGIN CERTIFICATE-----" not in actual_ca
                         or hashlib.sha256(actual_ca).hexdigest() != plan["ca_sha256"]):
@@ -255,7 +352,8 @@ def setup(plan: dict, output: Path, password: str, *, execute: bool) -> dict:
                       "source_commit": bound_json(plan["appliance_ownership"])["source_commit"],
                       "deployed_commit": plan["deployed_commit"], "routing_intent_state": "proven-absent",
                       "routing_intent": None, "app_service": facts["app_service"], "route_snapshot": facts["route_snapshot"]}
-            runtime = {"schema": 1, "phase": "iso-before-static-baseline", "vmx_path": plan["vmx_path"],
+            runtime = {"schema": 1, "phase": ("iso-dhcp-baseline-observed" if mode == "dhcp"
+                                                else "iso-before-static-baseline"), "vmx_path": plan["vmx_path"],
                        "vm_ownership_sha256": plan["appliance_ownership"]["sha256"],
                        "deployed_commit": plan["deployed_commit"], "helper_sha256": facts["helper_sha256"],
                        "helper_source_commit": facts["helper_source_commit"],
@@ -269,7 +367,15 @@ def setup(plan: dict, output: Path, password: str, *, execute: bool) -> dict:
             if original.get("role") != "management":
                 raise Refusal("bootstrap_requires_management_interface")
             fields = saved_fields(original)
+            if mode == "dhcp" and (
+                fields.get("ipv4_method") != "dhcp" or fields.get("ip_cidr") not in ("", None)
+                or fields.get("gateway") not in ("", None) or fields.get("ipv6_enabled") is not False
+            ):
+                raise Refusal("bootstrap_dhcp_desired_state_changed")
             result.update(original_fields=fields, original_tls=client.tls_identity(), original_dns=dns_baseline(client))
+            if dhcp_observation is not None:
+                result["dhcp_observation"] = dhcp_observation
+                result["baseline_mode"] = "dhcp"
             if not execute:
                 result.update(success=True, stage="inspected_no_mutation", guest_identity=facts)
                 return result
@@ -277,51 +383,78 @@ def setup(plan: dict, output: Path, password: str, *, execute: bool) -> dict:
             runtime["predeployment_sha256"] = source_sha
             bootstrap_sha = publish(output / "bootstrap-runtime.json", runtime)
             publish(output / "original-state.json", result)
-            intent = {"schema": 1, "kind": "certificate-management-rewire-intent", "phase": "iso-static-baseline",
-                      "task_id": plan["task_id"], "bootstrap_runtime_sha256": bootstrap_sha,
-                      "peer_fixture_sha256": plan["peer_fixture"]["sha256"], "peer_identity_sha256": plan["peer_identity"]["sha256"],
-                      "original_address": current, "baseline_address": baseline}
-            intent_sha = publish(output / "management-rewire-intent.json", intent)
-            changed = dict(fields, ipv4_method="static", ip_cidr=f"{baseline}/{network.prefixlen}", gateway="",
-                           ipv6_enabled=False, ipv6_cidr="", ipv6_gateway="")
-            # submit() refuses an existing task and unrelated changed units; the
-            # journal precedes desired editing so an unknown task is never retried.
-            result["stage"] = "desired_edit"
-            publish(output / "mutation-started.json", {**result, "baseline_fields": changed})
-            mutation_started = True
-            edit(client, "eth0", changed, plan["mac"])
-            task_terminal = False
-            job, status_path = submit(client, include_generated_dns=True)
-            result.update(stage="apply_wait", job_id=job, status_path=status_path)
-            publish(output / "apply-submitted.json", {"schema": 1, "job_id": job, "status_path": status_path})
-            target = Client("https://" + baseline, plan["ca_path"], peer=peer, connect_ip=baseline)
-            task, _ = wait_task([client, target], status_path, plan.get("username", "admin"), password)
-            task_terminal = True
-            if task.get("status") != "succeeded":
-                raise Refusal("bootstrap_apply_failed")
-            target.login(plan.get("username", "admin"), password)
-            observed, _ = target.interface("eth0")
-            observed_fields = saved_fields(observed)
-            if any(observed_fields[key] != changed[key] for key in ("ipv4_method", "ip_cidr", "gateway", "ipv6_enabled")):
-                raise Refusal("bootstrap_static_readback_mismatch")
-            target.json("/openapi.json")
-            clean_baseline(target)
-            with PinnedApplianceSession(peer, baseline, plan["appliance_user"], password, plan["appliance_ssh_host_key"]) as appliance:
-                if guest_identity(appliance, plan, password) != facts:
-                    raise Refusal("bootstrap_guest_identity_changed")
-            monitor.check()
-            runtime.update(kind="certificate-rewired-runtime", phase="iso-static-baseline-applied", url="https://" + baseline,
-                           observed_address=baseline, mac=plan["mac"].replace(":", "-"),
-                           rewired_runtime_source="original-iso-supported-ui-apply", rewire_intent_sha256=intent_sha,
-                           peer_identity_sha256=plan["peer_identity"]["sha256"], bootstrap_runtime_sha256=bootstrap_sha)
-            rewire_sha = publish(output / "rewired-runtime.json", runtime)
-            compiled = dict(plan, helper_sha256=facts["helper_sha256"], wheel_sha256=facts["wheel_sha256"], url="https://" + baseline)
-            for key, filename, checksum in (
-                ("predeployment_evidence", "source.json", source_sha), ("bootstrap_runtime", "bootstrap-runtime.json", bootstrap_sha),
-                ("rewire_intent", "management-rewire-intent.json", intent_sha), ("rewired_runtime", "rewired-runtime.json", rewire_sha),
-            ):
-                compiled[key] = {"path": str(output / filename), "sha256": checksum}
-            result.update(success=True, stage="static_baseline_complete", baseline_tls=target.tls_identity(), job_id=job)
+            if mode == "dhcp":
+                observation = {
+                    "schema": 1, "kind": "certificate-dhcp-baseline-observation",
+                    "phase": "iso-dhcp-baseline-observed", "task_id": plan["task_id"],
+                    "repository": "mdaneri/Atlaso", "pr": plan["pr"],
+                    "source_commit": plan["source_commit"], "deployed_commit": plan["deployed_commit"],
+                    "vmx_path": plan["vmx_path"], "vm_ownership_sha256": plan["appliance_ownership"]["sha256"],
+                    "bootstrap_runtime_sha256": bootstrap_sha, "predeployment_sha256": source_sha,
+                    "ordinary_ca_baseline_mode": "dhcp", "interface": "eth0", "mac": plan["mac"].replace("-", ":").lower(),
+                    "observed_address": current, "original_fields": fields,
+                    "native_observation": dhcp_observation, "tls": result["original_tls"],
+                    "apply_state": "clean-applied-baseline", "mutation_state": "none",
+                }
+                observation_sha = publish(output / "dhcp-baseline-observation.json", observation)
+                compiled = dict(
+                    plan, helper_sha256=facts["helper_sha256"], wheel_sha256=facts["wheel_sha256"],
+                    url="https://" + current,
+                    predeployment_evidence={"path": str(output / "source.json"), "sha256": source_sha},
+                    bootstrap_runtime={"path": str(output / "bootstrap-runtime.json"), "sha256": bootstrap_sha},
+                    dhcp_baseline_observation={"path": str(output / "dhcp-baseline-observation.json"),
+                                               "sha256": observation_sha},
+                )
+                result.update(success=True, stage="dhcp_baseline_observed", mutation_state="none",
+                              observed_address=current, bootstrap_runtime_sha256=bootstrap_sha,
+                              dhcp_baseline_observation_sha256=observation_sha)
+                monitor.check()
+            else:
+                intent = {"schema": 1, "kind": "certificate-management-rewire-intent", "phase": "iso-static-baseline",
+                          "task_id": plan["task_id"], "bootstrap_runtime_sha256": bootstrap_sha,
+                          "peer_fixture_sha256": plan["peer_fixture"]["sha256"], "peer_identity_sha256": plan["peer_identity"]["sha256"],
+                          "original_address": current, "baseline_address": baseline}
+                intent_sha = publish(output / "management-rewire-intent.json", intent)
+                changed = dict(fields, ipv4_method="static", ip_cidr=f"{baseline}/{network.prefixlen}", gateway="",
+                               ipv6_enabled=False, ipv6_cidr="", ipv6_gateway="")
+                # submit() refuses an existing task and unrelated changed units; the
+                # journal precedes desired editing so an unknown task is never retried.
+                result["stage"] = "desired_edit"
+                publish(output / "mutation-started.json", {**result, "baseline_fields": changed})
+                mutation_started = True
+                edit(client, "eth0", changed, plan["mac"])
+                task_terminal = False
+                job, status_path = submit(client, include_generated_dns=True)
+                result.update(stage="apply_wait", job_id=job, status_path=status_path)
+                publish(output / "apply-submitted.json", {"schema": 1, "job_id": job, "status_path": status_path})
+                target = Client("https://" + baseline, plan["ca_path"], peer=peer, connect_ip=baseline)
+                task, _ = wait_task([client, target], status_path, plan.get("username", "admin"), password)
+                task_terminal = True
+                if task.get("status") != "succeeded":
+                    raise Refusal("bootstrap_apply_failed")
+                target.login(plan.get("username", "admin"), password)
+                observed, _ = target.interface("eth0")
+                observed_fields = saved_fields(observed)
+                if any(observed_fields[key] != changed[key] for key in ("ipv4_method", "ip_cidr", "gateway", "ipv6_enabled")):
+                    raise Refusal("bootstrap_static_readback_mismatch")
+                target.json("/openapi.json")
+                clean_baseline(target)
+                with PinnedApplianceSession(peer, baseline, plan["appliance_user"], password, plan["appliance_ssh_host_key"]) as appliance:
+                    if guest_identity(appliance, plan, password) != facts:
+                        raise Refusal("bootstrap_guest_identity_changed")
+                monitor.check()
+                runtime.update(kind="certificate-rewired-runtime", phase="iso-static-baseline-applied", url="https://" + baseline,
+                               observed_address=baseline, mac=plan["mac"].replace(":", "-"),
+                               rewired_runtime_source="original-iso-supported-ui-apply", rewire_intent_sha256=intent_sha,
+                               peer_identity_sha256=plan["peer_identity"]["sha256"], bootstrap_runtime_sha256=bootstrap_sha)
+                rewire_sha = publish(output / "rewired-runtime.json", runtime)
+                compiled = dict(plan, helper_sha256=facts["helper_sha256"], wheel_sha256=facts["wheel_sha256"], url="https://" + baseline)
+                for key, filename, checksum in (
+                    ("predeployment_evidence", "source.json", source_sha), ("bootstrap_runtime", "bootstrap-runtime.json", bootstrap_sha),
+                    ("rewire_intent", "management-rewire-intent.json", intent_sha), ("rewired_runtime", "rewired-runtime.json", rewire_sha),
+                ):
+                    compiled[key] = {"path": str(output / filename), "sha256": checksum}
+                result.update(success=True, stage="static_baseline_complete", baseline_tls=target.tls_identity(), job_id=job)
         # A sticky failure or unjoined watcher invalidates even the final TLS
         # readback. Publish the usable proof plan only after observation stops.
         publish(output / "proof-plan.json", compiled)
@@ -346,6 +479,7 @@ def main() -> int:
     try:
         plan = json.loads(Path(args.plan).read_text())
         output = Path(args.output_directory).resolve(strict=True)
+        baseline_mode(plan)
         admit_output(plan, output / "source.json", output / "bootstrap-runtime.json")
         admit_fixture(plan)
         reviewed_helper_identity(plan)

@@ -11494,9 +11494,22 @@ def _configure_atlaso_management_https(
     key_path: Path | None = None
     if material_writer is not None and (not callable(material_writer) or not enabled or not verify_front_door):
         raise ValueError("management material replacement requires verified HTTPS activation")
+    readiness_ca_path: Path | None = None
+    readiness_leaf: bytes | None = None
     if enabled:
         cert_path = _ca_managed_path(str(payload["management_https_cert_path"]), "management_https_cert_path")
         key_path = _ca_managed_path(str(payload["management_https_key_path"]), "management_https_key_path")
+        if verify_front_door:
+            try:
+                readiness_ca_path = _ca_managed_path(
+                    str(payload.get("management_https_ca_path") or CA_MANAGED_PATH_BASE / "ca/root-ca.pem"),
+                    "management_https_ca_path",
+                )
+                if material_writer is None:
+                    readiness_leaf = ssl.PEM_cert_to_DER_cert(cert_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                print(f"management HTTPS readiness prerequisite failed: {type(exc).__name__}", file=sys.stderr)
+                return 1, None
         if material_writer is None and verify_front_door and listen_addresses is not None:
             try:
                 _management_certificate_covers_scoped_addresses(
@@ -11573,6 +11586,7 @@ def _configure_atlaso_management_https(
             # replacement. Startup recovery restores both after an interruption.
             material_writer()
             assert cert_path is not None and key_path is not None
+            readiness_leaf = ssl.PEM_cert_to_DER_cert(cert_path.read_text(encoding="utf-8"))
             if listen_addresses is not None:
                 _management_certificate_covers_scoped_addresses(cert_path.read_text(encoding="utf-8"), listen_addresses)
             _grant_atlaso_service_key_read(key_path)
@@ -11662,10 +11676,22 @@ def _configure_atlaso_management_https(
             or (443 if https_enabled else 80)
         )
         try:
+            # Protected handoffs retain nginx loopback sockets for internal
+            # diagnostics. They are not appliance identities in the managed leaf.
+            readiness_addresses = [
+                address for address in (listen_addresses or [str(payload["management_ip"])])
+                if not ip_address(address).is_loopback
+            ]
             _management_handoff_readiness(
-                [str(payload["management_ip"])],
+                readiness_addresses,
                 https_enabled,
                 public_port,
+                tls_ca_paths={address: readiness_ca_path for address in readiness_addresses}
+                if readiness_ca_path is not None else None,
+                tls_expected_leaf=readiness_leaf,
+                tls_expected_leaf_addresses=[address for address in https_listen_addresses
+                                             if not ip_address(address).is_loopback]
+                if https_enabled and https_listen_addresses is not None else None,
                 upstream_host=upstream_host,
                 upstream_port=port,
             )
@@ -35297,6 +35323,8 @@ def _management_handoff_readiness(
     public_port: int,
     *,
     tls_ca_paths: dict[str, Path] | None = None,
+    tls_expected_leaf: bytes | None = None,
+    tls_expected_leaf_addresses: list[str] | None = None,
     samples: int = 3,
     upstream_host: str = "127.0.0.1",
     upstream_port: int = 8000,
@@ -35308,6 +35336,8 @@ def _management_handoff_readiness(
         https_enabled: Whether the applied management front door uses HTTPS.
         public_port: Configured host-facing management listener port.
         tls_ca_paths: Candidate addresses requiring explicit transaction CA trust.
+        tls_expected_leaf: Captured deployed leaf required on the activating site's HTTPS sockets.
+        tls_expected_leaf_addresses: HTTPS sockets owned by the activating site; None checks every address.
         samples: Required consecutive successful samples.
         upstream_host: Atlaso application endpoint host behind nginx.
         upstream_port: Atlaso application endpoint port behind nginx.
@@ -35322,6 +35352,12 @@ def _management_handoff_readiness(
         raise ValueError("management handoff has no candidate listener address")
     if public_port < 1 or public_port > 65535:
         raise ValueError("management handoff readiness port must be between 1 and 65535")
+    if tls_expected_leaf is not None and (
+        not https_enabled or any(address not in (tls_ca_paths or {}) for address in addresses)
+    ):
+        raise ValueError("exact management certificate readiness requires explicit CA trust for every address")
+    if tls_expected_leaf_addresses is not None and not set(tls_expected_leaf_addresses) <= set(addresses):
+        raise ValueError("exact management certificate scope contains an unverified listener address")
     deadline = time.monotonic() + 45
     consecutive = 0
     statuses: dict[str, str] = {}
@@ -35341,6 +35377,13 @@ def _management_handoff_readiness(
                 status = _console_management_http_status(
                     curl, f"{scheme}://{host}:{public_port}/openapi.json", ca_certificate=trust,
                 )
+                if tls_expected_leaf is not None and (
+                    tls_expected_leaf_addresses is None or address in tls_expected_leaf_addresses
+                ):
+                    try:
+                        _management_served_leaf(address, public_port, trust, tls_expected_leaf)
+                    except (OSError, ValueError):
+                        status = "TLS certificate activation unverified"
             else:
                 status = _console_management_http_status(
                     curl, f"{scheme}://{host}:{public_port}/openapi.json", insecure=https_enabled,
@@ -35355,6 +35398,27 @@ def _management_handoff_readiness(
         time.sleep(1)
     summary = ", ".join(f"{label}={status}" for label, status in statuses.items())
     raise ValueError(f"management readiness did not stabilize ({summary})")
+
+
+def _management_served_leaf(address: str, port: int, ca_path: Path, expected: bytes) -> None:
+    """Require the intended leaf over an authenticated direct-address connection.
+
+    Args:
+        address: Applied management address, also verified as the TLS identity.
+        port: Applied public HTTPS port.
+        ca_path: Explicit managed CA trust anchor.
+        expected: Public leaf DER captured before nginx activation.
+
+    Raises:
+        OSError: If connection or certificate authentication fails.
+        ValueError: If the authenticated peer serves another leaf.
+    """
+    context = ssl.create_default_context(cafile=str(ca_path))
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    with socket.create_connection((address, port), timeout=3) as connection:
+        with context.wrap_socket(connection, server_hostname=address) as peer:
+            if peer.getpeercert(binary_form=True) != expected:
+                raise ValueError("management HTTPS is serving a different certificate")
 
 
 def _management_handoff_upstream_readiness(

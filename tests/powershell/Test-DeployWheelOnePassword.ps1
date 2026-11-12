@@ -79,7 +79,7 @@ if (-not $scriptText.Contains('[string]$OnePasswordPython =', [System.StringComp
     -not $scriptText.Contains('-PythonCommand $resolvedOnePasswordPython', [System.StringComparison]::Ordinal)) {
     throw 'Password deployment must use the approved standard CPython 3.14 runtime and immutable compatibility wheel.'
 }
-if (-not $scriptText.Contains("'-I', '-S', $pythonDeploy", [System.StringComparison]::Ordinal) -or
+if (-not $scriptText.Contains("'-I', '-S', '-B', `$pythonDeploy", [System.StringComparison]::Ordinal) -or
     -not $scriptText.Contains("'--dependency-path', $pythonDependencyPath", [System.StringComparison]::Ordinal) -or
     $scriptText.Contains('$env:PYTHONPATH', [System.StringComparison]::Ordinal)) {
     throw 'The bounded Python child must disable startup hooks and load only its explicit dependency path.'

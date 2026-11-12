@@ -342,6 +342,10 @@ must not weaken legacy independent-control admission.
 When the reviewed harness advances after lab creation, retain the original receipt bytes and creation source in
 `resource_source_commit`; `source_commit` identifies the currently reviewed harness. Admission requires the creation
 source to remain an ancestor of that harness. Never change a receipt's source to match a later head.
+The peer fixture and LAN retain their own creation source; their source need not equal the original ISO appliance's
+independently admitted creation source. Legacy independent-control admission still requires matching VM sources.
+Trusted-host inventory admission verifies the original peer fixture's digest, task, VM and LAN selectors before using
+its LAN creation source, and requires that source to remain an ancestor of the reviewed harness.
 
 ## Prepare the ISO appliance adapter
 
@@ -390,6 +394,92 @@ together with the original boot and segment selectors. This transition changes o
 and connected state, preserving its generated MAC and all original ownership records.
 
 ## Bootstrap the ISO static baseline
+
+### Create an offline peer for a fresh ISO fixture
+
+`scripts/windows/vmware/create-certificate-peer.ps1` prepares a new peer for this ISO workflow without entering the
+legacy PR-871 clone scenario. Complete its code review before VM use. It creates an offline peer and a new owned LAN;
+it never starts, rewires, or adopts the appliance. The original ISO intent, ownership and installed-boot receipts must
+already belong to the same task and PR. Keep that appliance stopped while its ordinary VMX is pinned for admission.
+
+Use an independently admitted Alpine source prepared with `prepare-tiny-linux-client.ps1` in a new originally receipted
+task root, without `-Force`. Preserve its original JSON result outside that root as `peer_source_preparation`. The factory
+authenticates the QCOW2 against the repository's pinned release digest, requires a standalone monolithic sparse VMDK,
+and uses `qemu-img compare` to prove the VMDK's logical contents match that QCOW2. The supplied VMDK SHA-256 and the
+public-key file SHA-256 are independent selectors; no existing disk becomes cleanup-owned. An ordinary file pin excludes
+writes and replacement through copying. Host disk admission reserves the full sparse-disk maximum plus 2 GiB, and
+creation requires 2 GiB free RAM.
+
+Prepare a public JSON plan under the task's originally receipted inputs root. Replace every example selector with the
+exact original value; the factory never discovers or relabels another task's receipts:
+
+```json
+{
+  "schema": 1,
+  "trust_model": "trusted-host",
+  "repository": "mdaneri/Atlaso",
+  "pr": 123,
+  "task_id": "exact-current-task-id",
+  "source_commit": "FULL_REVIEWED_HEAD_SHA",
+  "appliance_vmx": "ABSOLUTE_ORIGINAL_ISO_VMX",
+  "appliance_mac": "00:50:56:20:30:40",
+  "appliance_intent": {"path": "ABSOLUTE_ORIGINAL_INTENT", "sha256": "ORIGINAL_SHA256"},
+  "appliance_ownership": {"path": "ABSOLUTE_ORIGINAL_OWNERSHIP", "sha256": "ORIGINAL_SHA256"},
+  "appliance_installed_boot": {"path": "ABSOLUTE_ORIGINAL_BOOT", "sha256": "ORIGINAL_SHA256"},
+  "peer_source_preparation": {"path": "ABSOLUTE_ORIGINAL_SOURCE_RESULT", "sha256": "ORIGINAL_SHA256"},
+  "peer_vmdk_sha256": "INDEPENDENTLY_VERIFIED_SOURCE_DISK_SHA256",
+  "peer_public_key_path": "ABSOLUTE_EXISTING_ED25519_PUBLIC_KEY",
+  "peer_public_key_sha256": "INDEPENDENTLY_VERIFIED_PUBLIC_FILE_SHA256",
+  "server_cidr": "192.168.77.1/24",
+  "lease_address": "192.168.77.10",
+  "management_addresses": ["192.168.77.10", "192.168.77.30", "192.168.77.40"],
+  "management_vmnet": "vmnet3",
+  "peer_user": "alpine",
+  "peer_hostname": "atlaso-pr-123-certificate-peer"
+}
+```
+
+The three private addresses are the admitted DHCP, static baseline and static candidate. Select an existing separate
+management VMnet; no host network is created or changed. The existing selected public key must be available in the SSH
+agent before creation. No private key or password enters the plan, seed or factory process arguments.
+
+From the clean reviewed task checkout, first inspect without creating resources:
+
+```powershell
+& ./scripts/windows/vmware/create-certificate-peer.ps1 -Mode Plan -Plan $peerPlan -PythonPath $nativePython
+# After checking the projection, source and capacity, close the Workstation UI normally.
+& ./scripts/windows/vmware/create-certificate-peer.ps1 -Mode Create -Plan $peerPlan `
+    -PythonPath $nativePython -QemuImgPath $qemuImg -Confirm:$false
+```
+
+Create independently verifies the open same-repository PR head, source bytes, original ISO bindings, public key and
+source disks before mutation. Preserve the emitted original intent/directory/VM, LAN and prepared-fixture selectors in
+the task inventory. Records live outside the peer removal root. A failure preserves its original receipts and any
+partial output; an existing destination is refused, never adopted or replaced. The seed publishes the public SSH host
+key to the VMX-bound serial file, uses a task-unique NoCloud instance, constrains local SSH tunnels to the three addresses,
+and configures only the peer's genuinely synchronized Chrony service to serve time on its private interface.
+It installs the existing GuestInfo/VIX profile and restarts Tools before publishing the host-key marker, so native
+address and graceful-power operations can use the installed plugins. The unique NoCloud instance cache is retained
+across seed retirement; the original SSH keys, interface configuration and successful cloud-init state must survive
+the separate seed-removal restart.
+The peer's DHCP reservation suppresses the router option. The appliance retains only its on-link management route.
+The peer VMX declares UTF-8 for the supported offline ISO seed-retirement tools.
+The LAN receipt binds the verified configured worktree root, which contains the appliance and peer outputs;
+the original receipt remains outside both VM removal scopes.
+
+Creation is not readiness or native acceptance. Admit the original VMX and serial endpoint before starting the new peer,
+then capture and pin its actual public host key before SSH. Follow the existing two-member topology, seed retirement,
+clock, private-LAN rewire and bootstrap procedures above. Do not accept a network-discovered host key or infer appliance
+address control from the seed. The prepared fixture's state remains `offline-prepared-not-native-acceptance`.
+
+Use `-Mode Inspect` with `-OriginalReceiptPath` and `-OriginalReceiptSha256` for receipt-bound readback. Once the peer is
+no longer needed and its consumers are inactive, the same selectors with `-Mode Cleanup -VmrunPath $vmrun` invoke the
+existing checked VM remover for this exact peer only. Its source plan and original appliance/source references must
+remain available. If creation stopped before the VMX existed, `-Mode CleanupPrepared` uses the original preparation
+directory receipt selectors and the existing empty-directory remover. It refuses nonempty output; a VMX without its
+original VM receipt remains preserved for maintainer recovery. Keep the LAN receipt separately; remove that segment
+through its existing owning procedure only after
+every appliance/peer reference is absent. Never use peer cleanup to remove the appliance, source disk or evidence.
 
 Prepare the one task-owned Linux peer on the dedicated management VMnet and test LAN. Its test-LAN adapter runs DHCP
 only for the admitted appliance MAC; its control adapter remains on the separate management VMnet. When generating
@@ -440,6 +530,8 @@ or rejected; stop and reconcile the approved key and its receipts.
 
 A manual ISO installation can still have pending first-run DNS/DHCP and NTP settings. Establish the fixture baseline
 before the certificate bootstrap; its protected handoff bundle must not absorb those independent changes.
+With Web Terminal enabled, replacing only the management IP also replaces its derived terminal listener address in
+the handoff. Separate terminal enablement, selected-interface or other listener-address edits still require Settings consent.
 This preparation reuses the existing non-grid **Appliance Settings**, **DNS**, and **NTP and NTS** forms and normal
 **Appliance Apply** review.
 The initializer follows the Settings form's original ID across tabs, including external controls, so changing the
@@ -480,12 +572,100 @@ controls and the factory upstream rows are preserved. It submits only the review
 Settings, Network, CA, Firewall, Public Services, DNS/DHCP and NTP. A required disabled WAN/NAT replay is allowed only
 with the original routing-absence proof; independent pending work is refused.
 
+For the ordinary CA rotation cases, optionally add `"web_terminal_enabled": false` or
+`"web_terminal_enabled": true` to `fixture_initialization`. The value must be a JSON Boolean.
+This explicit choice uses the existing Settings form and initial Apply to prepare either no Web Terminal
+listener or only the mandatory `eth0` management listener. The inspection binds the choice, and execution
+verifies its applied readback. Omitting the field preserves the existing terminal settings. Use a fresh,
+originally receipted fixture for each selected baseline; never rerun initialization to change a completed case.
+
 Require a successful task, clean Apply state, unchanged DHCP management interface, original CA and payload pins,
 continued routing absence, a synchronized NTP client with no competing controller, and the private peer selected in
 native `ntpq` readback. This preparation does not establish certificate acceptance. DNS verification records the
 configured resolver and upstream values through the later address transitions.
 The initialization journals precede desired edits and Apply submission. An unknown task outcome requires reconciliation
 from those records; never rerun it or overwrite the evidence. Then continue with the static bootstrap below.
+
+### Deploy the reviewed app wheel before private-LAN preparation
+
+A development ISO has separate software identities: its signed original app wheel and its installer/helper source.
+To test a newer CA fix, retain both original identities and add a separate deployment receipt for the actual running
+PR wheel. Do this on a fresh originally receipted appliance, before its private-LAN rewire and fixture initialization.
+Use the [separately admitted host-only procedure](installation-iso.md#inspect-a-separately-admitted-host-only-connection)
+first. Preserve its disconnected account/content checks, original VM, disk-baseline and installed-boot receipts,
+stopped unselected-disk verification, exact VMX backup and console network inspection. The selected existing host-only
+vmnet must have DHCP; both default routes must remain absent.
+
+The immutable public deployment plan retains `task_id`, positive `pr`, `trust_model: "trusted-host"`, the reviewed
+`source_commit` and identical `deployed_commit`, and the original appliance `mac`. Bind original receipt paths and
+SHA-256 digests under `appliance_intent`, `appliance_ownership`, `appliance_disk_baseline`,
+`appliance_installed_boot` and `installed_inspection`. Add `deployment_network_inspection` for the original console
+network report and `deployment_network_binding` with its native `vmnet`, `subnet` and integer `prefixlen`.
+Native admission retains the original appliance's canonical name and collision suffix. Keep the original VM identity
+when the reviewed harness advances; never rename it to fit a later invocation.
+
+Before the stopped host-only configuration transition, publish `host_only_transition` as a path/digest reference to
+an immutable public record. Its schema is `1`, kind is `certificate-iso-host-only-transition`, and it binds the exact
+task, repository, PR, source, `vmx_path`, selected `vmnet`, original `ownership` and `boot` references, and original
+`backup_path`/`backup_sha256`. Record `boot_configuration_sha256` from the original boot receipt and literal
+`stopped_vm_verified: true` and `unselected_disk_unchanged: true` only after their owning checks succeed. The backup
+captures the actual stopped VMX, including permitted VMware runtime fields; preserve its bytes independently of the
+boot transition's configuration digest. Missing pre-transition evidence prevents deployment; never reconstruct it
+from the later connected VM.
+
+Load the new owner from the exact reviewed Git commit, as with the certificate inspector:
+
+```powershell
+$relative = 'scripts/windows/vmware/deploy-certificate-iso-wheel.ps1'
+$bytes = @(& git -C $repoRoot show "${reviewedCommit}:$relative")
+if ($LASTEXITCODE -ne 0) { throw 'Reviewed deployment owner is unavailable.' }
+$deployOwner = [scriptblock]::Create(($bytes -join "`n"))
+& $deployOwner -RepositoryRoot $repoRoot -ReviewedSourceCommit $reviewedCommit `
+    -Plan $deploymentPlan -PythonPath $pythonPath -EnvironmentId $environmentId `
+    -RuntimeDependencyDirectory $originalSignedCp314Wheelhouse
+# Inspect the public original-media/network report before the explicit deployment.
+& $deployOwner -RepositoryRoot $repoRoot -ReviewedSourceCommit $reviewedCommit `
+    -Plan $deploymentPlan -PythonPath $pythonPath -EnvironmentId $environmentId `
+    -RuntimeDependencyDirectory $originalSignedCp314Wheelhouse -Execute
+```
+
+Use a prepared, originally owned isolated Python environment beneath this worktree's `test-results` with the locked
+native inspector and wheel-build dependencies, including the build backend's `packaging` parser. The runtime and
+immutable Git archive stay pinned through every
+consumer. The owner creates and receipts a fresh artifact root before use, builds one wheel from that archive, and
+requires its dependency declarations to match the original signed app except requirements whose entire marker is
+`extra == "dev"`. The deployer installs only the bare wheel with `--no-deps`; it never selects the development extra.
+Runtime changes, other extras, broader marker expressions and malformed requirements remain refusals. The complete
+offline cp314 wheelhouse must
+match the original ISO's release inventory. Native VM admission uses the separately pinned canonical checkout owner
+and its complete checkout/parsed-code validation; the wheel builder and deployment child use the immutable archive
+from that same reviewed commit. The existing direct deployer keeps its bootstrap, deployment-lock and
+Appliance Update guards. Local-wheel installation disables package-index access and pip's online version check,
+so the no-default-route appliance does not spend its deployment budget checking the network for every wheel.
+It verifies the original console-observed SSH key before authentication, uses one private
+remote staging directory, verifies every uploaded file, and retains the original helper and console/boot assets.
+This exclusive mode-0700 staging directory lives under `/var/tmp`, preserving the same verified wheel archive across
+the private-LAN handoff reboot for subsequent payload measurements. `/tmp` staging is refused for this workflow.
+
+The original-fixture claim is exclusive across output directories. Process ownership is published while the child
+is suspended, before credential access or guest mutation. Success requires a quiescent process job, unchanged source
+guards and native VM/network binding, exact active wheel payload and original public machine/helper/assets identity.
+Preserve `deployment.json` separately and bind its path/digest as `iso_wheel_deployment` in the later certificate plan.
+Keep `installed_inspection` unchanged: it continues to describe the original signed software. Subsequent certificate
+admission measures the active PR wheel again before and after rotation.
+
+Both static and DHCP bootstrap publish their usable `proof-plan.json` only after trusted-host topology monitoring
+stops successfully. Late drift or an unjoined watcher preserves preliminary observations and a failed bootstrap
+result without publishing that plan; those observations alone do not establish an admitted baseline.
+
+On failure or an unknown outcome, preserve the fixture, exclusive claim and all process/intent records. Reconcile
+those records before any recovery; another output directory never permits redeployment. New attempts publish fixed
+`deployer-phase-*.json` records for credential retrieval, pinned SSH, original-media preflight, verified uploads,
+engine start/exit and final measurement. These contain only a fixed phase and optional numeric engine exit code;
+commands, guest output and credentials are never retained. A phase record does not establish deployment success,
+and missing later phases leave the outcome unproven. After success, stop the VM,
+restore and verify the original backed-up adapter declaration through the owning procedure, then use the existing
+private-LAN rewire. The host-only phase grants no host route, NAT or bridge to the private certificate LAN.
 
 ### Recover a terminal initial NTP synchronization timeout
 
@@ -537,6 +717,19 @@ fields. It submits only the validated protected Apply bundle selected by the ser
 terminal task and verifies the desired fields, TLS identity, `/openapi.json`, clean Apply state, route snapshot,
 installed wheel/helper identity, and trusted-host topology. Use the addresses from the admitted plan when the lab
 uses a different approved baseline subnet; do not copy the example address into another lab.
+
+For a fresh ordinary CA case that must retain DHCP, select `"scenario": "ordinary-ca-rotation"` and
+`"ordinary_ca_baseline_mode": "dhcp"` in its immutable plan. Keep `current_address` equal to the original peer fixture's
+fixed lease. The same bootstrap inspection/execution commands then observe the clean existing DHCP configuration;
+they submit no interface edit or Apply task. Success publishes `dhcp-baseline-observation.json` and a separate proof
+plan with phase `iso-dhcp-baseline-observed`, preserving the original MAC lease, connected route, absence of default
+routes, TLS identity and deployed payload. Do not substitute this observation for a static rewire receipt.
+
+Run each static/DHCP and Web Terminal disabled/enabled combination on a fresh original fixture. Ordinary rotation
+requires the running app to match the current reviewed source. DHCP admission checks the original lease and native
+address owner both before and after CA rotation; an extra address, changed lease owner, default route or changed
+deployed payload prevents success. The static baseline address remains distinct from the predeclared handoff candidate
+and DHCP lease; it need not appear in the candidate-only address list.
 
 Bootstrap inspection and execution require a clean applied baseline before editing the interface. The controlled
 interface edit can also change Atlaso-owned DNS records while local DNS is disabled. In that case the trusted-host
@@ -590,12 +783,48 @@ exact connected prefix, `eth0`, preferred source, and on-link scope without a ga
 device: iproute2 can omit `dev` when `dev eth0` is already a query filter. A main-table route alone does not prove the
 management routing-domain baseline.
 
+## Run and accept ordinary CA rotation
+
+For a CA-only management certificate change, use the same reviewed
+`inspect-certificate-handoff.ps1` entrypoint and full trusted-host admission with
+`scenario: "ordinary-ca-rotation"`. The immutable plan must name the original
+issued `management_certificate_id`, set `expected_web_terminal` to an explicit
+Boolean, and bind `interface: "eth0"` and its original MAC. Its peer baseline
+address must match the appliance's clean applied static IPv4 configuration.
+This case does not establish DHCP-address acceptance.
+
+Run inspection before execution. Keep the original ISO, appliance, peer, LAN,
+installed source/helper, address evidence, public CA and SSH trust receipts.
+The runner records original public certificate and configuration evidence before
+using **Certificate requests → Revoke certificate → Replace** for this disposable
+appliance's `appliance:https` certificate. It then reviews only CA changes and
+requires unchanged Appliance Settings and Public Services to replay after CA.
+Unrelated pending edits or missing dependencies refuse submission.
+The inventory read reconciles the replacement to `issued` before Apply. The runner
+pins that successor's inventory/public-PEM fingerprint and requires the same leaf
+after activation.
+
+Acceptance requires the same admitted task to succeed without dry-run results,
+a clean applied baseline, unchanged management address/MAC/configuration and Web
+Terminal state, and an unchanged root certificate matching the receipt-pinned
+CA. The replacement inventory fingerprint, authenticated public certificate PEM
+and strictly verified peer TLS leaf must all match and differ from the original
+leaf. Run separate cases with Web Terminal disabled and enabled on the sole
+management interface; apply each intended baseline before preparing its plan.
+
+Revocation retains certificate history and cannot be undone. On failure, retain
+the fixture and original evidence for diagnosis; never automatically restore,
+retry or resubmit this scenario. The existing static-address and DHCP-rejection
+scenarios keep their separate restoration requirements.
+
 ## Run and accept the static-address case
 
 Protected handoff validation checks the staged candidate certificate's format, configured paths, and key pair without
 requiring it to authenticate the old listener addresses. The transaction preserves and verifies the old TLS path with
 its snapshotted certificate, then validates the candidate leaf against every actual candidate address before publishing
 that listener. An ordinary Appliance Settings certificate change still requires coverage of its retained listeners.
+Settings verifies CA-trusted availability on every external management listener, but checks its new leaf only on the
+HTTPS sockets owned by its site. Flagged Access sockets on port 443 receive their new leaf during Public Services apply.
 This separation also applies to DHCP: an unknown lease does not waive certificate validation after acquisition.
 
 Use the standard Atlaso [Network configuration](../operate/networking.md) pages and [Appliance
@@ -776,7 +1005,10 @@ reason, and retry condition and preserve it; uncertainty is neither cleanup auth
 retention. A terminal failed run does not waive any branch/worktree completion gate.
 
 The trusted-host bootstrap and proof wrappers admit the original ISO and peer receipt kinds for the current task and
-PR, then repeat inventory, reservation, identity, and trust checks before obtaining guest credentials. Receipts from
+PR, then repeat inventory, reservation, identity, and trust checks before obtaining guest credentials. The standalone
+peer fixture binds the LAN receipt at its original path under the configured Codex worktree root's `lan-segments`
+directory. Keep the plan, public CA, and byte-identical copies of its direct receipt inputs under `test-results`.
+Keep original paths in selectors that compare the factory or installer's recorded paths. Receipts from
 the older PR #871 independent-control path remain bound to that task and cannot be relabeled. Use the
 [VMware lifecycle certificate section](vmware-workstation-lifecycle-testing.md#single-command-run) for the reviewed
 Git-blob entrypoint and bounded credential wrapper workflow.

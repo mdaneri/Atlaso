@@ -359,12 +359,18 @@ try {
     if (-not $aggregate.WaitOne(0)) { throw 'Aggregate commit check missed an earlier-root completion.' }
 } finally { $secondGuard.Dispose(); $firstGuard.Dispose(); $aggregate.Dispose() }
 $runnerPath = Join-Path $repositoryRoot 'scripts/windows/vmware/run-lifecycle-test.ps1'
-$tokens = $null; $parseErrors = $null
-$runnerAst = [System.Management.Automation.Language.Parser]::ParseFile($runnerPath, [ref]$tokens, [ref]$parseErrors)
+$runnerTokens = $null; $runnerParseErrors = $null
+$runnerAst = [System.Management.Automation.Language.Parser]::ParseFile(
+    $runnerPath, [ref]$runnerTokens, [ref]$runnerParseErrors)
+$fixtureWheelTokens = $null; $fixtureWheelParseErrors = $null
+$fixtureWheelModulePath = Join-Path $repositoryRoot 'scripts/windows/vmware/Atlaso.FixtureWheel.psm1'
+$fixtureWheelModuleAst = [System.Management.Automation.Language.Parser]::ParseFile(
+    $fixtureWheelModulePath, [ref]$fixtureWheelTokens, [ref]$fixtureWheelParseErrors)
 $sourceFunction = $runnerAst.Find({ param($node)
     $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-LifecycleSourceCommit'
 }, $false)
-if ($parseErrors -or -not $sourceFunction) { throw 'Cannot load lifecycle source admission function.' }
+if ($runnerParseErrors -or -not $sourceFunction) { throw 'Cannot load lifecycle source admission function.' }
+if ($fixtureWheelParseErrors) { throw 'Cannot parse lifecycle fixture wheel module.' }
 . ([scriptblock]::Create($sourceFunction.Extent.Text))
 $sourceRoot = Join-Path $fixture 'source'
 [IO.Directory]::CreateDirectory($sourceRoot) | Out-Null
@@ -409,7 +415,7 @@ Assert-Refused { Get-LifecycleSourceCommit -RepositoryRoot $sourceRoot } 'clean 
 & git -C $sourceRoot -c user.name=Fixture -c user.email=fixture@example.invalid -c commit.gpgsign=false commit -qm next
 if ($LASTEXITCODE -ne 0) { throw 'Could not advance source fixture.' }
 Assert-Refused { Get-LifecycleSourceCommit -RepositoryRoot $sourceRoot -ExpectedCommit $admitted } 'source commit changed'
-$snapshotFunction = $runnerAst.Find({ param($node)
+$snapshotFunction = $fixtureWheelModuleAst.Find({ param($node)
     $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'New-LifecycleSourceSnapshot'
 }, $false)
 if (-not $snapshotFunction) { throw 'Cannot load immutable source exporter.' }
@@ -421,7 +427,7 @@ $snapshotConsumerPins = [Collections.Generic.List[IDisposable]]::new()
 $snapshot = New-LifecycleSourceSnapshot -RepositoryRoot $sourceRoot -Commit $admitted -ConsumerPins $snapshotConsumerPins -DestinationRoot $fixture
 if ([IO.File]::ReadAllText((Join-Path $snapshot 'source.txt')) -cne 'initial' -or
     [IO.File]::Exists((Join-Path $snapshot 'untracked.txt'))) { throw 'Snapshot read live worktree bytes.' }
-$sourcePinCheck = $runnerAst.Find({ param($node)
+$sourcePinCheck = $fixtureWheelModuleAst.Find({ param($node)
     $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Assert-LifecycleSourcePins'
 }, $false)
 . ([scriptblock]::Create($sourcePinCheck.Extent.Text))
@@ -636,7 +642,7 @@ try {
     }
 } finally { . ([scriptblock]::Create($snapshotFunction.Extent.Text)) }
 $publicationStage = Join-Path $fixture 'publication-stage.tmp'
-$sourcePinCheck = $runnerAst.Find({ param($node)
+$sourcePinCheck = $fixtureWheelModuleAst.Find({ param($node)
     $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Assert-LifecycleSourcePins'
 }, $false)
 . ([scriptblock]::Create($sourcePinCheck.Extent.Text))
@@ -707,7 +713,7 @@ try {
     foreach ($pin in $resourceRootPins) { $pin.Dispose() }
     $resourceRootGuard.Dispose()
 }
-$wheelCheckFunction = $runnerAst.Find({ param($node)
+$wheelCheckFunction = $fixtureWheelModuleAst.Find({ param($node)
     $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-LifecycleBuiltWheel'
 }, $false)
 if (-not $wheelCheckFunction) { throw 'Cannot load wheel output binding.' }

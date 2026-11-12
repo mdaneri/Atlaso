@@ -2528,6 +2528,53 @@ def test_management_handoff_settings_baseline_ignores_only_applied_front_door_fi
     )
 
 
+@pytest.mark.parametrize("enable_https", [True, False])
+def test_management_https_handoff_advances_settings_baseline(client, enable_https):
+    """Persist a completed protocol toggle so Settings does not request it again.
+
+    Args:
+        client: Isolated HTTP client with the normal dry-run appliance adapters.
+        enable_https: Target HTTPS state, opposite the initial applied protocol.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, CaSettings, Job, JobStatus
+
+    login(client)
+    with SessionLocal() as db:
+        settings = db.query(ApplianceSettings).one()
+        settings.management_https_enabled = not enable_https
+        db.query(CaSettings).one().enabled = True
+        db.commit()
+        ui.ca_context(db)
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        before = ui.load_appliance_apply_baselines(db)["appliance_settings"]
+        assert ("management_https_ca_path" in json.loads(before["config_preview"])) is not enable_https
+        settings.management_https_enabled = enable_https
+        db.commit()
+        ui.ca_context(db)
+
+    csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = submit_reviewed_appliance_apply(
+        client, "/appliance-apply", data={"csrf": csrf, "selected_units": "appliance_settings"},
+        headers={"Accept": "application/json"},
+    )
+    assert response.status_code == 202, response.text
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        assert job.status == JobStatus.SUCCEEDED.value, job.result
+        assert json.loads(job.result or "{}")["management_handoff"] is True
+        applied = ui.load_appliance_apply_baselines(db)["appliance_settings"]
+        preview = json.loads(applied["config_preview"])
+        assert preview["management_https_enabled"] is enable_https
+        assert ("management_https_ca_path" in preview) is enable_https
+        current = next(unit for unit in ui.appliance_apply_units(db, reconcile=False)
+                       if unit["id"] == "appliance_settings")
+        assert current["changed"] is False
+
+
 def test_appliance_apply_router_owns_exact_transport_set():
     """Keep the extracted route identities and response classes exact."""
     from atlaso.app import ui
