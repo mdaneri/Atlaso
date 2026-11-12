@@ -4410,14 +4410,22 @@
 
 <h1 id="vaults">Vaults<a class="headerlink" href="#vaults" title="Permanent link">&para;</a></h1>
 <p>Open <strong>VCF Workflows &gt; Vaults</strong> to manage encrypted VCF and ESX passwords. Each named vault appears as a tab containing
-a table with <strong>Key</strong>, <strong>Description</strong>, <strong>Username</strong>, <strong>URI(s)</strong>, and <strong>Password</strong> columns. Multiple URIs are displayed
-on separate lines. Passwords are masked by default. Administrators can use the compact eye control to reveal one value
+a table with <strong>Name</strong>, <strong>Service</strong>, <strong>Description</strong>, <strong>Username</strong>, <strong>URI(s)</strong>, and <strong>Password</strong> columns. Imported names
+such as <code>operations.ops01.admin</code> are generated from service, endpoint, and account metadata; manual entries show their
+chosen key. Names are for browsing and can coincide when endpoints share a short hostname. Check the full URI and
+account to distinguish them. The stable key remains unchanged: use <strong>Copy key</strong> in the row menu for scripts, or view
+it in the entry wizard. Changing a service label or URI updates the displayed name without renaming the key. Service labels
+identify the account's product component from source metadata. Known historical imports receive labels from their saved
+metadata without decrypting or reimporting passwords; ambiguous or unrecognized entries show <strong>Unknown</strong>. Use the entry
+wizard's <strong>Edit</strong> action to correct a label. Multiple URIs are displayed on separate lines. Passwords are masked by
+default. Administrators can use the compact eye control to reveal one value
 for 15 seconds; Atlaso audits the reveal without recording the value and returns it with browser caching disabled.</p>
 <p>Vault keys use lowercase dotted segments, for example <code>vcf.sddc_manager.admin</code> or <code>esx.esx01.root</code>. Values are encrypted
 with the appliance secrets key before database storage. Keep <code>ATLASO_SECRETS_KEY</code> with the appliance recovery material.
 Each entry may also store up to nine credential-free HTTP, HTTPS, SSH, or SFTP URIs. Add them on the third page of the
 entry wizard. Right-click an existing row, or focus it and press <strong>Shift+F10</strong>, to open its context menu. <strong>Edit</strong>
-reopens the entry wizard, <strong>Copy</strong> creates a new entry without loading the encrypted value into the page, <strong>Open</strong>
+reopens the entry wizard, <strong>Copy key</strong> copies the exact stable key, <strong>Copy</strong> creates a new entry without loading the
+encrypted value into the page, <strong>Open</strong>
 contains a submenu with every configured URI, and <strong>Remove</strong> uses the shared destructive confirmation. HTTP and HTTPS
 open in a separate browser tab; SSH and SFTP open the Atlaso Web Terminal and authenticate with the entry username and
 password. Atlaso opens the remote terminal window only after the administrator accepts the displayed host-key
@@ -4480,7 +4488,7 @@ Duplicate or incomplete page results stop discovery. If a listed SDDC Manager pa
 retrieves that supported credential by ID with <code>GET /v1/credentials/{id}</code>. For VCF Installer, discovery reads password
 fields from its latest available SDDC specification only. Unsupported, unavailable, masked, or permission-limited
 candidates are summarized by skipped count and reason; vendor error messages and password values are not shown.
-The selection list shows each account and credential type alongside its key, resource, and discovered URIs so multiple
+The selection list shows a readable name, account and credential type alongside its resource and discovered URIs so multiple
 accounts on one appliance can be distinguished. The <strong>Passwords to import</strong> group contains native checkbox choices;
 each complete choice is clickable, and keyboard focus and checked state remain visible.</p>
 <p>Atlaso builds credential-free URIs only from authoritative resource metadata. SDDC Manager SSH credentials use a
@@ -4525,7 +4533,17 @@ different ports remain distinct sources.</p>
 <p>For the SDDC Manager response and endpoint contract, see Broadcom's <a href="https://developer.broadcom.com/xapis/vmware-cloud-foundation-api/latest/v1/credentials/get/">Get Credentials API</a>
 and <a href="https://developer.broadcom.com/xapis/vmware-cloud-foundation-api/latest/v1/credentials/id/get/">Get Credential API</a>.</p>
 <h2 id="vcf-helper-autofill">VCF Helper autofill<a class="headerlink" href="#vcf-helper-autofill" title="Permanent link">&para;</a></h2>
-<p>VCF Helper remote-connection wizards start with an administrator-only <strong>Vault</strong> and <strong>Key</strong> choice. Selecting a key
+<p>Within each vault, credential choices put matching service types and preferred protocols first, with the service and
+protocol shown in each label. API workflows prefer HTTPS; SSH lab maintenance prefers SDDC Manager SSH credentials.
+Backup discovery follows the current Operations or vCenter connection, and its SFTP destination selector puts SSH/SFTP
+references first. SFTP destination labels retain the stable key alongside an imported readable name so entries with
+the same short host and account remain distinguishable. Other credentials that were already usable remain available,
+including entries marked Unknown.
+Changing a product reorders recommendations while retaining an explicitly selected endpoint. Recommendations do not
+verify account permissions or authenticate automatically; select the credential and complete the existing trust checks.</p>
+<p>VCF Helper remote-connection wizards start with an administrator-only <strong>Vault</strong> and <strong>Key</strong> choice. Imported choices show
+readable names with account and full URI details; their stable key remains available in the Vaults entry wizard.
+Selecting a key
 fills and locks the server address from the chosen HTTP or HTTPS URI, fills its username, and skips the manual API-login
 page. The picker hides keys without an HTTP or HTTPS URI and creates one choice per valid URI when a key has several.
 A vault with no usable keys shows <strong>No HTTP/HTTPS credentials available</strong> and leaves manual entry active. The password
