@@ -1487,6 +1487,7 @@ def test_duplicate_selection_identity_fails_closed_during_key_allocation(monkeyp
         ("username", "updated-user"),
         ("resource_name", "updated-resource.example.internal"),
         ("uris", ("https://updated.example.internal",)),
+        ("service_type", "operations"),
     ],
 )
 def test_selection_identity_binds_reviewed_metadata_but_canonical_identity_is_stable(field, changed_value):
@@ -1544,3 +1545,49 @@ def test_candidate_preview_and_repr_do_not_include_password():
                                              "admin", "fixture.lab.example", "fixture-secret")
     assert "fixture-secret" not in repr(candidate)
     assert "fixture-secret" not in repr(candidate.sanitized())
+
+
+@pytest.mark.parametrize("resource_type, expected_service", [
+    ("VCENTER", "vcenter"), ("NSXT_MANAGER", "nsx"), ("VROPS", "operations"),
+    ("VRA", "automation"), ("ESXI", "esx"), ("UNRECOGNIZED", "unknown"),
+])
+def test_live_credential_candidates_include_explicit_service_metadata(fake_api_factory, resource_type, expected_service):
+    """Carry the vendor resource type through the source parser into the safe preview.
+
+    Args:
+        fake_api_factory: Fixture providing an intercepted credential API.
+        resource_type: Vendor resource type reported for the account.
+        expected_service: Expected canonical vault service.
+    """
+    row = {"id": "typed-credential", "username": "admin", "password": "fixture-source-value",
+           "credentialType": "API", "resource": {"resourceName": "arbitrary.example.test", "resourceType": resource_type}}
+    api, _requests = fake_api_factory(lambda _request: (200, {"elements": [row]}))
+    candidate, = service._sddc_manager_candidates(api)
+    assert candidate.service_type == expected_service
+    assert candidate.sanitized()["service_type"] == expected_service
+    assert "fixture-source-value" not in repr(candidate.sanitized())
+
+
+def test_management_deployment_candidates_retain_each_owning_service(fake_api_factory):
+    """Keep Operations, Automation, collector, and runtime accounts distinguishable.
+
+    Args:
+        fake_api_factory: Fixture providing an intercepted deployment-spec API.
+    """
+    from collections import Counter
+
+    spec = {
+        "vcfOperationsSpec": {"nodes": [{"hostname": "ops.example.test", "rootUserPassword": "fixture-ops-root"}],
+                              "adminUserPassword": "fixture-ops-admin"},
+        "vcfAutomationSpec": {"hostname": "auto.example.test", "adminUserPassword": "fixture-auto-admin"},
+        "vcfOperationsCollectorSpec": {"hostname": "collector.example.test", "rootUserPassword": "fixture-collector"},
+        "vspClusterSpec": {"platformFqdn": "runtime.example.test", "systemUserPassword": "fixture-runtime"},
+    }
+    api, _requests = fake_api_factory(lambda request: (
+        200, {"id": "typed-deployment"} if request.url.path == "/v1/sddcs/latest" else spec,
+    ))
+    candidates = service._vcf_installer_candidates(api)
+    assert Counter(candidate.service_type for candidate in candidates) == {
+        "operations": 2, "automation": 1, "operations_collector": 1, "services_runtime": 2,
+    }
+    assert all(candidate.sanitized()["service_type_label"] != "Unknown" for candidate in candidates)

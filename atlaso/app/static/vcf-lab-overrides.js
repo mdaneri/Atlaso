@@ -171,18 +171,23 @@
       if (["host", "ssh_port"].includes(event.target.name)) { trust = null; field("confirmed").checked = false; }
     }
   });
-  try {
-    const vaults = JSON.parse(document.getElementById("vcf-vault-credential-options").textContent);
-    vaults.forEach((vault) => vault.entries.forEach((entry) => (entry.uris || []).forEach((uri, index) => {
+  function populateVaultChoices(vaults) {
+    vaults.forEach((vault) => window.AtlasoVaultCredentials.choices(vault.entries || [], {
+      preferredServices: ["sddc_manager"], preferredProtocols: ["ssh", "sftp"], allowedProtocols: ["ssh", "sftp"],
+    }).forEach(({entry, uri, uriIndex, label}) => {
       if (!entry.username || !entry.has_value) return;
       let parsed;
       try { parsed = new URL(uri); } catch { return; }
       if (parsed.username || parsed.password) return;
       const name = ["ssh:", "sftp:"].includes(parsed.protocol) ? (entry.username === "vcf" ? "ssh_credential" : entry.username === "root" ? "root_credential" : null) : null;
       if (!name) return;
-      const option = new Option(`${vault.name} / ${entry.key} · ${parsed.host}`, `${entry.id}:${index + 1}`);
+      const option = new Option(`${vault.name} / ${label}`, `${entry.id}:${uriIndex + 1}`);
+      option.title = String(entry.key || "");
       option.dataset.endpoint = parsed.host;
       field(name).add(option);
-    })));
+    }));
+  }
+  try {
+    populateVaultChoices(JSON.parse(document.getElementById("vcf-vault-credential-options").textContent));
   } catch { node("status").textContent = "Vault credential choices are unavailable. Refresh to retry."; }
 })();
