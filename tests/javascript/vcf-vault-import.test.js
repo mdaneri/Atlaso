@@ -53,6 +53,8 @@ class FakeElement {
   addEventListener(name, callback) {
     this.listeners.set(name, callback);
   }
+
+  dispatchEvent() { return true; }
 }
 
 class FakeDialog extends FakeElement {}
@@ -180,6 +182,148 @@ function makeRuntime(responses) {
   return { context, form, requests, getWizardOptions: () => wizardOptions };
 }
 
+class CredentialOption extends FakeElement {
+  constructor(label, value) {
+    super();
+    this.textContent = label;
+    this.value = value;
+  }
+}
+
+class CredentialSelect extends FakeElement {
+  constructor(value = "") {
+    super();
+    this._value = value;
+    this._selectedIndex = -1;
+    this.disabled = false;
+  }
+
+  get value() {
+    return this._selectedIndex >= 0 ? this.children[this._selectedIndex]?.value || "" : this._value;
+  }
+
+  set value(value) {
+    this._value = String(value || "");
+    this._selectedIndex = this.children.findIndex((option) => option.value === this._value);
+  }
+
+  get options() { return this.children; }
+
+  get selectedIndex() { return this._selectedIndex; }
+
+  set selectedIndex(index) {
+    this._selectedIndex = Number(index);
+    this._value = this.children[this._selectedIndex]?.value || "";
+  }
+
+  get selectedOptions() {
+    return [this.children[this._selectedIndex] || this.children.find((option) => option.value === this._value) || this.children[0] || new CredentialOption("", "")];
+  }
+
+  append(...children) {
+    super.append(...children);
+    if (this._selectedIndex < 0 && this._value) this._selectedIndex = this.children.findIndex((option) => option.value === this._value);
+  }
+
+  replaceChildren(...children) {
+    super.replaceChildren(...children);
+    this._selectedIndex = children.length ? 0 : -1;
+    this._value = children[0]?.value || "";
+  }
+}
+
+class CredentialForm extends FakeElement {
+  constructor() {
+    super();
+    this.elements = {
+      address: new FakeInput(), username: new FakeInput(), password: new FakeInput(), port: new FakeInput(),
+    };
+    this.elements.namedItem = (name) => this.elements[name] || null;
+  }
+}
+
+function makeCredentialPickerRuntime({ entries, pickerDataset = {} } = {}) {
+  const data = new FakeElement();
+  data.textContent = JSON.stringify([{
+    id: 7,
+    name: "Primary",
+    entries: entries || [{
+      id: 42, key: "vcf.operations.admin", display_name: "Operations · vc01.lab.example · admin",
+      service_type: "vcf_operations", service_type_label: "Operations",
+      username: "admin", uris: ["https://vc01.lab.example"],
+    }],
+  }]);
+  const form = new CredentialForm();
+  form.elements.product = new CredentialSelect("operations");
+  const vaultSelect = new CredentialSelect("7");
+  const entrySelect = new CredentialSelect();
+  const status = new FakeElement();
+  const picker = new FakeElement();
+  picker.dataset = { addressField: "address", usernameField: "username", passwordField: "password", portField: "port", addressMode: "server", ...pickerDataset };
+  picker.closest = () => form;
+  picker.querySelector = (selector) => ({
+    "[data-vcf-credential-vault]": vaultSelect,
+    "[data-vcf-credential-entry]": entrySelect,
+    "[data-vcf-credential-status]": status,
+  })[selector] || null;
+  const context = vm.createContext({
+    document: { getElementById: () => data, querySelectorAll: () => [picker] },
+    window: { setTimeout() {} },
+    HTMLElement: FakeElement,
+    HTMLFormElement: CredentialForm,
+    HTMLInputElement: FakeInput,
+    HTMLSelectElement: CredentialSelect,
+    Option: CredentialOption,
+    URL,
+    Event: class Event {},
+  });
+  vm.runInContext(`${functionSource("vaultCredentialChoices")}; window.AtlasoVaultCredentials = { choices: vaultCredentialChoices }; ${functionSource("initializeVcfVaultCredentialPickers")}; initializeVcfVaultCredentialPickers();`, context);
+  return { form, entrySelect, status, picker };
+}
+
+test("saved credential picker shows the readable name but preserves key and entry identity", () => {
+  const { form, entrySelect, status } = makeCredentialPickerRuntime();
+  const option = entrySelect.children.find((child) => child.value === "42");
+
+  assert.ok(option);
+  assert.equal(option.textContent, "Operations · HTTPS · Operations · vc01.lab.example · admin · admin — https://vc01.lab.example");
+  assert.equal(option.title, "vcf.operations.admin");
+  assert.equal(option.dataset.endpoint, "https://vc01.lab.example");
+  entrySelect.value = "42";
+  entrySelect.listeners.get("change")();
+  assert.equal(entrySelect.value, "42");
+  assert.equal(form.elements.address.value, "vc01.lab.example");
+  assert.equal(form.elements.username.value, "admin");
+  assert.match(status.textContent, /Using Primary \/ vcf\.operations\.admin\./);
+});
+
+test("saved credential picker leaves the placeholder selected and preserves the exact URI when re-ranked", () => {
+  const entries = [
+    { id: 42, key: "ops-admin", display_name: "Operations · vc01 · admin", service_type: "vcf_operations", service_type_label: "Operations", username: "admin", uris: ["https://vc01.lab.example", "https://vc02.lab.example"] },
+    { id: 43, key: "vc-admin", display_name: "vCenter · vc03 · admin", service_type: "vcenter", service_type_label: "vCenter", username: "admin", uris: ["https://vc03.lab.example"] },
+  ];
+  const { form, entrySelect, status } = makeCredentialPickerRuntime({
+    entries,
+    pickerDataset: { serviceField: "product", serviceMap: JSON.stringify({ operations: "vcf_operations", vcenter: "vcenter" }) },
+  });
+  assert.equal(entrySelect.value, "", "a populated picker must not automatically select credentials");
+
+  const secondUriIndex = entrySelect.children.findIndex((option) => option.dataset.endpoint === "https://vc02.lab.example");
+  entrySelect.selectedIndex = secondUriIndex;
+  entrySelect.listeners.get("change")();
+  assert.equal(form.elements.address.value, "vc02.lab.example");
+  const statusBeforeRerank = status.textContent;
+
+  form.elements.product.value = "vcenter";
+  form.elements.product.listeners.get("change")();
+
+  assert.equal(entrySelect.value, "42");
+  assert.equal(entrySelect.selectedOptions[0].dataset.endpoint, "https://vc02.lab.example");
+  assert.equal(entrySelect.children[1].dataset.endpoint, "https://vc03.lab.example", "the mapped service should now rank first");
+  assert.equal(status.textContent, statusBeforeRerank, "reranking must not reapply credentials or disturb the active form state");
+  assert.equal(form.elements.address.value, "vc02.lab.example");
+});
+
 function discoveredPayload(candidates) {
   return {
     discovery: {
@@ -197,6 +341,7 @@ test("VCF vault inspect reports discovery coverage and renders safe URI repair g
         candidate_id: "candidate-1",
         key: "<script>alert(1)</script>",
         description: "<img src=x onerror=alert(1)>",
+        service_type_label: "Operations",
         secret_type: "vcf_password",
         username: "<img src=x onerror=alert(2)>",
         resource_name: "vc01.lab.example",
@@ -234,13 +379,13 @@ test("VCF vault inspect reports discovery coverage and renders safe URI repair g
   assert.equal(verifiedCopy.innerHTML, "");
   assert.equal(verifiedCopy.children[0].children[0].textContent, "<script>alert(1)</script>");
   assert.equal(verifiedCopy.children[0].innerHTML, "");
-  assert.equal(verifiedCopy.children[1].textContent, "VCF password · <img src=x onerror=alert(2)>");
+  assert.equal(verifiedCopy.children[1].textContent, "Operations · VCF password · <img src=x onerror=alert(2)>");
   assert.equal(verifiedCopy.children[1].innerHTML, "");
   assert.equal(verifiedCopy.children[2].textContent, "<img src=x onerror=alert(1)>");
   assert.equal(verifiedCopy.children[2].innerHTML, "");
   assert.equal(verifiedCopy.children[3].textContent, "https://vc01.lab.example");
   assert.equal(verifiedCopy.children[3].innerHTML, "");
-  assert.equal(runtime.form.candidates.children[1].children[1].children[1].textContent, "ESX password · root");
+  assert.equal(runtime.form.candidates.children[1].children[1].children[1].textContent, "Unknown · ESX password · root");
   assert.match(
     runtime.form.candidates.children[1].children[1].children[3].textContent,
     /Add a URI in the Vault editor after import\./,
@@ -307,6 +452,7 @@ test("VCF candidate rows distinguish accounts with the same resource and endpoin
       {
         candidate_id: "admin-candidate",
         key: "vcf-vault-key",
+        service_type_label: "vCenter",
         secret_type: "vcf_password",
         username: "administrator",
         resource_name: "vc01.lab.example",
@@ -316,6 +462,7 @@ test("VCF candidate rows distinguish accounts with the same resource and endpoin
       {
         candidate_id: "audit-candidate",
         key: "vcf-vault-key",
+        service_type_label: "Unknown",
         secret_type: "vcf_password",
         username: "audit",
         resource_name: "vc01.lab.example",
@@ -328,7 +475,7 @@ test("VCF candidate rows distinguish accounts with the same resource and endpoin
   await runtime.getWizardOptions().onNext({ controller: { setError() {} }, step: { id: "credentials" } });
 
   const accountLabels = runtime.form.candidates.children.map((row) => row.children[1].children[1].textContent);
-  assert.deepEqual(accountLabels, ["VCF password · administrator", "VCF password · audit"]);
+  assert.deepEqual(accountLabels, ["vCenter · VCF password · administrator", "Unknown · VCF password · audit"]);
   assert.deepEqual(
     runtime.form.candidates.children.map((row) => row.children[1].children[3].textContent),
     ["https://vc01.lab.example", "https://vc01.lab.example"],
@@ -351,7 +498,7 @@ test("unknown VCF credential types use a readable fallback label", async () => {
 
   await runtime.getWizardOptions().onNext({ controller: { setError() {} }, step: { id: "credentials" } });
 
-  assert.equal(runtime.form.candidates.children[0].children[1].children[1].textContent, "Other credential · operator");
+  assert.equal(runtime.form.candidates.children[0].children[1].children[1].textContent, "Unknown · Other credential · operator");
 });
 
 test("zero VCF candidates preserve the skip reason and block selection validation", async () => {

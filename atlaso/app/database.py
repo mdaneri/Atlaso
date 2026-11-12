@@ -86,6 +86,7 @@ def _create_database_schema(bind: Engine) -> None:
                 _reconcile_ntp_time_source_column(connection)
                 _reconcile_dhcp_availability_column(connection)
                 _reconcile_vcf_backup_probe_column(connection)
+                _reconcile_vault_service_type_column(connection)
             except Exception:
                 connection.rollback()
                 raise
@@ -105,6 +106,7 @@ def _create_database_schema(bind: Engine) -> None:
             _reconcile_ntp_time_source_column(connection)
             _reconcile_dhcp_availability_column(connection)
             _reconcile_vcf_backup_probe_column(connection)
+            _reconcile_vault_service_type_column(connection)
         return
     with bind.begin() as connection:
         Base.metadata.create_all(bind=connection)
@@ -115,6 +117,31 @@ def _create_database_schema(bind: Engine) -> None:
         _reconcile_ntp_time_source_column(connection)
         _reconcile_dhcp_availability_column(connection)
         _reconcile_vcf_backup_probe_column(connection)
+        _reconcile_vault_service_type_column(connection)
+
+
+def _reconcile_vault_service_type_column(connection: Connection) -> None:
+    """Add non-secret service metadata while preserving existing vault values and identities.
+
+    Args:
+        connection: Transaction holding the shared startup schema lock.
+    """
+    from atlaso.app.services.vault_service_types import legacy_vault_service_type
+
+    columns = {column["name"] for column in inspect(connection).get_columns("vault_entries")}
+    if "service_type" in columns:
+        return
+    connection.execute(text("ALTER TABLE vault_entries ADD COLUMN service_type VARCHAR(64) NOT NULL DEFAULT 'unknown'"))
+    # Read only the fixed historical metadata needed for classification. Password
+    # ciphertext, timestamps, keys, and endpoint associations are never rewritten.
+    for entry in connection.execute(text("SELECT id, source_type, secret_type, description FROM vault_entries")).mappings():
+        service_type = legacy_vault_service_type(
+            source_type=entry["source_type"] or "", secret_type=entry["secret_type"] or "",
+            description=entry["description"] or "",
+        )
+        if service_type != "unknown":
+            connection.execute(text("UPDATE vault_entries SET service_type = :service_type WHERE id = :entry_id"),
+                               {"service_type": service_type, "entry_id": entry["id"]})
 
 
 def _reconcile_vcf_backup_probe_column(connection: Connection) -> None:

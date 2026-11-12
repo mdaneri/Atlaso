@@ -28,7 +28,7 @@ test('Backup configuration stays in VCF Helper while operations link to the VCF 
   assert.match(js, /const receiverReady = configurationForm\?\.dataset\.setupReady === "true"/);
   assert.match(js, /function openBackupConfiguration\(launcher\) \{\s+if \(!receiverReady\) return;/);
   assert.match(backupsPage, /\{% if identity\.has_role\('admin'\) %\}[\s\S]*?partials\/vcf_backup_operations\.html[\s\S]*?\{% endif %\}/);
-  assert.match(backupsPage, /\{% if identity\.has_role\('admin'\) %\}[\s\S]*?partials\/vcf_backup_status_modal\.html[\s\S]*?vcf-backup\.js\?v=issue-1066-23[\s\S]*?\{% endif %\}/);
+  assert.match(backupsPage, /\{% if identity\.has_role\('admin'\) %\}[\s\S]*?partials\/vcf_backup_status_modal\.html[\s\S]*?vcf-backup\.js\?v=issue-1066-25[\s\S]*?\{% endif %\}/);
   assert.match(operationsPartial, /data-vcf-backup-operations-section/);
   assert.match(operationsPartial, /data-vcf-backup-operations-grid/);
   assert.match(operationsPartial, /data-vcf-backup-operations-refresh/);
@@ -933,9 +933,9 @@ test('Coverage gaps are labeled as outside the plan and explain Fleet ineligibil
 
 test('The updated backup script URL and service worker cache version stay aligned', () => {
   const worker = fs.readFileSync(path.join(__dirname, '../../atlaso/app/static/service-worker.js'), 'utf8');
-  assert.match(helper, /vcf-backup\.js\?v=issue-1066-23/);
-  assert.match(worker, /ATLASO_CACHE_PREFIX\}415/);
-  assert.match(worker, /vcf-backup\.js\?v=issue-1066-23/);
+  assert.match(helper, /vcf-backup\.js\?v=issue-1066-25/);
+  assert.match(worker, /ATLASO_CACHE_PREFIX\}420/);
+  assert.match(worker, /vcf-backup\.js\?v=issue-1066-25/);
 });
 
 test('Review binds the selected component IDs, source credentials, policy, and saved secret references', () => {
@@ -952,7 +952,7 @@ test('Review binds the selected component IDs, source credentials, policy, and s
 
 test('Changing a target, credential, selection, or policy invalidates the exact review token', () => {
   assert.match(js, /function invalidateReview\(\) \{\s+reviewToken = "";\s+review = null;/);
-  assert.match(js, /sourceKind\?\.addEventListener\("change", \(\) => \{ updateSourceFields\(\); invalidateReview\(\)/);
+  assert.match(js, /sourceKind\?\.addEventListener\("change", \(\) => \{ fillVaultEntries\(true\); updateSourceFields\(\); invalidateReview\(\)/);
   assert.match(js, /entrySelect\?\.addEventListener\("change", \(\) => \{\s+updateSourceFields\(\); invalidateReview\(\);/);
   assert.match(js, /event\.target\.closest\("\[data-atlaso-wizard-step='settings'\]"\)\) invalidateReview\(\)/);
   assert.match(js, /grid\?\.table\?\.on\?\.\("rowSelectionChanged", \(\) => \{\s+invalidateReview\(\);\s+if \(grid\?\.table\) syncSupportedSelectionHeader\(grid\.table\);/);

@@ -2510,6 +2510,7 @@ class VaultEntry(Base):
         key: Persisted key for the vaultentry resource.
         description: Operator-facing purpose or context for the resource.
         secret_type: Persisted secret type for the vaultentry resource.
+        service_type: Non-secret product or service associated with the account.
         username: Persisted username for the vaultentry resource.
         resource_name: Persisted resource name for the vaultentry resource.
         source_type: Persisted source type for the vaultentry resource.
@@ -2536,6 +2537,7 @@ class VaultEntry(Base):
     key: Mapped[str] = mapped_column(String(180), index=True)
     description: Mapped[str] = mapped_column(Text, default="")
     secret_type: Mapped[str] = mapped_column(String(40))
+    service_type: Mapped[str] = mapped_column(String(64), default="unknown", server_default="unknown")
     username: Mapped[str] = mapped_column(String(180), default="")
     resource_name: Mapped[str] = mapped_column(String(240), default="")
     source_type: Mapped[str] = mapped_column(String(40), default="manual")

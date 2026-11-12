@@ -12,6 +12,12 @@ from urllib.parse import quote
 
 import httpx
 
+from atlaso.app.services.vault_service_types import (
+    VAULT_SERVICE_TYPE_LABELS,
+    vault_entry_display_name,
+    vault_service_from_deployment_path,
+    vault_service_from_resource,
+)
 from atlaso.app.services.vaults import normalize_vault_uris, redact_secret_values
 from atlaso.app.services.vcf_depot_target import VcfDepotApiClient, VcfDepotTargetError
 
@@ -28,6 +34,7 @@ class VcfPasswordCandidate:
         username: Username maintained by this vcfpasswordcandidate.
         resource_name: Resource name maintained by this vcfpasswordcandidate.
         value: Value maintained by this vcfpasswordcandidate.
+        service_type: Product or service identified by source component metadata.
     """
     candidate_id: str
     key: str
@@ -38,6 +45,7 @@ class VcfPasswordCandidate:
     value: str = field(repr=False)
     uris: tuple[str, ...] = ()
     natural_key: str = ""
+    service_type: str = "unknown"
 
     @property
     def identity_id(self) -> str:
@@ -48,7 +56,7 @@ class VcfPasswordCandidate:
     def selection_id(self) -> str:
         """Bind browser selection to reviewed metadata while allowing password refresh."""
         metadata = (self.candidate_id, self.key, self.description, self.secret_type,
-                    self.username, self.resource_name, self.uris)
+                    self.username, self.resource_name, self.uris, self.service_type)
         encoded = json.dumps(metadata, ensure_ascii=True, separators=(",", ":"))
         return "vcf-" + sha256(encoded.encode("utf-8")).hexdigest()
 
@@ -57,8 +65,15 @@ class VcfPasswordCandidate:
         metadata = {
             "candidate_id": self.candidate_id,
             "key": self.key,
+            "display_name": vault_entry_display_name(
+                key=redact_secret_values(self.key, [self.value]), service_type=self.service_type,
+                username=redact_secret_values(self.username, [self.value]),
+                uris=tuple(redact_secret_values(uri, [self.value]) for uri in self.uris),
+            ),
             "description": self.description,
             "secret_type": self.secret_type,
+            "service_type": self.service_type,
+            "service_type_label": VAULT_SERVICE_TYPE_LABELS.get(self.service_type, "Unknown"),
             "username": self.username,
             "resource_name": self.resource_name,
             "uris": list(self.uris),
@@ -305,6 +320,7 @@ def _sddc_manager_candidates(api: VcfDepotApiClient) -> list[VcfPasswordCandidat
                 resource_name=resource_name,
                 value=password,
                 uris=_resource_uris(resource, credential_type),
+                service_type=vault_service_from_resource(resource_type),
             )
         )
     return result
@@ -491,6 +507,7 @@ def _vcf_installer_candidates(api: VcfDepotApiClient) -> list[VcfPasswordCandida
                 resource_name=resource_name,
                 value=password,
                 uris=uris,
+                service_type=vault_service_from_deployment_path(path),
             )
         )
     return result

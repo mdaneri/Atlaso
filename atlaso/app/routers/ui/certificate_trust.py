@@ -67,7 +67,11 @@ from atlaso.app.services.kms import (
     KMS_DEFAULT_DATABASE_PATH,
 )
 from atlaso.app.services.network_objects import acquire_network_objects_write_lock
-from atlaso.app.services.vaults import list_vaults, vault_entry_uris
+from atlaso.app.services.vaults import (
+    list_vaults,
+    vault_entry_metadata,
+    vault_entry_uris,
+)
 from atlaso.app.services.vsphere_enrollment import (
     EnrollmentError,
     certificate_fingerprint,
@@ -1811,7 +1815,7 @@ def build_routers(
         context["vsphere_vault_credential_choices"] = []
         if identity.has_role("admin"):
             for vault in list_vaults(db):
-                for entry in vault.entries:
+                for entry in sorted(vault.entries, key=lambda item: (item.service_type != "vcenter", item.key)):
                     if (
                         entry.secret_type != "vcf_password"
                         or not entry.username
@@ -1833,7 +1837,12 @@ def build_routers(
                                 "uri_index": index,
                                 "hostname": host,
                                 "port": port,
-                                "label": f"{vault.name} / {entry.key} ({entry.username}) — https://{authority} (URI {index + 1})",
+                                "key": entry.key,
+                                "label": (
+                                    f"{vault.name} / {'Recommended · ' if entry.service_type == 'vcenter' else ''}"
+                                    f"{vault_entry_metadata(entry)['display_name']} ({entry.username})"
+                                    f" — HTTPS — https://{authority} (URI {index + 1})"
+                                ),
                             }
                         )
         return render(
