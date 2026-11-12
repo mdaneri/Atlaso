@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 import tarfile
 from io import BytesIO
 from pathlib import Path
@@ -441,3 +442,79 @@ def test_rejects_symlinked_ova_before_extraction(tmp_path: Path) -> None:
 
     with pytest.raises(validator.OvaValidationError, match="not a symlink"):
         validator.validate_ova(link, extraction_directory=tmp_path / "extracted")
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Local OVA admission uses Windows file pins")
+def test_local_ova_accepts_receipted_bytes_above_publication_limits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The local validator accepts an admitted OVA and disk above the publication cap.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+        monkeypatch: Fixture that supplies a small publication limit.
+    """
+    ova_path = tmp_path / "atlaso.ova"
+    members = _members()
+    _write_ova(ova_path, members)
+    monkeypatch.setattr(validator, "MAXIMUM_GITHUB_ASSET_BYTES", len(members["photon.vmdk"]))
+    with pytest.raises(validator.OvaValidationError, match="GitHub asset limit"):
+        validator.validate_ova(ova_path, extraction_directory=tmp_path / "release")
+
+    output = tmp_path / "local"
+    output.mkdir()
+    result = validator.validate_local_ova(
+        ova_path, extraction_directory=output, expected_size=ova_path.stat().st_size,
+        expected_sha256=hashlib.sha256(ova_path.read_bytes()).hexdigest(),
+    )
+
+    assert result["kind"] == "atlaso-validated-local-ova"
+    assert result["archive_bytes"] == ova_path.stat().st_size
+    assert result["source_commit"] == "a" * 40
+    assert {path.name: path.read_bytes() for path in output.iterdir()} == members
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Local OVA admission uses Windows file pins")
+@pytest.mark.parametrize("drift", ["size", "digest"])
+def test_local_ova_refuses_receipt_drift_before_extraction(tmp_path: Path, drift: str) -> None:
+    """Local admission compares the original size and digest before writing any member.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+        drift: Original receipt field to change.
+    """
+    ova_path = tmp_path / "atlaso.ova"
+    _write_ova(ova_path, _members())
+    output = tmp_path / "local"
+    output.mkdir()
+    expected_size = ova_path.stat().st_size + (drift == "size")
+    expected_sha256 = "0" * 64 if drift == "digest" else hashlib.sha256(ova_path.read_bytes()).hexdigest()
+    with pytest.raises(validator.OvaValidationError, match="bytes differ from the admitted export receipt"):
+        validator.validate_local_ova(
+            ova_path, extraction_directory=output, expected_size=expected_size, expected_sha256=expected_sha256,
+        )
+    assert not list(output.iterdir())
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Local OVA admission uses Windows file pins")
+def test_local_ova_refuses_case_alias_before_extraction(tmp_path: Path) -> None:
+    """A case alias cannot replace a member on the destination filesystem.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+    ova_path = tmp_path / "atlaso.ova"
+    members = _members()
+    with tarfile.open(ova_path, "w") as archive:
+        for name, data in members.items():
+            header = tarfile.TarInfo("PHOTON.VMDK" if name == "system.vmdk" else name)
+            header.size = len(data)
+            archive.addfile(header, BytesIO(data))
+    output = tmp_path / "local"
+    output.mkdir()
+    with pytest.raises(validator.OvaValidationError, match="duplicate member"):
+        validator.validate_local_ova(
+            ova_path, extraction_directory=output, expected_size=ova_path.stat().st_size,
+            expected_sha256=hashlib.sha256(ova_path.read_bytes()).hexdigest(),
+        )
+    assert not list(output.iterdir())

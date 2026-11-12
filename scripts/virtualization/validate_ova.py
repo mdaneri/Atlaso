@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
 import tarfile
@@ -73,30 +74,56 @@ def _validate_member(member: tarfile.TarInfo) -> None:
         raise OvaValidationError(f"OVA member has an unsafe path: {member.name}")
 
 
-def _extract_members(ova_path: Path, destination: Path) -> list[str]:
+def _extract_members(
+    ova_path: Path, destination: Path, *, local_archive_bytes: int | None = None,
+) -> list[str]:
     """Safely copy flat regular OVA members into an empty destination.
 
     Args:
-        ova_path: Canonical OVA archive.
+        ova_path: Archive protected by a read pin for local validation.
         destination: Empty extraction directory.
+        local_archive_bytes: Exact admitted size for local validation.
     """
 
     if destination.exists():
         if destination.is_symlink() or not destination.is_dir() or any(destination.iterdir()):
             raise OvaValidationError(f"OVA extraction destination must be an empty ordinary directory: {destination}")
-    destination.mkdir(parents=True, exist_ok=True)
-    names: list[str] = []
     with tarfile.open(ova_path, mode="r:") as archive:
-        members = archive.getmembers()
+        members = []
+        names: list[str] = []
+        seen: set[str] = set()
+        for member in archive:
+            if len(members) == 5:
+                raise OvaValidationError("OVA must contain exactly five flat regular members.")
+            _validate_member(member)
+            if local_archive_bytes is None:
+                name_key = member.name
+                if member.size <= 0 or member.size >= MAXIMUM_GITHUB_ASSET_BYTES:
+                    raise OvaValidationError(f"OVA member is empty or exceeds the GitHub asset limit: {member.name}")
+            else:
+                name_key = member.name.casefold()
+                if (
+                    member.type not in (tarfile.REGTYPE, tarfile.AREGTYPE)
+                    or member.issparse()
+                    or not re.fullmatch(r"[A-Za-z0-9_.-]+", member.name)
+                    or member.name.endswith(".")
+                    or os.path.isreserved(member.name)
+                    or member.size <= 0
+                    or member.offset_data + member.size > local_archive_bytes
+                ):
+                    raise OvaValidationError("Local OVA member is unsafe or exceeds the admitted archive.")
+            if name_key in seen:
+                raise OvaValidationError(f"OVA contains a duplicate member: {member.name}")
+            seen.add(name_key)
+            names.append(member.name)
+            members.append(member)
         if len(members) != 5:
             raise OvaValidationError(f"OVA must contain exactly five flat regular members; found {len(members)}.")
-        for member in members:
-            _validate_member(member)
-            if member.name in names:
-                raise OvaValidationError(f"OVA contains a duplicate member: {member.name}")
-            if member.size <= 0 or member.size >= MAXIMUM_GITHUB_ASSET_BYTES:
-                raise OvaValidationError(f"OVA member is empty or exceeds the GitHub asset limit: {member.name}")
-            names.append(member.name)
+        if local_archive_bytes is not None:
+            required = sum(member.size for member in members)
+            if required >= local_archive_bytes or shutil.disk_usage(destination).free < required:
+                raise OvaValidationError("Local OVA extraction exceeds the admitted archive or available capacity.")
+        destination.mkdir(parents=True, exist_ok=True)
         for member in members:
             source = archive.extractfile(member)
             if source is None:
@@ -380,6 +407,58 @@ def validate_ova(ova_path: Path, *, extraction_directory: Path) -> dict[str, Any
         raise OvaValidationError("OVA source is empty or exceeds the GitHub asset limit.")
     ova_path = ova_path.resolve(strict=True)
     names = _extract_members(ova_path, extraction_directory)
+    return _validate_extracted(ova_path, extraction_directory, names)
+
+
+def validate_local_ova(
+    ova_path: Path,
+    *,
+    extraction_directory: Path,
+    expected_size: int,
+    expected_sha256: str,
+) -> dict[str, Any]:
+    """Validate a receipt-bound local development OVA under Windows read pins.
+
+    Args:
+        ova_path: Absolute path from the independently admitted export receipt.
+        extraction_directory: Existing empty task-owned extraction directory.
+        expected_size: Exact archive size from the export receipt.
+        expected_sha256: Exact archive digest from the export receipt.
+    """
+
+    from scripts.completed_task_files import WindowsFiles
+
+    if (
+        not ova_path.is_absolute() or not extraction_directory.is_absolute()
+        or type(expected_size) is not int or expected_size <= 0
+        or not re.fullmatch(r"[0-9a-f]{64}", expected_sha256)
+    ):
+        raise OvaValidationError("Local OVA requires absolute paths and an exact size and SHA-256.")
+    files = WindowsFiles()
+    with (
+        files.ancestors(ova_path),
+        files.opened(ova_path),
+        files.ancestors(extraction_directory),
+        files.opened(extraction_directory, directory=True),
+    ):
+        if ova_path.stat().st_size != expected_size or _sha256(ova_path) != expected_sha256:
+            raise OvaValidationError("Local OVA bytes differ from the admitted export receipt.")
+        names = _extract_members(ova_path, extraction_directory, local_archive_bytes=expected_size)
+        result = _validate_extracted(ova_path, extraction_directory, names, archive_sha256=expected_sha256)
+    return {**result, "kind": "atlaso-validated-local-ova", "archive_bytes": expected_size}
+
+
+def _validate_extracted(
+    ova_path: Path, extraction_directory: Path, names: list[str], *, archive_sha256: str | None = None,
+) -> dict[str, Any]:
+    """Check the common OVA member, manifest, topology, and provenance contract.
+
+    Args:
+        ova_path: Source OVA path.
+        extraction_directory: Directory containing the exact extracted members.
+        names: Names of those members.
+        archive_sha256: Previously verified digest under a retained read pin.
+    """
     ovf_names = [name for name in names if name.lower().endswith(".ovf")]
     manifest_names = [name for name in names if name.lower().endswith(".mf")]
     vmdk_names = [name for name in names if name.lower().endswith(".vmdk")]
@@ -408,7 +487,7 @@ def validate_ova(ova_path: Path, *, extraction_directory: Path) -> dict[str, Any
         "schema_version": 1,
         "kind": "atlaso-validated-ova",
         "ova": ova_path.name,
-        "ova_sha256": _sha256(ova_path),
+        "ova_sha256": archive_sha256 if archive_sha256 is not None else _sha256(ova_path),
         "ovf": ovf_names[0],
         "manifest": manifest_names[0],
         "provenance": provenance_names[0],

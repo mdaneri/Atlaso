@@ -383,6 +383,12 @@ Every helper runs `validate_ova.py` before changing hypervisor state. Validation
 version, payload hashes and roles, fixed capacities, and complete machine topology to agree. An unexpected archive
 member, symbolic link, unsafe path, missing provenance record, or changed payload blocks the import.
 
+For task-owned VMware fixtures, the Windows local-development validator accepts the exact archive size and SHA-256
+from the admitted export receipt. It pins the archive while checking the member layout, manifest, machine topology,
+and provenance. The caller supplies an existing empty task-owned extraction directory. The resulting
+`atlaso-validated-local-ova` record identifies the development archive for a later import admission. The publication
+validator applies the GitHub asset size limit to the archive and its members.
+
 ## Deploy on VMware
 
 Import the OVA directly in VMware Workstation or another compatible VMware OVF deployment environment. Map the first
