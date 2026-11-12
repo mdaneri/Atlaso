@@ -18293,6 +18293,9 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                 ) if "ca" in handoff_unit_ids else selected_order.index("ca")
                 if any(
                     selected_order.index(unit_id) < ca_publication_index
+                    and not (
+                        "ca" in handoff_unit_ids and appliance_apply_listener_shuts_down(current_by_id[unit_id])
+                    )
                     for unit_id in ca_reload_units - handoff_unit_ids
                 ):
                     raise ApplianceApplyJobError(
@@ -19288,6 +19291,25 @@ def proxy_socket_takeover_dependencies(
     return proxy_socket_release_dependencies(projected, unit_map)
 
 
+def appliance_apply_listener_shuts_down(unit: dict[str, Any]) -> bool:
+    """Check whether desired state explicitly disables the unit's listener.
+
+    Args:
+        unit: Appliance Apply unit with its current desired context.
+    """
+    context = unit.get("context", {})
+    if unit["id"] == "esxi_pxe":
+        return context.get("esxi_pxe_boot", {}).get("enabled") is False
+    keys = {
+        "dnsmasq": ("dns_settings", "dhcp_settings"),
+        "esx_storage": ("esx_storage_settings",), "kms": ("kms_settings",),
+        "ldap": ("ldap_settings",), "ntpd": ("ntp_settings",),
+        "vcf_backups": ("vcf_backup_settings",), "vcf_offline_depot": ("vcf_depot_settings",),
+        "vcf_private_registry": ("vcf_registry_settings",),
+    }.get(unit["id"], ())
+    return bool(keys) and all(getattr(context.get(key), "enabled", None) is False for key in keys)
+
+
 def appliance_apply_execution_plan(
     db: Session, units: list[dict[str, Any]], selected_ids: set[str], *, enforce_consent: bool = True, consented_ids: set[str] | None = None,
 ) -> dict[str, Any]:
@@ -19764,23 +19786,10 @@ def appliance_apply_execution_plan(
         if management_handoff:
             # Only shutdowns can precede the CA-bearing group. Enabled consumers
             # may need newly deployed certificates, even for a listener change.
-            shutdown_settings = {
-                "dnsmasq": ("dns_settings", "dhcp_settings"),
-                "esx_storage": ("esx_storage_settings",), "kms": ("kms_settings",),
-                "ldap": ("ldap_settings",), "ntpd": ("ntp_settings",),
-                "vcf_backups": ("vcf_backup_settings",),
-                "vcf_offline_depot": ("vcf_depot_settings",),
-                "vcf_private_registry": ("vcf_registry_settings",),
-            }
             shutdown_ids = {
-                unit_id for unit_id in release_ids
-                if unit_id in shutdown_settings and all(
-                    getattr(unit_map.get(unit_id, {}).get("context", {}).get(key), "enabled", None) is False
-                    for key in shutdown_settings[unit_id]
-                )
+                unit_id for unit_id in release_ids | {"esxi_pxe"}
+                if unit_id in unit_map and appliance_apply_listener_shuts_down(unit_map[unit_id])
             }
-            if unit_map.get("esxi_pxe", {}).get("context", {}).get("esxi_pxe_boot", {}).get("enabled") is False:
-                shutdown_ids.add("esxi_pxe")
             pending_moves = proxy_release_ids - shutdown_ids
             if pending_moves:
                 labels = ", ".join(unit_map[unit_id]["label"] for unit_id in sorted(pending_moves))
