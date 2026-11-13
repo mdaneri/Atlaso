@@ -198,8 +198,9 @@ or a guest-tools package transaction. Use **Settings → Hardware** afterward to
 without contacting a repository. The portable first-boot selector keeps its separate empty ISO agent inventory.
 
 The workflow then signs the candidate, assembles the ISO, and stages the signed installation assets in the existing hidden
-`installation-vX.Y.Z-rc.N` draft. This optional prerelease staging run leaves the release as a draft. Standard releases use the combined path above. The signed release index covers the ISO manifest
-and assets; phase one requires Secure Boot disabled. ARM support is a possible second phase and is not included in
+`installation-vX.Y.Z-rc.N` draft. Standard releases use the combined path above. The signed release index covers the
+ISO manifest and assets.
+Phase one requires Secure Boot disabled. ARM support is a possible second phase and is outside
 the x86-64 release contract.
 
 ## Development-only VMware test image

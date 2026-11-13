@@ -75,8 +75,8 @@ and attempt. That admission workflow revalidates the evidence and current-`main`
 executing the target, then emits only a one-day canonical replay request. Its completed `workflow_run` causes the
 read-only **Publish Python wheel** workflow to revalidate the request and publish the replacement handoff. Replay does
 not implicitly advance an older release; use the exact-SHA software-release dispatch for recovery. When a draft or
-public release already exists, the workflow verifies and reuses its signed assets only after the replay wheel matches the bundled wheel byte for byte, preserving the original signed provenance
-for channel recovery. Never rebuild or rename a wheel locally.
+public release already exists, the workflow verifies and reuses its signed assets only after the replay wheel matches
+the bundled wheel byte for byte, preserving the original signed provenance for channel recovery.
 
 Release notice generation identifies each wheel from its top-level `.dist-info/METADATA` file. Nested metadata for
 vendored distributions, such as Packaging bundled inside setuptools, cannot establish the wheel's identity even when
