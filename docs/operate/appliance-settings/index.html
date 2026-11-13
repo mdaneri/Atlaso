@@ -4557,8 +4557,10 @@ listing. The available version describes the verified offline payload, even when
 prevents maintenance.</p>
 <p>When the compatible verified offline package closure is available, an administrator can review its package and
 service plan and explicitly queue installation or repair. Package maintenance runs as a serialized, audited background
-task; follow its progress and final result in Tasks. Repeat the check after an interrupted or partial failure. A
-successful package command alone does not prove the service is healthy. The task preserves the appliance's selected
+task. While a task is pending or running, Hardware keeps the task link visible and disables guest-tools maintenance
+actions. Follow the result in <strong>Tasks</strong>, then select <strong>Refresh status</strong> on Hardware to verify the latest state. Repeat
+the check after an interrupted or partial failure. A successful package command alone does not prove the service is
+healthy. The task preserves the appliance's selected
 clock authority; it does not introduce another time-source setting. Guest-tools maintenance retains its own result
 record and preserves the last Appliance Update evidence. See <a href="../../services/ntp/#appliance-clock-source">Appliance time source</a>.</p>
 <p>The retained closure supplies offline dependencies, while the package plan accounts for what is already installed.
