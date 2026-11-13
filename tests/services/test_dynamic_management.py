@@ -911,7 +911,11 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
     assert receipts[-1]["apipa_addresses"] == ["169.254.20.10"]
     assert publications[-1][0]["fqdn"] == "applied.atlaso.internal"
     assert publications[-1][0]["management_interface"] == current_name
-    first = x509.load_pem_x509_certificate(cert_path.read_bytes())
+    import ssl
+
+    installed_pem = cert_path.read_text(encoding="utf-8")
+    first = x509.load_pem_x509_certificate(installed_pem.encode("ascii"))
+    assert ssl.PEM_cert_to_DER_cert(installed_pem) == first.public_bytes(serialization.Encoding.DER)
     assert str(first.extensions.get_extension_for_class(x509.SubjectAlternativeName).value.get_values_for_type(x509.IPAddress)[0]) == "169.254.20.10"
     checks_before_fast_path = len(upstream_checks)
     publisher.reconcile(helper, bootstrap)

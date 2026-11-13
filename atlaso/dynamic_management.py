@@ -413,7 +413,7 @@ def _reconcile_once(
                     """Replace only the management pair after its rollback snapshot is durable."""
                     assert applied_candidate is not None
                     bootstrap["write_secret_text_atomic"](key_destination, decrypt_secret(applied_candidate.private_key_encrypted))
-                    bootstrap["write_text_atomic"](cert_destination, applied_candidate.chain_pem, mode=0o644)
+                    bootstrap["write_text_atomic"](cert_destination, applied_candidate.certificate_pem, mode=0o644)
 
                 material_writer = install_pair
                 published["leaf_fingerprint"] = applied_candidate.fingerprint
