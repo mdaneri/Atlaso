@@ -5125,7 +5125,12 @@ def test_console_accepts_only_task_bound_live_ipv4ll(client, monkeypatch, change
         issued = {}
 
         def issue(_db, **kwargs):
-            """Capture the isolated certificate projection."""
+            """Capture the isolated certificate projection.
+
+            Args:
+                _db: Unused test database session.
+                **kwargs: Certificate issuance options containing the management snapshot.
+            """
             issued.update(kwargs["management_snapshot"])
             return []
 

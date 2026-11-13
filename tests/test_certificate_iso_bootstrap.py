@@ -63,7 +63,12 @@ def test_guest_identity_validates_real_asset_marker_after_active_wheel_measureme
 
 @pytest.mark.parametrize("changed_payload", [False, True])
 def test_guest_identity_rechecks_ova_wheel_at_the_private_address(monkeypatch, changed_payload):
-    """Exercise the actual encoded OVA inspection program with a synthetic guest."""
+    """Exercise the actual encoded OVA inspection program with a synthetic guest.
+
+    Args:
+        monkeypatch: Pytest fixture for installing synthetic guest responses.
+        changed_payload: Whether the returned wheel payload digest differs from the original.
+    """
     from scripts.interop import certificate_ova_identity
 
     address = "192.168.77.10"
@@ -84,6 +89,13 @@ def test_guest_identity_rechecks_ova_wheel_at_the_private_address(monkeypatch, c
     programs = []
 
     def read(_session, command, _password):
+        """Decode the command sent to the synthetic guest.
+
+        Args:
+            _session: Unused synthetic guest session.
+            command: Read-only guest command under test.
+            _password: Unused synthetic sudo password.
+        """
         programs.append(command)
         if len(programs) == 1:
             return b'{"state":"proven-absent"}'
@@ -97,6 +109,12 @@ def test_guest_identity_rechecks_ova_wheel_at_the_private_address(monkeypatch, c
         assert "raise SystemExit(main())" not in definitions
 
         def measure(wheel, requested_address):
+            """Return synthetic measurements for the requested wheel and address.
+
+            Args:
+                wheel: Original remote wheel path.
+                requested_address: Address at which the guest is being verified.
+            """
             assert wheel == Path(remote)
             assert requested_address == address
             value = dict(facts, address=address)

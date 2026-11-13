@@ -278,7 +278,12 @@ def _rewrite_reference(inputs: SimpleNamespace, record_name: str, reference_name
 
 
 def test_inspect_inputs_dispatches_ova_and_retains_peer_media_checks(admitted_inputs, monkeypatch):
-    """Only the selected OVA receipt verifier may admit the appliance."""
+    """Only the selected OVA receipt verifier may admit the appliance.
+
+    Args:
+        admitted_inputs: Original synthetic appliance and peer-media inputs.
+        monkeypatch: Pytest fixture for recording calls to OVA admission.
+    """
     from scripts.interop import certificate_ova_identity
 
     spec = dict(admitted_inputs.spec, appliance_media="ova")
@@ -287,6 +292,14 @@ def test_inspect_inputs_dispatches_ova_and_retains_peer_media_checks(admitted_in
     calls = []
 
     def admit(plan, vmx, repository, *, mac):
+        """Record the original selectors passed to the OVA verifier.
+
+        Args:
+            plan: Factory input plan.
+            vmx: Original appliance VMX path.
+            repository: Repository containing the fixture.
+            mac: Original appliance management MAC.
+        """
         calls.append((plan, vmx, repository, mac))
         return {"directory_identity": "synthetic-original-ova"}
 
