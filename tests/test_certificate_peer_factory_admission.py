@@ -13,6 +13,7 @@ import pytest
 
 from scripts.completed_task_files import FileRefusal, WindowsFiles
 from scripts.interop import certificate_peer_factory as factory
+from scripts.virtualization.inspect_workstation_ova_disks import inspect_disks
 
 pytestmark = pytest.mark.skipif(os.name != "nt", reason="Factory admission pins native Windows file identities")
 
@@ -41,6 +42,7 @@ def _write_json(path: Path, value: dict) -> dict[str, str]:
 
 def _sparse_vmdk(
     *,
+    name: str = _VMDK_NAME,
     capacity: int = _CAPACITY_2_GIB,
     offset: int = 1,
     sectors: int = 1,
@@ -50,6 +52,7 @@ def _sparse_vmdk(
     """Build a minimal sparse VMDK header for disk-admission tests.
 
     Args:
+        name: Filename used by the embedded extent declaration.
         capacity: Declared virtual disk capacity in sectors.
         offset: Grain-table offset encoded in the sparse header.
         sectors: Grain-table extent length in sectors.
@@ -64,7 +67,7 @@ def _sparse_vmdk(
         'createType="monolithicSparse"\n'
         '\n'
         '# Extent description\n'
-        f'RW {capacity} SPARSE "{_VMDK_NAME}"\n'
+        f'RW {capacity} SPARSE "{name}"\n'
     )
     encoded = text.encode("ascii")
     header = bytearray(512)
@@ -74,6 +77,48 @@ def _sparse_vmdk(
     struct.pack_into("<Q", header, 36, sectors)
     descriptor_bytes = encoded[: max(0, sectors * 512)]
     return bytes(header) + descriptor_bytes.ljust(sectors * 512, b"\0")
+
+
+@pytest.mark.parametrize(
+    "damage", [None, "extra_slot", "wrong_capacity", "same_disk", "parent", "duplicate", "ambiguous_parent"],
+)
+def test_inspect_imported_ova_disks(tmp_path: Path, damage: str | None) -> None:
+    """Inspect all materialized OVA backings and refuse ambiguous attachments.
+
+    Args:
+        tmp_path: Owned directory for the synthetic VMX and VMDK files.
+        damage: Mutation applied to a conforming disk layout.
+    """
+    vmx = tmp_path / "imported.vmx"
+    lines = ['scsi0.present = "TRUE"', 'scsi0.virtualDev = "pvscsi"']
+    for slot, gib in enumerate((40, 20, 500, 500)):
+        name = f"imported-disk{slot}.vmdk"
+        sectors = (gib - (slot == 3 and damage == "wrong_capacity")) * 1024**3 // 512
+        vmdk = _sparse_vmdk(name=name, capacity=sectors)
+        if slot == 3 and damage == "parent":
+            vmdk = vmdk.replace(b"parentCID=ffffffff", b"parentCID=00000000")
+        if slot == 3 and damage == "ambiguous_parent":
+            vmdk = vmdk.rstrip(b"\0") + b" ParentCID = 00000000\n"
+            vmdk = vmdk.ljust(1024, b"\0")
+        (tmp_path / name).write_bytes(vmdk)
+        if slot == 3 and damage == "same_disk":
+            name = "imported-disk2.vmdk"
+        lines.extend([f'scsi0:{slot}.present = "TRUE"', f'scsi0:{slot}.fileName = "{name}"'])
+    if damage == "extra_slot":
+        lines.append('sata0:0.present = "TRUE"')
+    if damage == "duplicate":
+        lines.append('SCSI0:0.FILENAME = "unexpected.vmdk"')
+    vmx.write_text("\n".join(lines), encoding="utf-8")
+
+    if damage:
+        with pytest.raises(factory.Refusal):
+            inspect_disks(vmx)
+    else:
+        result = inspect_disks(vmx)
+        assert result["vmx_sha256"] == hashlib.sha256(vmx.read_bytes()).hexdigest()
+        assert [disk["role"] for disk in result["disks"]] == [
+            "photon_os", "atlaso_system", "atlaso-depot", "atlaso-backups",
+        ]
 
 
 @pytest.fixture

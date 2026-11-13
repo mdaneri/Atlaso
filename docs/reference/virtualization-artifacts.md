@@ -395,6 +395,12 @@ Import the OVA directly in VMware Workstation or another compatible VMware OVF d
 NIC to the management network and the second NIC to the services network. Do not change the disk controller, slots, or
 capacities.
 
+For a task-owned local import, the controller can inspect the powered-off VMX using
+`python -m scripts.virtualization.inspect_workstation_ova_disks <absolute-vmx-path>`.
+The inspector checks the four SCSI slots, virtual capacities and distinct local sparse VMDKs
+before first boot. The controller retains the original import and directory receipts and
+verifies network isolation separately.
+
 VMware deployment continues through OVF-property customization. The first-boot selector retains `open-vm-tools`,
 discards the unused offline QEMU and Hyper-V RPM payloads, and records success before Atlaso services start.
 Supply a unique FQDN, Atlaso administrator password, and root password in the OVF deployment properties. The release

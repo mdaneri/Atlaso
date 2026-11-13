@@ -54,8 +54,8 @@ def bound_json(reference: dict) -> dict:
     return value
 
 
-def standalone_disk(path: Path) -> None:
-    """Refuse external extents or parent chains before any disk-tool execution.
+def standalone_disk(path: Path) -> int:
+    """Return virtual capacity in bytes for a single-file sparse disk with no parent.
 
     Args:
         path: Checksum-admitted single-file sparse source disk.
@@ -70,13 +70,16 @@ def standalone_disk(path: Path) -> None:
             raise Refusal("peer_source_descriptor_invalid")
         stream.seek(offset * 512)
         descriptor = stream.read(sectors * 512).rstrip(b"\0").decode("ascii")
-    extents = re.findall(r'^(?:RW|RDONLY|NOACCESS)\s+.*$', descriptor, re.M)
+    extents = re.findall(r'^[ \t]*(?:RW|RDONLY|NOACCESS)[ \t]+.*$', descriptor, re.I | re.M)
     expected = rf'RW {capacity} SPARSE "{re.escape(path.name)}"'
-    if (len(extents) != 1 or not re.fullmatch(expected, extents[0].strip())
-            or not re.search(r'^createType="monolithicSparse"\s*$', descriptor, re.M)
-            or not re.search(r'^parentCID=ffffffff\s*$', descriptor, re.M)
-            or "parentFileNameHint" in descriptor):
+    disk_types = re.findall(r"^[ \t]*createType[ \t]*=(.*)$", descriptor, re.I | re.M)
+    parents = re.findall(r"^[ \t]*parentCID[ \t]*=(.*)$", descriptor, re.I | re.M)
+    if (capacity == 0 or len(extents) != 1 or not re.fullmatch(expected, extents[0].strip())
+            or [value.strip() for value in disk_types] != ['"monolithicSparse"']
+            or [value.strip() for value in parents] != ["ffffffff"]
+            or re.search(r"^[ \t]*parentFileNameHint[ \t]*=", descriptor, re.I | re.M)):
         raise Refusal("peer_source_has_external_extent_or_parent")
+    return capacity * 512
 
 
 def require_ancestor(repository: Path, source: str, head: str) -> None:

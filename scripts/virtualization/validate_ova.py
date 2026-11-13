@@ -36,6 +36,7 @@ EXPECTED_EMPTY_DISKS = {
     2: ("atlaso-depot", "Hard disk 3 - VCF Offline Depot"),
     3: ("atlaso-backups", "Hard disk 4 - VCF Backups"),
 }
+EXPECTED_EMPTY_DISK_BYTES = 500 * 1024**3
 EXPECTED_NETWORKS = ("Atlaso Management Network", "Atlaso Services Network")
 SECURE_BOOT_CONFIG_KEYS = (
     "bootOptions.efiSecureBootEnabled",
@@ -321,7 +322,7 @@ def _validate_topology(ovf_path: Path) -> dict[int, dict[str, Any]]:
             or disk["file_ref"]
             or disk["parent_ref"]
             or disk["populated_size"]
-            or disk["capacity_bytes"] != 500 * 1024**3
+            or disk["capacity_bytes"] != EXPECTED_EMPTY_DISK_BYTES
             or disk["format"] != payload_format
         ):
             raise OvaValidationError(f"OVF empty data disk at SCSI slot {slot} violates the 500 GiB role contract.")
