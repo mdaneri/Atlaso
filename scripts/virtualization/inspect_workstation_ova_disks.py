@@ -80,7 +80,7 @@ def inspect_disks(vmx: Path) -> dict[str, object]:
             device = f"scsi0:{slot}"
             name = values.get(f"{device}.filename", "")
             device_type = values.get(f"{device}.devicetype", "scsi-harddisk")
-            if not _DISK_NAME.fullmatch(name) or device_type.lower() != "scsi-harddisk":
+            if not _DISK_NAME.fullmatch(name) or device_type.lower() not in {"disk", "scsi-harddisk"}:
                 raise Refusal("imported_ova_disk_backing_invalid")
             disk = vmx.parent / name
             _, identity, _ = pins.enter_context(files.opened(disk))

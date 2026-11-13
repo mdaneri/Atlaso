@@ -80,7 +80,7 @@ def _sparse_vmdk(
 
 
 @pytest.mark.parametrize(
-    "damage", [None, "extra_slot", "wrong_capacity", "same_disk", "parent", "duplicate", "ambiguous_parent"],
+    "damage", [None, "extra_slot", "wrong_capacity", "same_disk", "parent", "duplicate", "ambiguous_parent", "cdrom"],
 )
 def test_inspect_imported_ova_disks(tmp_path: Path, damage: str | None) -> None:
     """Inspect all materialized OVA backings and refuse ambiguous attachments.
@@ -104,6 +104,10 @@ def test_inspect_imported_ova_disks(tmp_path: Path, damage: str | None) -> None:
         if slot == 3 and damage == "same_disk":
             name = "imported-disk2.vmdk"
         lines.extend([f'scsi0:{slot}.present = "TRUE"', f'scsi0:{slot}.fileName = "{name}"'])
+        if slot == 3 and damage == "cdrom":
+            lines.append(f'scsi0:{slot}.deviceType = "cdrom-image"')
+        elif slot % 2 == 0:
+            lines.append(f'scsi0:{slot}.deviceType = "disk"')
     if damage == "extra_slot":
         lines.append('sata0:0.present = "TRUE"')
     if damage == "duplicate":
