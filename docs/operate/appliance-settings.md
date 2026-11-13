@@ -96,8 +96,10 @@ prevents maintenance.
 
 When the compatible verified offline package closure is available, an administrator can review its package and
 service plan and explicitly queue installation or repair. Package maintenance runs as a serialized, audited background
-task; follow its progress and final result in Tasks. Repeat the check after an interrupted or partial failure. A
-successful package command alone does not prove the service is healthy. The task preserves the appliance's selected
+task. While a task is pending or running, Hardware keeps the task link visible and disables guest-tools maintenance
+actions. Follow the result in **Tasks**, then select **Refresh status** on Hardware to verify the latest state. Repeat
+the check after an interrupted or partial failure. A successful package command alone does not prove the service is
+healthy. The task preserves the appliance's selected
 clock authority; it does not introduce another time-source setting. Guest-tools maintenance retains its own result
 record and preserves the last Appliance Update evidence. See [Appliance time source](../services/ntp.md#appliance-clock-source).
 
