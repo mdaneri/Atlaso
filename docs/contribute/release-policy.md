@@ -63,16 +63,19 @@ Each successful automatic-main wheel handoff starts the separately protected **P
 The workflow requires the retained matching artifact, validates its GitHub run identities and
 embedded build metadata, fails closed on collisions, and records that identity inside the signed appliance bundle. It
 does not rebuild or substitute the application wheel. It retains the exact CPython 3.14 wheelhouse, signing,
-immutable-tag/Release, Pages serialization, automatic `development` advancement, and live-verification gates. Manual
+immutable-tag/Release, Pages serialization, and live-verification gates. Starting with `v0.9.500`, each software
+release automatically stages its signed installation ISO and software bundle in one hidden GitHub Release draft.
+The protected maintainer approval dispatch validates the exact ISO digest and acceptance evidence before making the
+release public and advancing `development`. See the
+[ISO release procedure](../reference/installation-iso.md#stage-and-publish-a-standard-release). Manual
 dispatch with the exact full SHA of a successful `main` push CI run remains available for idempotent recovery. After
 the 90-day retention window, manually dispatch **Replay Python wheel** from `main` with the exact commit plus its
 successful source CI run ID
 and attempt. That admission workflow revalidates the evidence and current-`main` reachability without checking out or
 executing the target, then emits only a one-day canonical replay request. Its completed `workflow_run` causes the
 read-only **Publish Python wheel** workflow to revalidate the request and publish the replacement handoff. Replay does
-not implicitly advance an older release; use the exact-SHA software-release dispatch for recovery. If the immutable
-software Release already exists, that workflow verifies and reuses its signed
-assets only after the replay wheel matches the bundled wheel byte for byte, preserving the original signed provenance
+not implicitly advance an older release; use the exact-SHA software-release dispatch for recovery. When a draft or
+public release already exists, the workflow verifies and reuses its signed assets only after the replay wheel matches the bundled wheel byte for byte, preserving the original signed provenance
 for channel recovery. Never rebuild or rename a wheel locally.
 
 Release notice generation identifies each wheel from its top-level `.dist-info/METADATA` file. Nested metadata for

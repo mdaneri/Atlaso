@@ -12,13 +12,26 @@ on:
         description: Successful main CI commit to publish or recover
         required: true
         type: string
+      validated_iso_sha256:
+        description: Exact staged ISO SHA-256 approved after installation acceptance (leave blank to stage)
+        required: false
+        type: string
+      installation_acceptance_evidence:
+        description: Atlaso issue or PR URL recording acceptance for that exact ISO
+        required: false
+        type: string
 
 permissions:
   actions: read
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 concurrency:
   group: appliance-release-${{ inputs.release_sha || github.event.workflow_run.id }}
+  queue: max
   cancel-in-progress: false
 
 jobs:
@@ -33,6 +46,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       release_sha: ${{ steps.target.outputs.release_sha }}
+      approve: ${{ steps.target.outputs.approve }}
+      version: ${{ steps.target.outputs.version }}
     steps:
       - name: Check out protected main admission tooling
         uses: actions/checkout@v7
@@ -45,6 +60,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_SHA: ${{ inputs.release_sha }}
+          VALIDATED_ISO_SHA256: ${{ inputs.validated_iso_sha256 }}
+          INSTALLATION_ACCEPTANCE_EVIDENCE: ${{ inputs.installation_acceptance_evidence }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
           PUBLISHER_RUN_ID: ${{ github.event.workflow_run.id }}
           PUBLISHER_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
         run: |
@@ -103,8 +121,25 @@ jobs:
             echo "::error::Release SHA must be a full lowercase hexadecimal commit."
             exit 1
           fi
-          git fetch origin main --no-tags
+          git fetch origin refs/heads/main:refs/remotes/origin/main --no-tags
           git merge-base --is-ancestor "$RELEASE_SHA" origin/main
+          VERSION="$(git show "${RELEASE_SHA}:pyproject.toml" | python -c 'import sys,tomllib; print(tomllib.loads(sys.stdin.read())["project"]["version"])')"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          APPROVE=false
+          if test -n "$VALIDATED_ISO_SHA256" || test -n "$INSTALLATION_ACCEPTANCE_EVIDENCE"; then
+            [[ "$VALIDATED_ISO_SHA256" =~ ^[0-9a-f]{64}$ ]]
+            test -n "$INSTALLATION_ACCEPTANCE_EVIDENCE"
+            ROLE="$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$TRIGGERING_ACTOR/permission" --jq .role_name)"
+            case "$ROLE" in admin|maintain) ;; *) echo '::error::ISO acceptance requires a repository maintainer.'; exit 1 ;; esac
+            RUNS="$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" \
+              -f head_sha="$RELEASE_SHA" -f branch=main -f event=push -f status=success -f per_page=100)"
+            jq -e --arg sha "$RELEASE_SHA" --arg repo "$GITHUB_REPOSITORY" \
+              'any(.workflow_runs[]; .head_sha == $sha and .head_repository.full_name == $repo and
+                .head_branch == "main" and .event == "push" and .conclusion == "success")' <<<"$RUNS"
+            APPROVE=true
+          fi
+          echo "approve=$APPROVE" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           printf '{"release_sha":"%s"}\n' "$RELEASE_SHA" > validated-release-request.json
           echo "release_sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
       - name: Upload the validated release request
@@ -170,6 +205,7 @@ jobs:
     name: Resolve immutable release inputs
     needs:
       - prepare
+    if: needs.prepare.outputs.approve != 'true'
     runs-on: ubuntu-latest
     outputs:
       existing_release: ${{ steps.existing_release.outputs.present }}
@@ -204,7 +240,7 @@ jobs:
         env:
           RELEASE_SHA: ${{ steps.target.outputs.release_sha }}
         run: |
-          git fetch origin main --no-tags
+          git fetch origin refs/heads/main:refs/remotes/origin/main --no-tags
           git merge-base --is-ancestor "$RELEASE_SHA" origin/main
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -309,97 +345,61 @@ jobs:
           test "$(jq -r .head_repository.full_name <<<"$PUBLISHER_STATE")" = "${{ github.repository }}"
           test "$(jq -r .head_branch <<<"$PUBLISHER_STATE")" = main
           test "$(jq -r .conclusion <<<"$PUBLISHER_STATE")" = success
-      - name: Preserve an existing immutable release
+      - name: Check whether the exact release exists
         id: existing_release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_SHA: ${{ steps.target.outputs.release_sha }}
-          RELEASE_KEY_ID: atlaso-release-2026-01
         run: |
           VERSION="$(jq -r .version dist/application-wheel/wheel-identity.json)"
-          test -n "$VERSION"
-          TAG="v${VERSION}"
-          if ! gh release view "$TAG" --json tagName >/dev/null 2>&1; then
-            echo "present=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          mkdir -p dist/release
-          gh release download "$TAG" --dir dist/release
-          test "$(find dist/release -maxdepth 1 -type f -printf '%f\n' | sort)" = "$(printf '%s\n' \
-            "atlaso-appliance-${VERSION}.tar.gz" \
-            "atlaso-third-party-notices-${VERSION}.md" \
-            release-manifest.json \
-            release-manifest.json.sig | sort)"
-          python scripts/prepare_virtualization_source.py \
-            --manifest dist/release/release-manifest.json \
-            --signature dist/release/release-manifest.json.sig \
-            --bundle "dist/release/atlaso-appliance-${VERSION}.tar.gz" \
-            --trust-key "image/common/update-trust/${RELEASE_KEY_ID}.pem" \
-            --output "$RUNNER_TEMP/existing-release-inputs" \
-            --expected-version "$VERSION" \
-            --expected-commit "$RELEASE_SHA" \
-            > "$RUNNER_TEMP/existing-release-inputs.json"
-          EXISTING_WHEEL="$(jq -r .application_wheel "$RUNNER_TEMP/existing-release-inputs.json")"
-          SELECTED_WHEEL="$(find dist/application-wheel -maxdepth 1 -type f -name '*.whl')"
-          EXISTING_NOTICE="dist/release/atlaso-third-party-notices-${VERSION}.md"
-          NOTICE_SHA="$(jq -er '.content_hashes["THIRD_PARTY_NOTICES.md"] | select(type == "string" and test("^[0-9a-f]{64}$"))' dist/release/release-manifest.json)"
-          test -f "$EXISTING_WHEEL"
-          test -f "$SELECTED_WHEEL"
-          test -f "$EXISTING_NOTICE"
-          test "$(sha256sum "$EXISTING_WHEEL" | cut -d' ' -f1)" = \
-            "$(sha256sum "$SELECTED_WHEEL" | cut -d' ' -f1)"
-          test "$(sha256sum "$EXISTING_NOTICE" | cut -d' ' -f1)" = "$NOTICE_SHA"
-          echo "present=true" >> "$GITHUB_OUTPUT"
+          OWNER="${GITHUB_REPOSITORY%%/*}"
+          REPO="${GITHUB_REPOSITORY#*/}"
+          STATE="$(gh api graphql \
+            -f query='query($owner:String!,$repo:String!,$tag:String!){repository(owner:$owner,name:$repo){release(tagName:$tag){isDraft}}}' \
+            -f owner="$OWNER" -f repo="$REPO" -f tag="v$VERSION")"
+          jq -e '.data.repository != null' <<<"$STATE"
+          echo "present=$(jq '.data.repository.release != null' <<<"$STATE")" >> "$GITHUB_OUTPUT"
       - name: Upload verified release inputs
         uses: actions/upload-artifact@v7
         with:
           name: verified-release-inputs
-          path: |
-            dist/application-wheel
-            dist/release
+          path: dist/application-wheel
           if-no-files-found: error
           retention-days: 1
 
-  publish:
-    name: Sign and publish release
-    needs:
-      - prepare
-      - release_inputs
-      - wheelhouse
+  stage:
+    name: Build or verify the signed release draft
+    needs: [prepare, release_inputs, wheelhouse]
     if: >-
-      always() &&
+      ${{ !cancelled() &&
       needs.prepare.result == 'success' &&
       needs.release_inputs.result == 'success' &&
-      (needs.release_inputs.outputs.existing_release == 'true' || needs.wheelhouse.result == 'success')
+      (needs.release_inputs.outputs.existing_release == 'true' || needs.wheelhouse.result == 'success') }}
     runs-on: ubuntu-latest
+    timeout-minutes: 180
     concurrency:
-      group: atlaso-github-pages
+      group: atlaso-installation-stage-v${{ needs.prepare.outputs.version }}
       queue: max
       cancel-in-progress: false
     environment: appliance-release
     permissions:
       actions: read
       contents: write
+    outputs:
+      legacy: ${{ steps.state.outputs.legacy }}
+    env:
+      RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      RELEASE_KEY_ID: atlaso-release-2026-01
     steps:
-      - name: Check out the successful main commit
-        uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.prepare.outputs.release_sha }}
-          fetch-depth: 0
       - name: Check out protected release tooling
         uses: actions/checkout@v7
         with:
           ref: ${{ github.workflow_sha }}
           fetch-depth: 0
-          persist-credentials: false
-          path: protected-tooling
-      - name: Confirm the commit is still on main
-        env:
-          RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
+      - name: Confirm target is still on main
         run: |
-          git fetch origin main --no-tags
+          git fetch origin refs/heads/main:refs/remotes/origin/main --no-tags
           git merge-base --is-ancestor "$RELEASE_SHA" origin/main
-          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
@@ -408,75 +408,210 @@ jobs:
         env:
           PIP_CONFIG_FILE: /dev/null
         run: python -m pip install --require-hashes --requirement requirements-release-tools.lock
-      - name: Download verified release inputs
+      - name: Download verified wheel handoff
         uses: actions/download-artifact@v8
         with:
           name: verified-release-inputs
-          path: dist
-      - name: Confirm verified release input transfer
+          path: dist/application-wheel
+      - name: Reuse an existing verified draft or release
+        id: state
         env:
-          EXISTING_RELEASE: ${{ needs.release_inputs.outputs.existing_release }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          test "$(find dist/application-wheel -maxdepth 1 -type f -name 'atlaso-*.whl' | wc -l)" -eq 1
-          test -s dist/application-wheel/wheel-identity.json
-          if test "$EXISTING_RELEASE" = true; then
-            VERSION="$(python scripts/version.py get)"
-            test "$(find dist/release -maxdepth 1 -type f -printf '%f\n' | sort)" = "$(printf '%s\n' \
-              "atlaso-appliance-${VERSION}.tar.gz" \
-              "atlaso-third-party-notices-${VERSION}.md" \
-              release-manifest.json \
-              release-manifest.json.sig | sort)"
-          else
-            test ! -d dist/release || test -z "$(find dist/release -type f -print -quit)"
+          STATE="$(python -m scripts.installation.combined_release state --tag "v$VERSION" --commit "$RELEASE_SHA")"
+          echo "state=$STATE" >> "$GITHUB_OUTPUT"
+          if test "$STATE" != absent; then
+            mapfile -t WHEELS < <(find dist/application-wheel -maxdepth 1 -type f -name 'atlaso-*.whl')
+            test "${#WHEELS[@]}" -eq 1
+            ISO="$(python -m scripts.installation.combined_release verify --tag "v$VERSION" --commit "$RELEASE_SHA" \
+              --assets "$RUNNER_TEMP/existing-release" --scratch "$RUNNER_TEMP/existing-verification" --wheel "${WHEELS[0]}")"
+            if test "$ISO" = legacy; then
+              echo "legacy=true" >> "$GITHUB_OUTPUT"
+            else
+              printf 'Verified %s %s. ISO SHA-256: \`%s\`\n' "$STATE" "v$VERSION" "$ISO" >> "$GITHUB_STEP_SUMMARY"
+            fi
           fi
+      - name: Check out exact software source
+        if: steps.state.outputs.state == 'absent'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.release_sha }}
+          persist-credentials: false
+          path: target-source
       - name: Download CPython 3.14 wheelhouse
-        if: needs.release_inputs.outputs.existing_release != 'true'
+        if: steps.state.outputs.state == 'absent'
         uses: actions/download-artifact@v8
         with:
           name: wheelhouse-cp314
           path: wheelhouses/cp314
-      - name: Materialize the protected signing key
+      - name: Admit protected native inputs and pinned Photon media
+        if: steps.state.outputs.state == 'absent'
+        env:
+          INSTALLATION_CAPTURE_URL: ${{ vars.INSTALLATION_CAPTURE_URL }}
+          INSTALLATION_CAPTURE_SHA256: ${{ vars.INSTALLATION_CAPTURE_SHA256 }}
+          INSTALLATION_CAPTURE_TOKEN: ${{ secrets.INSTALLATION_CAPTURE_TOKEN }}
+        run: |
+          python -m scripts.installation.release_capture fetch --archive "$RUNNER_TEMP/capture.tar.gz" \
+            --output "$RUNNER_TEMP/capture" --target target-source
+          rm -- "$RUNNER_TEMP/capture.tar.gz"
+          curl --fail --location --proto '=https' --tlsv1.2 --output "$RUNNER_TEMP/photon.iso" \
+            https://packages.broadcom.com/photon/5.0/GA/iso/photon-5.0-dde71ec57.x86_64.iso
+          python -m scripts.installation.release_capture check-capacity \
+            --capture "$RUNNER_TEMP/capture" --source-iso "$RUNNER_TEMP/photon.iso"
+      - name: Install native ISO build tools
+        if: steps.state.outputs.state == 'absent'
+        env:
+          PIP_CONFIG_FILE: /dev/null
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends rpm rpm2cpio cpio createrepo-c
+          python -m pip install --require-hashes --requirement target-source/requirements-appliance.lock
+          python -m pip install --require-hashes --requirement requirements-release-tools.lock
+      - name: Build and sign the exact software bundle
+        if: steps.state.outputs.state == 'absent'
         env:
           RELEASE_SIGNING_PRIVATE_KEY: ${{ secrets.RELEASE_SIGNING_PRIVATE_KEY }}
         run: |
           test -n "$RELEASE_SIGNING_PRIVATE_KEY"
           umask 077
           printf '%s\n' "$RELEASE_SIGNING_PRIVATE_KEY" > "$RUNNER_TEMP/release-signing-key.pem"
-      - name: Build and sign the immutable release
-        if: needs.release_inputs.outputs.existing_release != 'true'
-        env:
-          RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
-          RELEASE_KEY_ID: atlaso-release-2026-01
-        run: |
+          trap 'rm -f -- "$RUNNER_TEMP/release-signing-key.pem"' EXIT
+          unset RELEASE_SIGNING_PRIVATE_KEY
+          cd target-source
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
           BUILT_AT="$(git show -s --format=%cI "$RELEASE_SHA")"
           python scripts/build_release_bundle.py \
-            --wheelhouses wheelhouses \
-            --application-wheel-root dist/application-wheel \
-            --signing-key "$RUNNER_TEMP/release-signing-key.pem" \
-            --signing-key-id "$RELEASE_KEY_ID" \
-            --commit "$RELEASE_SHA" \
-            --built-at "$BUILT_AT"
-      - name: Publish the idempotent tag and GitHub Release
+            --wheelhouses ../wheelhouses --application-wheel-root ../dist/application-wheel \
+            --signing-key "$RUNNER_TEMP/release-signing-key.pem" --signing-key-id "$RELEASE_KEY_ID" \
+            --commit "$RELEASE_SHA" --built-at "$BUILT_AT" --repository "$GITHUB_REPOSITORY"
+      - name: Prepare and independently validate offline installer inputs
+        if: steps.state.outputs.state == 'absent'
+        run: |
+          mv target-source/dist/release dist/release
+          python scripts/prepare_virtualization_source.py \
+            --manifest dist/release/release-manifest.json --signature dist/release/release-manifest.json.sig \
+            --bundle "dist/release/atlaso-appliance-$VERSION.tar.gz" \
+            --trust-key "image/common/update-trust/$RELEASE_KEY_ID.pem" \
+            --output "$RUNNER_TEMP/software" --expected-version "$VERSION" --expected-commit "$RELEASE_SHA"
+          python scripts/build_installation_iso.py prepare --commit "$RELEASE_SHA" --version "$VERSION" \
+            --software "$RUNNER_TEMP/software" --payload "$RUNNER_TEMP/payload" \
+            --rpms "$RUNNER_TEMP/capture/rpms" --powercli "$RUNNER_TEMP/capture/powercli"
+          mkdir "$RUNNER_TEMP/iso-validation"
+          python scripts/build_installation_iso.py validate --commit "$RELEASE_SHA" --version "$VERSION" \
+            --payload "$RUNNER_TEMP/payload" --scratch "$RUNNER_TEMP/iso-validation"
+          rm -rf -- "$RUNNER_TEMP/capture" "$RUNNER_TEMP/software" "$RUNNER_TEMP/iso-validation"
+          python -m scripts.installation.release_capture check-capacity \
+            --payload "$RUNNER_TEMP/payload" --source-iso "$RUNNER_TEMP/photon.iso"
+      - name: Sign and assemble the offline ISO
+        if: steps.state.outputs.state == 'absent'
+        env:
+          RELEASE_SIGNING_PRIVATE_KEY: ${{ secrets.RELEASE_SIGNING_PRIVATE_KEY }}
+        run: |
+          test -n "$RELEASE_SIGNING_PRIVATE_KEY"
+          umask 077
+          printf '%s\n' "$RELEASE_SIGNING_PRIVATE_KEY" > "$RUNNER_TEMP/release-signing-key.pem"
+          trap 'rm -f -- "$RUNNER_TEMP/release-signing-key.pem"' EXIT
+          unset RELEASE_SIGNING_PRIVATE_KEY
+          mkdir "$RUNNER_TEMP/iso-assets" "$RUNNER_TEMP/iso-build"
+          python scripts/build_installation_iso.py finalize --commit "$RELEASE_SHA" --version "$VERSION" \
+            --payload "$RUNNER_TEMP/payload" --source-iso "$RUNNER_TEMP/photon.iso" \
+            --output "$RUNNER_TEMP/iso-assets" --scratch "$RUNNER_TEMP/iso-build" \
+            --signing-key "$RUNNER_TEMP/release-signing-key.pem" --bind-software
+          mv "$RUNNER_TEMP/iso-assets/"* dist/release/
+          rm -- "$RUNNER_TEMP/iso-build/atlaso-installation-$VERSION-x86_64.iso"
+      - name: Stage combined draft and report the approval checksum
+        if: steps.state.outputs.state == 'absent'
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
         run: |
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          python scripts/publish_release.py --commit "$RELEASE_SHA" --assets dist/release
-      - name: Advance the signed development channel
+          ISO="$(python -m scripts.installation.combined_release stage --tag "v$VERSION" --commit "$RELEASE_SHA" \
+            --assets dist/release --scratch "$RUNNER_TEMP/verify-staged")"
+          printf 'Staged draft %s. ISO SHA-256: \`%s\`\n' "v$VERSION" "$ISO" >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    name: Publish the approved release and advance development
+    needs: [prepare, stage]
+    if: >-
+      ${{ !cancelled() &&
+      needs.prepare.result == 'success' &&
+      (needs.prepare.outputs.approve == 'true' || (needs.stage.result == 'success' && needs.stage.outputs.legacy == 'true')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    concurrency:
+      group: atlaso-github-pages
+      queue: max
+      cancel-in-progress: false
+    environment: appliance-release
+    permissions:
+      contents: write
+      issues: read
+      pull-requests: read
+    env:
+      RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      RELEASE_KEY_ID: atlaso-release-2026-01
+    steps:
+      - name: Check out protected release tooling
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Confirm the commit is still on main
+        run: |
+          git fetch origin refs/heads/main:refs/remotes/origin/main --no-tags
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+      - name: Install locked release tooling
         env:
-          RELEASE_KEY_ID: atlaso-release-2026-01
+          PIP_CONFIG_FILE: /dev/null
+        run: python -m pip install --require-hashes --requirement requirements-release-tools.lock
+      - name: Verify exact media approval and the published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VALIDATED_ISO_SHA256: ${{ inputs.validated_iso_sha256 }}
+          INSTALLATION_ACCEPTANCE_EVIDENCE: ${{ inputs.installation_acceptance_evidence }}
         run: |
-          VERSION="$(python scripts/version.py get)"
-          SITE_ROOT="$RUNNER_TEMP/site"
-          git clone --branch gh-pages --single-branch \
-            "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" \
-            "$SITE_ROOT" 2>/dev/null || git init "$SITE_ROOT"
-          if test "$VERSION" = "0.9.18"; then
-            git -C "$SITE_ROOT" rm -r --ignore-unmatch .
+          mkdir dist
+          python -m scripts.installation.combined_release publish --tag "v$VERSION" --commit "$RELEASE_SHA" \
+            --assets dist/release --scratch "$RUNNER_TEMP/publication-verification"
+      - name: Read the authenticated development pointer
+        id: development
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          AUTH="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$AUTH"
+          GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader \
+            GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $AUTH" \
+            git clone --branch gh-pages --single-branch \
+              "https://github.com/$GITHUB_REPOSITORY.git" "$RUNNER_TEMP/site"
+          DECISION="$(python -m scripts.installation.combined_release channel --tag "v$VERSION" --commit "$RELEASE_SHA" \
+            --assets "$RUNNER_TEMP/site/updates/channels/development")"
+          echo "decision=$DECISION" >> "$GITHUB_OUTPUT"
+          if test "$DECISION" = skip; then
+            echo "The authenticated development pointer already references a newer release." >> "$GITHUB_STEP_SUMMARY"
           fi
-          python protected-tooling/scripts/promote_release_channel.py \
+      - name: Materialize the protected signing key
+        if: steps.development.outputs.decision == 'advance'
+        env:
+          RELEASE_SIGNING_PRIVATE_KEY: ${{ secrets.RELEASE_SIGNING_PRIVATE_KEY }}
+        run: |
+          test -n "$RELEASE_SIGNING_PRIVATE_KEY"
+          umask 077
+          printf '%s\n' "$RELEASE_SIGNING_PRIVATE_KEY" > "$RUNNER_TEMP/release-signing-key.pem"
+      - name: Advance the signed development channel
+        if: steps.development.outputs.decision == 'advance'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SITE_ROOT="$RUNNER_TEMP/site"
+          test -s "$SITE_ROOT/updates/channels/stable/manifest.json"
+          test -s "$SITE_ROOT/updates/channels/stable/manifest.json.sig"
+          python scripts/promote_release_channel.py \
             --channel development \
             --expected-version "$VERSION" \
             --release-manifest-url "https://github.com/${{ github.repository }}/releases/download/v${VERSION}/release-manifest.json" \
@@ -543,22 +678,20 @@ jobs:
           git -C "$SITE_ROOT" config user.name github-actions[bot]
           git -C "$SITE_ROOT" config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git -C "$SITE_ROOT" commit -m "Advance development to v${VERSION}"
-          if git -C "$SITE_ROOT" remote get-url origin >/dev/null 2>&1; then
+          AUTH="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$AUTH"
+          GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader \
+            GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $AUTH" \
             git -C "$SITE_ROOT" push origin HEAD:gh-pages
-          else
-            git -C "$SITE_ROOT" remote add origin \
-              "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
-            git -C "$SITE_ROOT" push origin HEAD:gh-pages
-          fi
       - name: Verify the published development channel
-        env:
-          RELEASE_KEY_ID: atlaso-release-2026-01
-          RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
+        if: steps.development.outputs.decision != 'skip'
         run: |
-          VERSION="$(python scripts/version.py get)"
           python scripts/check_published_release_channel.py \
             --channel-url "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/updates/channels/development/manifest.json" \
             --expected-channel development \
             --expected-version "$VERSION" \
             --expected-commit "$RELEASE_SHA" \
             --trusted-key "image/common/update-trust/${RELEASE_KEY_ID}.pem"
+      - name: Remove protected signing key
+        if: always()
+        run: rm -f -- "$RUNNER_TEMP/release-signing-key.pem"
