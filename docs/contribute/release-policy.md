@@ -63,7 +63,7 @@ Each successful automatic-main wheel handoff starts the separately protected **P
 The workflow requires the retained matching artifact, validates its GitHub run identities and
 embedded build metadata, fails closed on collisions, and records that identity inside the signed appliance bundle. It
 does not rebuild or substitute the application wheel. It retains the exact CPython 3.14 wheelhouse, signing,
-immutable-tag/Release, Pages serialization, and live-verification gates. Starting with `v0.9.500`, each software
+immutable-tag/Release, Pages serialization, and live-verification gates. Starting with `v0.9.501`, each software
 release automatically stages its signed installation ISO and software bundle in one hidden GitHub Release draft.
 The protected maintainer approval dispatch validates the exact ISO digest and acceptance evidence before making the
 release public and advancing `development`. See the

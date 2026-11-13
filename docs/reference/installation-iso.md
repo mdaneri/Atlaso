@@ -118,7 +118,7 @@ hosted workflow.
 
 ## Stage and publish a standard release
 
-Starting with `v0.9.500`, **Publish appliance release** builds the signed x86-64 UEFI installation ISO alongside the
+Starting with `v0.9.501`, **Publish appliance release** builds the signed x86-64 UEFI installation ISO alongside the
 signed appliance software for each eligible main commit. Both asset sets go to the same hidden `vX.Y.Z` draft. The
 draft's workflow summary reports the full ISO SHA-256. Earlier published versions retain their software-only assets.
 

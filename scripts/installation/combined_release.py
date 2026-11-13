@@ -16,7 +16,7 @@ from scripts.prepare_virtualization_source import prepare
 from scripts.publish_release import run
 from scripts.verify_installation_iso import verify_release
 
-FIRST_INSTALLATION_VERSION = (0, 9, 500)
+FIRST_INSTALLATION_VERSION = (0, 9, 501)
 VERSION = re.compile(r"v([0-9]+)\.([0-9]+)\.([0-9]+)")
 COMMIT = re.compile(r"[0-9a-f]{40}")
 SHA256 = re.compile(r"[0-9a-f]{64}")

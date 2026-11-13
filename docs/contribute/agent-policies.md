@@ -667,7 +667,7 @@ preserved with their affected subsystem below. Keep new requirements at their to
   signed update
   lineage at `v0.9.18`; do not publish or consume a retired-product bridge. Preserve tag/release commit and asset-byte
   idempotency checks. A rerun after tag/release publication must verify the existing asset bytes before retrying channel
-  advancement. Starting with v0.9.500, the protected workflow builds the signed offline ISO and stages it with
+  advancement. Starting with v0.9.501, the protected workflow builds the signed offline ISO and stages it with
   the exact software bundle in one hidden draft. Revalidate the pinned native capture, RPMs and PowerCLI before
   signing the installer. A maintainer dispatch approves the exact ISO checksum and records acceptance evidence.
   Only the verified public release may advance development. Keep ISO assembly outside the shared Pages lock,

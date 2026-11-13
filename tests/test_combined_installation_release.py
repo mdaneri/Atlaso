@@ -12,7 +12,7 @@ from scripts.installation import assets, combined_release, release_capture
 from scripts.installation.manifest import digest, inventory
 
 REPO = "mdaneri/Atlaso"
-TAG = "v0.9.500"
+TAG = "v0.9.501"
 COMMIT = "a" * 40
 EVIDENCE = f"https://github.com/{REPO}/issues/542#issuecomment-123"
 
@@ -41,7 +41,7 @@ def test_combined_release_verifies_the_exact_iso_and_software(
     scratch.mkdir()
     manifest = write_software(directory, TAG)
     monkeypatch.setattr(combined_release, "prepare", lambda **kwargs: {})
-    iso = tmp_path / "atlaso-installation-0.9.500-x86_64.iso"
+    iso = tmp_path / "atlaso-installation-0.9.501-x86_64.iso"
     iso.write_bytes(b"exact installer")
     if split:
         monkeypatch.setattr(assets, "GITHUB_ASSET_LIMIT", 8)
@@ -76,10 +76,10 @@ def test_combined_release_verifies_the_exact_iso_and_software(
 
 def test_published_software_only_is_eligible_before_the_cutover(tmp_path, monkeypatch):
     monkeypatch.setattr(combined_release, "prepare", lambda **kwargs: {})
-    write_software(tmp_path, "v0.9.499")
+    write_software(tmp_path, "v0.9.500")
     assert (
         combined_release.release_assets(
-            tmp_path, tmp_path, "v0.9.499", COMMIT, legacy=True
+            tmp_path, tmp_path, "v0.9.500", COMMIT, legacy=True
         )
         is None
     )
@@ -113,7 +113,7 @@ def test_partial_draft_stops_before_downloading_or_replacing_assets(
 
 
 @pytest.mark.parametrize(
-    ("highest", "latest"), [((0, 9, 499), "true"), ((0, 9, 501), "false")]
+    ("highest", "latest"), [((0, 9, 500), "true"), ((0, 9, 502), "false")]
 )
 def test_publish_checks_exact_approval_and_order_and_is_idempotent(
     monkeypatch, highest, latest
@@ -174,12 +174,12 @@ def test_development_pointer_never_goes_backward_or_switches_commit(
         "signature_document",
         lambda data: {"key_id": combined_release.TRUST_KEY.stem},
     )
-    current = {"channel": "development", "version": "0.9.501", "git_commit": COMMIT}
+    current = {"channel": "development", "version": "0.9.502", "git_commit": COMMIT}
     monkeypatch.setattr(
         combined_release, "verify_signed_json", lambda *args, **kwargs: current
     )
     assert combined_release.channel_decision(tmp_path, TAG, COMMIT) == "skip"
-    current["version"] = "0.9.500"
+    current["version"] = "0.9.501"
     assert combined_release.channel_decision(tmp_path, TAG, COMMIT) == "verify"
     with pytest.raises(ValueError, match="conflicting commit"):
         combined_release.channel_decision(tmp_path, TAG, "b" * 40)
