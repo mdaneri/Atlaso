@@ -19564,6 +19564,121 @@ def test_runtime_management_address_rejects_unusable_ipv6_status(
     )
 
 
+
+@pytest.mark.parametrize("failure", ["none", "resolver", "powercli", "competing-route"])
+def test_appliance_settings_preserves_applied_wan_defaults(monkeypatch, tmp_path, failure):
+    """An ordinary Settings reload keeps the live WAN defaults even on failure."""
+    helper = load_helper_module()
+    network_path = tmp_path / "00-atlaso-mgmt.network"
+    original = "[Match]\nName=eth0\n\n[Network]\nAddress=192.0.2.10/24\nDNS=192.0.2.53\n"
+    network_path.write_text(original, encoding="utf-8")
+    wan_path = tmp_path / "atlaso-wan.conf"
+    wan_path.write_text(
+        "[targets]\ntarget=eth0\nmanagement_ui=true\n"
+        "[routes]\nroute=0.0.0.0/0\ninterface=eth0\ngateway=192.0.2.1\nmetric=100\n"
+        "route=::/0\ninterface=eth0\ngateway=fe80::1\nmetric=100\n",
+        encoding="utf-8",
+    )
+    defaults = [
+        {"table": table, "dst": "default", "dev": "eth0", "gateway": "192.0.2.1",
+         "protocol": "boot", "metric": 100}
+        for table in ("main", "200")
+    ]
+    foreign = {"table": "200", "dst": "default", "dev": "eth0", "gateway": "192.0.2.2",
+               "protocol": "static", "metric": 200}
+    live = [*defaults, foreign]
+    adds = []
+    states = iter(("configuring", "configured"))
+
+    def observe(command, **_kwargs):
+        if command[0] == "networkctl":
+            state = {"Interfaces": [{"Name": "eth0", "AdministrativeState": next(states)}]}
+        else:
+            state = live if "-4" in command else []
+        return subprocess.CompletedProcess(command, 0, json.dumps(state), "")
+
+    def run(command, **_kwargs):
+        if command == ["networkctl", "reload"]:
+            live.clear()
+            if failure == "competing-route":
+                live.append({**foreign, "table": "main", "metric": 100})
+        if command[:4] == ["ip", "-4", "route", "add"]:
+            adds.append(command)
+            table = command[command.index("table") + 1]
+            live.append(defaults[0 if table == "254" else 1])
+        if command[:2] == ["resolvectl", "dns"] and failure == "resolver":
+            return subprocess.CompletedProcess(command, 7, "", "")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    config = tmp_path / "atlaso-settings.json"
+    config.write_text(appliance_settings_json(), encoding="utf-8")
+    monkeypatch.setattr(helper, "APPLIANCE_SETTINGS_APPLY_DIR", tmp_path)
+    monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(helper, "NETWORKD_MGMT_CONFIG_PATH", network_path)
+    monkeypatch.setattr(helper, "WAN_RUNTIME_CONFIG_PATH", wan_path)
+    monkeypatch.setattr(helper, "_network_observation_command", observe)
+    monkeypatch.setattr(helper, "_run", run)
+    monkeypatch.setattr(helper.time, "sleep", lambda _: None)
+    monkeypatch.setattr(helper, "_apply_hostname", lambda _: 0)
+    monkeypatch.setattr(helper, "_configure_root_ssh", lambda _: 0)
+    monkeypatch.setattr(helper, "_configure_web_terminal", lambda _: 0)
+
+    def powercli(_enabled):
+        assert live == defaults
+        return (9 if failure == "powercli" else 0), {}
+
+    monkeypatch.setattr(helper, "_configure_powercli_ceip", powercli)
+    monkeypatch.setattr(helper, "_apply_vcf_download_tool_ceip", lambda _: (0, {}))
+    monkeypatch.setattr(helper, "_configure_atlaso_management_https", lambda *_args, **_kwargs: (0, None))
+    assert helper._handle_appliance_settings("apply", [str(config)]) == {
+        "none": 0, "resolver": 7, "powercli": 9, "competing-route": 1,
+    }[failure]
+    if failure == "competing-route":
+        assert len(adds) == 1
+        assert live == [{**foreign, "table": "main", "metric": 100}, defaults[1]]
+    else:
+        assert len(adds) == 2
+        assert live == defaults
+    if failure == "resolver":
+        assert network_path.read_text(encoding="utf-8") == original
+
+
+def test_resolver_wan_recovers_ipv6_default_with_native_metric(monkeypatch, tmp_path):
+    """Capture an applied IPv6 default whose zero metric is normalized by Linux."""
+    helper = load_helper_module()
+    wan_path = tmp_path / "atlaso-wan.conf"
+    wan_path.write_text(
+        "[targets]\ntarget=eth0\nmanagement_ui=true\n"
+        "[routes]\nroute=::/0\ninterface=eth0\ngateway=fe80::1\nmetric=0\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "WAN_RUNTIME_CONFIG_PATH", wan_path)
+    route = {"dst": "default", "dev": "eth0", "gateway": "fe80::1", "table": 200,
+             "protocol": 3, "metric": 1024}
+    live = [route]
+    commands = []
+
+    def observe(command):
+        data = {"Interfaces": [{"Name": "eth0", "AdministrativeState": "configured"}]} if command[0] == "networkctl" else live
+        return subprocess.CompletedProcess(command, 0, json.dumps(data), "")
+
+    def run(command, *, timeout):
+        commands.append(command)
+        live.append(route)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper, "_network_observation_command", observe)
+    monkeypatch.setattr(helper, "_run", run)
+    captured = helper._resolver_wan_default_routes("eth0")
+    assert captured == [(6, 200, "fe80::1", 1024)]
+    live.clear()
+    helper._restore_resolver_wan_defaults("eth0", captured)
+    assert commands == [["ip", "-6", "route", "add", "default", "via", "fe80::1",
+                         "dev", "eth0", "metric", "1024", "table", "200", "proto", "boot"]]
+    helper._restore_resolver_wan_defaults("eth0", captured)
+    assert len(commands) == 1
+
+
 def test_appliance_settings_helper_applies_local_resolver_without_timesyncd(monkeypatch, tmp_path):
     """Verify that appliance settings helper applies local resolver without timesyncd.
 
