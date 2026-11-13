@@ -593,12 +593,44 @@ def fix_state_permissions() -> None:
             path.chmod(0o750 if path.is_dir() else 0o600)
 
 
-def recovery_dynamic_addresses_available(db, preview: str) -> bool:
+def _recovery_ipv4ll_addresses(db, preview: str, payload: dict) -> dict[str, str]:
+    """Select task-confirmed setup addresses for the applied management NIC.
+
+    Args:
+        db: Admitted recovery transaction.
+        preview: Exact completed Network snapshot.
+        payload: Completed Network job result.
+    """
+    evidence = _ui_call("completed_management_handoff_evidence", payload)
+    if not evidence:
+        return {}
+    settings = db.scalar(select(ApplianceSettings).order_by(ApplianceSettings.id))
+    if settings is not None and settings.ipv4_link_local_fallback_enabled is False:
+        return {}
+    addresses = {}
+    for path in network_management_paths(preview):
+        if path["kind"] != "physical" or path.get("role") != "management" or path.get("ipv4_method") != "dhcp":
+            continue
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == path["name"]))
+        if interface is None or interface.host_ip_cidr:
+            continue
+        try:
+            addresses[path["name"]] = _ui_call(
+                "confirmed_management_handoff_ipv4ll_address",
+                preview, evidence, interface.mac_address or "", path["name"],
+            )
+        except RuntimeError:
+            continue
+    return addresses
+
+
+def recovery_dynamic_addresses_available(db, preview: str, *, ipv4ll: dict[str, str] | None = None) -> bool:
     """Require every applied dynamic management family before issuance or acknowledgement.
 
     Args:
         db: Admitted writer transaction containing native observations.
         preview: Completed Network snapshot defining all management listeners.
+        ipv4ll: Task-confirmed setup addresses for DHCP listeners without a lease.
     """
     for path in network_management_paths(preview):
         if path.get("management_eligible") != "true":
@@ -609,7 +641,7 @@ def recovery_dynamic_addresses_available(db, preview: str) -> bool:
         if interface is None:
             return False
         required = []
-        if path.get("ipv4_method") == "dhcp":
+        if path.get("ipv4_method") == "dhcp" and not (ipv4ll or {}).get(path["name"]):
             required.append((4, interface.host_ip_cidr))
         if path.get("ipv6_enabled", "false").lower() == "true" and not path.get("ipv6_cidr"):
             required.extend((6, cidr) for cidr in (physical_ipv6_cidrs(interface) or (None,)))
@@ -624,13 +656,16 @@ def recovery_dynamic_addresses_available(db, preview: str) -> bool:
     return True
 
 
-def recovery_dynamic_address_binding(db, preview: str, *, native: bool = False) -> dict:
+def recovery_dynamic_address_binding(
+    db, preview: str, *, native: bool = False, ipv4ll: dict[str, str] | None = None,
+) -> dict:
     """Capture or attest every physical listener under writer admission.
 
     Args:
         db: Admitted publication transaction.
         preview: Completed Network snapshot.
         native: Rediscover bounded native state rather than read issuance observations.
+        ipv4ll: Task-confirmed setup addresses for DHCP listeners without a lease.
     """
     # Retain the receipt field/function names; new receipts bind static paths too.
     # Older incomplete receipts fail comparison rather than acquire new provenance.
@@ -654,8 +689,17 @@ def recovery_dynamic_address_binding(db, preview: str, *, native: bool = False) 
                 raise ValueError("Native physical listener identity is unavailable")
             host = matches[0]
         families = {}
+        fallback = (ipv4ll or {}).get(path["name"])
         if path.get("ipv4_method") == "dhcp":
-            families[4] = [host.host_dhcp_ip_cidr if host else interface.host_ip_cidr]
+            lease = host.host_dhcp_ip_cidr if host else interface.host_ip_cidr
+            if fallback:
+                if lease or (native and not _ui_call(
+                    "recheck_management_handoff_ipv4ll", preview, path["name"], mac, fallback,
+                    timeout=deadline - time.monotonic(),
+                )):
+                    raise ValueError("Native IPv4LL management binding changed")
+            else:
+                families[4] = [lease]
         elif path.get("ip_cidr"):
             families[4] = [native_static_ip_cidr(host, path["ip_cidr"]) if host else path["ip_cidr"]]
         if path.get("ipv6_enabled", "false").lower() == "true":
@@ -663,9 +707,9 @@ def recovery_dynamic_address_binding(db, preview: str, *, native: bool = False) 
                 families[6] = [native_static_ip_cidr(host, path["ipv6_cidr"]) if host else path["ipv6_cidr"]]
             else:
                 families[6] = list(native_automatic_ipv6_cidrs(host) if host else physical_ipv6_cidrs(interface))
-        if not families:
+        if not families and not fallback:
             raise ValueError("Physical listener has no applied address family")
-        addresses = {}
+        addresses = {"4": [fallback]} if fallback else {}
         for family, cidrs in families.items():
             if not cidrs:
                 raise ValueError("Native management family is unavailable")
@@ -710,7 +754,8 @@ def ensure_recovery_ca_state(
         )
         if not network_management_paths(preview) or network_management_paths(preview) != network_management_paths(current):
             return ["Management paths changed after Network apply; pending edits prevent certificate recovery."]
-    if network_job_id is not None and not recovery_dynamic_addresses_available(db, preview):
+    ipv4ll = _recovery_ipv4ll_addresses(db, preview, payload) if network_job_id is not None else {}
+    if network_job_id is not None and not recovery_dynamic_addresses_available(db, preview, ipv4ll=ipv4ll):
         return ["Applied dynamic management observation is unavailable; certificate recovery was not started."]
     if network_job_id is not None:
         management_leaf = db.scalar(
@@ -719,6 +764,15 @@ def ensure_recovery_ca_state(
         )
         if management_leaf is not None and management_leaf.status == "revoked":
             return ["Management certificate is revoked; explicit CA operator action is required before recovery."]
+    if ipv4ll and management_snapshot is not None:
+        try:
+            binding = recovery_dynamic_address_binding(db, preview, native=True, ipv4ll=ipv4ll)
+        except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired):
+            return ["Native IPv4 link-local ownership changed; certificate recovery was not started."]
+        addresses = _ui_call("management_ui_addresses", db)
+        management_snapshot = {**management_snapshot, "management_addresses": list(dict.fromkeys([
+            *addresses, *(address for item in binding.values() for group in item["addresses"].values() for address in group),
+        ]))}
     projection = {"management_snapshot": management_snapshot} if management_snapshot is not None else {}
     errors = ensure_ca_state(
         db, commit=False, managed_owners={"appliance:https"} if network_job_id is not None else None, **projection,
@@ -838,7 +892,9 @@ def acknowledge_console_publication(network_job_id: str, receipt_sha256: str) ->
                 raise ValueError("Management paths changed before publication acknowledgement")
             settings = db.scalar(select(CaSettings))
             certificates = db.scalars(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https")).all()
-            if not recovery_dynamic_addresses_available(db, str(units[0].get("config_preview") or "")):
+            preview = str(units[0].get("config_preview") or "")
+            ipv4ll = _recovery_ipv4ll_addresses(db, preview, payload)
+            if not recovery_dynamic_addresses_available(db, preview, ipv4ll=ipv4ll):
                 return 2
             current = render_ca_apply_payload(settings, certificates, include_private_keys=False, profiles=db.scalars(select(CaProfile)).all())
             if current != receipt["public_payload"]:
@@ -851,7 +907,7 @@ def acknowledge_console_publication(network_job_id: str, receipt_sha256: str) ->
                 raise ValueError("Publication does not identify exactly one management leaf")
             # Kernel addresses and carrier can change without a database writer.
             # Attest every physical listener against the original issuance receipt.
-            dynamic = recovery_dynamic_address_binding(db, str(units[0]["config_preview"]), native=True)
+            dynamic = recovery_dynamic_address_binding(db, preview, native=True, ipv4ll=ipv4ll)
             if dynamic != receipt["dynamic_address_binding"]:
                 raise ValueError("Native physical listener binding changed after publication")
             leaf = x509.load_pem_x509_certificate(leaves[0]["certificate_pem"].encode("ascii"))
@@ -898,7 +954,7 @@ def completed_network_binding_is_current(db, network_job_id: str) -> bool:
     return bool(job is not None and job.status == JobStatus.SUCCEEDED.value
                 and network_management_paths(preview)
                 and network_management_paths(preview) == network_management_paths(current)
-                and recovery_dynamic_addresses_available(db, preview))
+                and recovery_dynamic_addresses_available(db, preview, ipv4ll=_recovery_ipv4ll_addresses(db, preview, payload)))
 
 
 def verify_console_http_recovery(network_job_id: str, http_port: int) -> int:
@@ -929,10 +985,11 @@ def verify_console_http_recovery(network_job_id: str, http_port: int) -> int:
                     return 2
                 receipt = json.loads(stream.read(2097153))
             job = db.get(Job, network_job_id)
-            units = json.loads(job.result)["captured_units"]
-            preview = next(unit["config_preview"] for unit in units if unit["unit_id"] == "network")
+            payload = json.loads(job.result)
+            preview = next(unit["config_preview"] for unit in payload["captured_units"] if unit["unit_id"] == "network")
+            ipv4ll = _recovery_ipv4ll_addresses(db, preview, payload)
             if (receipt["network_job_id"] != network_job_id or receipt["http_settings_snapshot"] != applied
-                    or recovery_dynamic_address_binding(db, preview, native=True) != receipt["dynamic_address_binding"]):
+                    or recovery_dynamic_address_binding(db, preview, native=True, ipv4ll=ipv4ll) != receipt["dynamic_address_binding"]):
                 return 2
             current = path.lstat()
             if path.is_symlink() or (current.st_dev, current.st_ino) != (metadata.st_dev, metadata.st_ino):
@@ -951,6 +1008,11 @@ def refresh_completed_management_certificate(network_job_id: str) -> int:
     """
     with SessionLocal() as db:
         acquire_network_objects_write_lock(db)
+        job = db.get(Job, network_job_id)
+        payload = json.loads(job.result or "{}") if job is not None else {}
+        captured = [unit for unit in payload.get("captured_units", []) if unit.get("unit_id") == "network"]
+        preview = str(captured[0].get("config_preview") or "") if len(captured) == 1 else ""
+        ipv4ll = _recovery_ipv4ll_addresses(db, preview, payload)
         settings_baseline = load_appliance_apply_baselines(db).get("appliance_settings")
         try:
             applied_settings = json.loads(str((settings_baseline or {}).get("config_preview") or "{}"))
@@ -972,9 +1034,7 @@ def refresh_completed_management_certificate(network_job_id: str) -> int:
             # Retain the original HTTP address scope before outer readiness. A
             # later inventory refresh must not redefine what this recovery served.
             try:
-                dynamic_binding = recovery_dynamic_address_binding(db, render_network_config(
-                    interfaces=list(db.scalars(select(PhysicalInterface))), vlans=list(db.scalars(select(VlanInterface))),
-                ))
+                dynamic_binding = recovery_dynamic_address_binding(db, preview, native=bool(ipv4ll), ipv4ll=ipv4ll)
                 receipt = {"network_job_id": network_job_id, "http_settings_snapshot": applied_settings,
                            "dynamic_address_binding": dynamic_binding}
                 write_text_atomic(console_publication_path(network_job_id), json.dumps(receipt, sort_keys=True), mode=0o600)
@@ -1005,9 +1065,7 @@ def refresh_completed_management_certificate(network_job_id: str) -> int:
             for error in errors:
                 print(error)
             return 2
-        dynamic_binding = recovery_dynamic_address_binding(db, render_network_config(
-            interfaces=list(db.scalars(select(PhysicalInterface))), vlans=list(db.scalars(select(VlanInterface))),
-        ))
+        dynamic_binding = recovery_dynamic_address_binding(db, preview, native=bool(ipv4ll), ipv4ll=ipv4ll)
         ca_settings = db.execute(select(CaSettings)).scalar_one()
         certificates = db.scalars(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https")).all()
         public_payload = render_ca_apply_payload(ca_settings, certificates, include_private_keys=False, profiles=db.scalars(select(CaProfile)).all())

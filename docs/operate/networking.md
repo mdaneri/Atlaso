@@ -113,6 +113,8 @@ Settings-only Apply uses the same verified APIPA management context while keepin
 DHCP, DNS and service-listener inventory.
 Protected handoff completion uses the helper's fresh final native readback and the captured management MAC and fallback
 policy. A newly acquired APIPA address does not need a prior observer publication while the handoff is still active.
+After a console Network Apply, tty1 can continue recovery with APIPA when the completed task and a fresh native
+readback confirm the same address on the management interface. The setup address stays out of DHCP inventory.
 Carrier loss on an unrelated static interface does not invalidate its complete, assigned-address readiness evidence.
 Dynamic DHCP/IPv4LL and automatic IPv6 acquisition still require an administratively up link with carrier.
 Once a management listener withdrawal has activated successfully, unchanged observer passes refresh its verified

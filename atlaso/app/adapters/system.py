@@ -478,10 +478,14 @@ class SystemAdapter:
         """Return esx storage logs."""
         return self._helper_result("esx-storage", "logs", dry_run_message="dry-run: ESX Storage log read command recorded", timeout_seconds=5)
 
-    def read_network_address_status(self) -> AdapterResult:
-        """Read sanitized native network outcomes without sending packets or changing configuration."""
+    def read_network_address_status(self, *, timeout_seconds: float = 15) -> AdapterResult:
+        """Read sanitized native network outcomes without sending packets or changing configuration.
+
+        Args:
+            timeout_seconds: Remaining time in the caller's native observation budget.
+        """
         return self._helper_result(
-            "network", "address-status", timeout_seconds=15,
+            "network", "address-status", timeout_seconds=timeout_seconds,
             dry_run_message='{"complete":false,"links":[],"conflicts":[]}',
         )
 
