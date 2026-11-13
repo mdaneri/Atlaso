@@ -6,6 +6,7 @@
     "authentication-lifetimes-settings-form",
     "vmware-ceip-settings-form",
   ]);
+  const hardwareRefreshGenerations = new WeakMap();
 
   function forwardExternalAutosaveInput(event) {
     const control = event.target;
@@ -290,6 +291,7 @@
   function updateGuestTools(root, tools) {
     const provider = String(tools.provider || "");
     const state = String(tools.state || "unknown");
+    const maintenanceActive = root.dataset?.maintenanceActive === "true";
     const requiredUnits = {
       vmware: ["vmtoolsd.service"], qemu: ["qemu-guest-agent.service"],
       hyperv: ["hv_kvp_daemon.service", "hv_vss_daemon.service", "hv_fcopy_daemon.service"],
@@ -334,22 +336,19 @@
     safeText(root, "[data-guest-tools-clock]", clockSafety);
     safeText(root, "[data-guest-tools-summary]", tools.reason || tools.summary || (state === "healthy" ? "The compatible guest integration is running." : "Guest tools remain optional; explicitly review maintenance before installation."));
     const actionsMessage = root.querySelector("[data-guest-tools-action-message]");
-    if (actionsMessage && tools.reason) {
-      actionsMessage.textContent = String(tools.reason);
-      actionsMessage.classList.remove("hidden");
-    } else if (actionsMessage) {
-      actionsMessage.textContent = "";
-      actionsMessage.classList.add("hidden");
+    if (actionsMessage && !maintenanceActive) {
+      actionsMessage.textContent = tools.reason ? String(tools.reason) : "";
+      actionsMessage.classList.toggle("hidden", !tools.reason);
     }
     root.querySelectorAll("[data-guest-tools-provider-input]").forEach((input) => { input.value = knownProvider ? provider : ""; });
     const digest = String(tools.review_digest || "");
     const digestInput = root.querySelector("[data-guest-tools-review-digest]");
     if (digestInput) digestInput.value = digest;
     const checkButton = root.querySelector("[data-guest-tools-check-button]");
-    if (checkButton) checkButton.disabled = !knownProvider || root.dataset?.maintenanceActive === "true";
+    if (checkButton) checkButton.disabled = !knownProvider || maintenanceActive;
     const installButton = root.querySelector("[data-guest-tools-install-button]");
     if (installButton) installButton.disabled = !knownProvider || tools.available !== true || !/^[0-9a-f]{64}$/i.test(digest) || (state === "healthy" && !packageChange) || !plan || typeof plan.package_change !== "boolean" || !Array.isArray(plan.actions) || (packageChange && !targetPackageListKnown);
-    if (installButton && root.dataset?.maintenanceActive === "true") installButton.disabled = true;
+    if (installButton && maintenanceActive) installButton.disabled = true;
     const installForm = root.querySelector("[data-guest-tools-install]");
     if (installForm) {
       installForm.dataset.confirmMessage = [
@@ -369,7 +368,14 @@
     return Array.isArray(plan?.actions) && plan.actions.includes("enable-required-services");
   }
 
+  function linkMaintenanceTask(root, jobId) {
+    const link = root.querySelector("[data-guest-tools-task-link]");
+    if (link && jobId) link.href = `${link.href.split("?")[0]}?job_id=${encodeURIComponent(jobId)}`;
+  }
+
   async function refreshHardware(root, { reportFailure = true } = {}) {
+    const generation = (hardwareRefreshGenerations.get(root) ?? 0) + 1;
+    hardwareRefreshGenerations.set(root, generation);
     const state = root.querySelector("[data-hardware-load-state]");
     const refresh = root.querySelector("[data-hardware-refresh]");
     if (refresh) refresh.disabled = true;
@@ -381,6 +387,7 @@
       const response = await fetch(root.dataset.statusUrl, { credentials: "same-origin", headers: { Accept: "application/json" } });
       if (!response.ok) throw new Error(`Hardware status request failed (${response.status}).`);
       const payload = await response.json();
+      if (generation !== hardwareRefreshGenerations.get(root)) return;
       if (!payload || typeof payload !== "object" || !payload.hardware || !payload.guest_tools) throw new Error("Hardware status response was incomplete.");
       const task = payload.maintenance_task;
       const active = task && typeof task.job_id === "string" && ["pending", "running"].includes(task.status);
@@ -394,14 +401,14 @@
           message.textContent = `Maintenance task ${task.job_id} is ${task.status} (${task.progress_percent || 0}%). Follow it in Tasks, then refresh Hardware after completion.`;
           message.className = "alert muted";
         }
-        const link = root.querySelector("[data-guest-tools-task-link]");
-        if (link) link.href = `${link.href.split("?")[0]}?job_id=${encodeURIComponent(task.job_id)}`;
+        linkMaintenanceTask(root, task.job_id);
       }
       if (state) {
         state.textContent = "Hardware status was checked. Inventory and guest-tool actions are read-only until an explicit task is submitted.";
         state.className = "alert success";
       }
     } catch (error) {
+      if (generation !== hardwareRefreshGenerations.get(root)) return;
       if (state) {
         state.textContent = reportFailure ? (error instanceof Error ? error.message : "Hardware status check failed.") : "Hardware status is unavailable.";
         state.className = "alert warning";
@@ -413,7 +420,7 @@
       setInventoryGridError(root, "settings-disks-grid", "settings-disks-fallback", "Hardware inventory check failed.");
       setInventoryGridError(root, "settings-network-grid", "settings-network-fallback", "Hardware inventory check failed.");
     } finally {
-      if (refresh) refresh.disabled = false;
+      if (refresh && generation === hardwareRefreshGenerations.get(root)) refresh.disabled = false;
     }
   }
 
@@ -431,6 +438,10 @@
       if (!response.ok) throw new Error(payload.detail || payload.message || "Guest-tools check could not be queued.");
       const jobId = String(payload.job_id || payload.task_id || "");
       root.dataset.maintenanceActive = "true";
+      if (button) button.disabled = true;
+      const installButton = root.querySelector("[data-guest-tools-install-button]");
+      if (installButton) installButton.disabled = true;
+      linkMaintenanceTask(root, jobId);
       if (message) {
         message.textContent = jobId ? `Guest-tools check task ${jobId} was queued. Follow its progress in Tasks.` : "Guest-tools check was queued. Follow progress in Tasks.";
         message.className = "alert success";

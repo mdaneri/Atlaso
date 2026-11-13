@@ -5,6 +5,10 @@ const vm = require("node:vm");
 
 const source = fs.readFileSync("atlaso/app/static/settings-hardware.js", "utf8");
 
+function loadHardwareScript(context, exports) {
+  vm.runInContext(source.replace(/\}\)\(\);\s*$/, `Object.assign(globalThis, { ${exports.join(", ")} });\n})();`), context);
+}
+
 function functionSource(name) {
   let start = source.indexOf(`async function ${name}(`);
   if (start < 0) start = source.indexOf(`function ${name}(`);
@@ -88,7 +92,7 @@ function inventoryHarness() {
   const controllers = [];
   const context = vm.createContext({
     fetch: async () => response,
-    document: { querySelector: (selector) => root.querySelector(selector) },
+    document: { addEventListener() {}, querySelector: (selector) => root.querySelector(selector) },
     window: {
       Tabulator: function Tabulator() {},
       AtlasoUiPatterns: {
@@ -130,20 +134,15 @@ function inventoryHarness() {
       },
     },
   });
-  vm.runInContext(
-    "function updateSummary() {} function updateGuestTools() {}\n" +
-      ["gridValue", "readableBytes", "initializeHardwareGrid", "setInventoryState", "updateFallbackTable",
-        "setInventoryGridError", "setInventoryGridData", "updateInventory", "refreshHardware"]
-        .map(functionSource).join("\n") + "\nglobalThis.updateInventory = updateInventory; globalThis.refreshHardware = refreshHardware;",
-    context,
-  );
+  root.querySelectorAll = () => [];
+  loadHardwareScript(context, ["refreshHardware"]);
   return {
     context, root, grids, fallbacks, controllers, hardwareLoadState, refreshButton,
     setResponse(value) { response = value; },
   };
 }
 
-function guestToolsHarness() {
+function guestToolsHarness(fetch) {
   const nodes = new Map();
   [
     "[data-guest-tools-state]", "[data-guest-tools-provider]", "[data-guest-tools-version]", "[data-guest-tools-available-version]",
@@ -151,19 +150,18 @@ function guestToolsHarness() {
     "[data-guest-tools-reboot]", "[data-guest-tools-clock]", "[data-guest-tools-summary]",
     "[data-guest-tools-action-message]", "[data-guest-tools-review-digest]",
     "[data-guest-tools-check-button]", "[data-guest-tools-install-button]",
+    "[data-guest-tools-task-link]", "[data-hardware-load-state]", "[data-hardware-refresh]", "[data-hardware-model]",
   ].forEach((selector) => nodes.set(selector, new Element()));
+  nodes.get("[data-guest-tools-task-link]").href = "/tasks";
   const providerInputs = [new Element(), new Element()];
   const installForm = new Form();
   const root = {
+    dataset: { statusUrl: "/settings/hardware/status" },
     querySelector: (selector) => selector === "[data-guest-tools-install]" ? installForm : nodes.get(selector) || null,
     querySelectorAll: (selector) => selector === "[data-guest-tools-provider-input]" ? providerInputs : [],
   };
-  const context = vm.createContext({});
-  vm.runInContext(
-    ["safeText", "formatGuestToolVersion", "guestToolPackageName", "verifiedGuestToolPackage", "offlinePayloadAvailable", "availableGuestToolVersion", "describeServiceChanges", "describeClockSafety", "actionsRequireServiceWork", "updateGuestTools"]
-      .map(functionSource).join("\n") + "\nglobalThis.updateGuestTools = updateGuestTools;",
-    context,
-  );
+  const context = vm.createContext({ fetch, FormData: class {}, document: { addEventListener() {} } });
+  loadHardwareScript(context, ["updateGuestTools", "refreshHardware", "submitGuestToolsCheck"]);
   return { context, root, nodes, providerInputs, installForm };
 }
 
@@ -199,6 +197,113 @@ function reviewPayload(overrides = {}) {
     ...overrides,
   };
 }
+
+test("the post-queue hardware refresh supersedes a manual refresh in either completion order", async (t) => {
+  const staleResponse = { ok: true, json: async () => ({
+    hardware: { model: "Stale model" },
+    guest_tools: reviewPayload(),
+  }) };
+  for (const [name, olderFirst, olderResponse, taskStatus] of [
+    ["older success arrives first", true, staleResponse, "pending"],
+    ["older success arrives last", false, staleResponse, "running"],
+    ["older failure arrives first", true, { ok: false, status: 503 }, "running"],
+    ["older failure arrives last", false, { ok: false, status: 503 }, "pending"],
+  ]) {
+    await t.test(name, async () => {
+      const manualResponse = Promise.withResolvers();
+      const postQueueResponse = Promise.withResolvers();
+      const postQueueStarted = Promise.withResolvers();
+      let statusRequests = 0;
+      const { context, root, nodes } = guestToolsHarness((_url, options) => {
+        if (options.method === "POST") return { ok: true, json: async () => ({ job_id: "job-123" }) };
+        if (++statusRequests === 1) return manualResponse.promise;
+        postQueueStarted.resolve();
+        return postQueueResponse.promise;
+      });
+      const checkButton = nodes.get("[data-guest-tools-check-button]");
+      const installButton = nodes.get("[data-guest-tools-install-button]");
+      const refreshButton = nodes.get("[data-hardware-refresh]");
+      const loadState = nodes.get("[data-hardware-load-state]");
+      const message = nodes.get("[data-guest-tools-action-message]");
+      const taskLink = nodes.get("[data-guest-tools-task-link]");
+      const model = nodes.get("[data-hardware-model]");
+      const form = { action: "/settings/hardware/guest-tools/check", querySelector: () => checkButton };
+      context.updateGuestTools(root, reviewPayload());
+      const manualRefresh = context.refreshHardware(root);
+      const submission = context.submitGuestToolsCheck(root, form);
+      await Promise.race([postQueueStarted.promise, submission]);
+      assert.equal(statusRequests, 2);
+
+      const assertActiveTask = () => {
+        assert.equal(root.dataset.maintenanceActive, "true");
+        assert.equal(checkButton.disabled, true);
+        assert.equal(installButton.disabled, true);
+        assert.match(message.textContent, new RegExp(`job-123 is ${taskStatus}`));
+        assert.equal(taskLink.href, "/tasks?job_id=job-123");
+        assert.equal(model.textContent, "Current model");
+        assert.equal(loadState.className, "alert success");
+        assert.equal(refreshButton.disabled, false);
+      };
+      if (olderFirst) {
+        manualResponse.resolve(olderResponse);
+        await manualRefresh;
+        assert.equal(root.dataset.maintenanceActive, "true");
+        assert.equal(refreshButton.disabled, true);
+        assert.equal(checkButton.disabled, true);
+        assert.equal(installButton.disabled, true);
+        assert.equal(loadState.className, "alert muted");
+        assert.match(message.textContent, /job-123 was queued/);
+        assert.equal(taskLink.href, "/tasks?job_id=job-123");
+        assert.equal(model.textContent, "");
+      }
+      postQueueResponse.resolve({ ok: true, json: async () => ({
+        hardware: { model: "Current model" },
+        guest_tools: reviewPayload(),
+        maintenance_task: { job_id: "job-123", status: taskStatus },
+      }) });
+      await submission;
+      assertActiveTask();
+      if (!olderFirst) {
+        manualResponse.resolve(olderResponse);
+        await manualRefresh;
+        assertActiveTask();
+      }
+    });
+  }
+});
+
+test("the latest hardware refresh can fail and retry without hiding known maintenance", async () => {
+  let response;
+  const { context, root, nodes } = guestToolsHarness(async () => response);
+  const message = nodes.get("[data-guest-tools-action-message]");
+  const taskLink = nodes.get("[data-guest-tools-task-link]");
+  const refreshButton = nodes.get("[data-hardware-refresh]");
+  const checkButton = nodes.get("[data-guest-tools-check-button]");
+  const installButton = nodes.get("[data-guest-tools-install-button]");
+  const loadState = nodes.get("[data-hardware-load-state]");
+  const statusResponse = (maintenanceTask) => ({ ok: true, json: async () => ({
+    hardware: {}, guest_tools: reviewPayload(), maintenance_task: maintenanceTask,
+  }) });
+
+  response = statusResponse({ job_id: "job-123", status: "running" });
+  await context.refreshHardware(root);
+  response = { ok: false, status: 503 };
+  await context.refreshHardware(root);
+  assert.match(loadState.textContent, /failed \(503\)/);
+  assert.equal(refreshButton.disabled, false);
+  assert.equal(root.dataset.maintenanceActive, "true");
+  assert.match(message.textContent, /job-123 is running/);
+  assert.equal(taskLink.href, "/tasks?job_id=job-123");
+  assert.equal(checkButton.disabled, true);
+  assert.equal(installButton.disabled, true);
+
+  response = statusResponse(null);
+  await context.refreshHardware(root);
+  assert.equal(loadState.className, "alert success");
+  assert.equal(root.dataset.maintenanceActive, "false");
+  assert.equal(checkButton.disabled, false);
+  assert.equal(installButton.disabled, false);
+});
 
 test("inventory unknown, success, whole-request failure, and retry keep grid states truthful", async () => {
   const harness = inventoryHarness();
