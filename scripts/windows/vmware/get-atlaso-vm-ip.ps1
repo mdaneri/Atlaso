@@ -321,11 +321,13 @@ do {
                     $lastReadinessError -notlike '*Windows neighbor evidence is <none>*')) { throw }
         }
     }
-    # A final partial interval must not extend the provider's shared deadline.
+    # A final partial interval cannot reach the next scheduled observation.
+    # Keep the last complete diagnostic if the sleep returns just before the deadline.
     $remainingMilliseconds = [Math]::Floor(($deadline - (Get-Date)).TotalMilliseconds)
-    if ($remainingMilliseconds -gt 0) {
-        Start-Sleep -Milliseconds ([int][Math]::Min($remainingMilliseconds, $PollSeconds * 1000.0))
-    }
+    if ($remainingMilliseconds -le 0) { break }
+    $pollMilliseconds = $PollSeconds * 1000.0
+    Start-Sleep -Milliseconds ([int][Math]::Min($remainingMilliseconds, $pollMilliseconds))
+    if ($remainingMilliseconds -le $pollMilliseconds) { break }
 } while ((Get-Date) -lt $deadline)
 
 $normalizedExpectedHostname = $ExpectedHostname.Trim().TrimEnd('.').ToLowerInvariant()

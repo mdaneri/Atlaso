@@ -361,8 +361,8 @@ try {
         -VmxPath $targetVmx `
         -ExpectedHostname 'issue-584.atlaso.internal' `
         -VmrunPath $stalledVmrun `
-        -TimeoutSeconds 2 `
-        -PollSeconds 1 | Out-Null
+        -TimeoutSeconds 10 `
+        -PollSeconds 10 | Out-Null
 }
 catch {
     $stalledError = $_
@@ -414,19 +414,46 @@ $providerFailureVmrun = Join-Path $OutputDirectory 'hostname-provider-failure-vm
     "@echo off`r`nif /I `"%3`"==`"getGuestIPAddress`" (`r`n  echo 192.168.167.135`r`n  exit /b 0`r`n)`r`nif /I `"%3`"==`"readVariable`" exit /b 8`r`nif /I `"%3`"==`"list`" (`r`n  echo Total running VMs: 1`r`n  echo `"$targetVmx`"`r`n  exit /b 0`r`n)`r`nexit /b 9`r`n",
     [System.Text.UTF8Encoding]::new($false)
 )
-# Allow one complete ownership and hostname observation on hosted Windows. A late retry can replace it
-# with a deadline failure, which the separate timeout cases cover.
+# Allow one complete observation, then simulate the final sleep returning one
+# millisecond early. An extra poll would replace the complete diagnostic.
 $providerFailureDeadlineSeconds = 10
 $providerFailureError = $null
+$providerFailureClock = @{ Now = (Get-Date); FinalSleep = $false; EarlyReads = 0 }
 try {
     Set-Alias -Name Get-NetNeighbor -Value Get-TestNetNeighbor -Scope Global
     Set-Alias -Name Test-Connection -Value Test-TestConnection -Scope Global
-    & (Join-Path $RepositoryRoot 'scripts/windows/vmware/get-atlaso-vm-ip.ps1') `
-        -VmxPath $targetVmx `
-        -ExpectedHostname 'issue-584.atlaso.internal' `
-        -VmrunPath $providerFailureVmrun `
-        -TimeoutSeconds $providerFailureDeadlineSeconds `
-        -PollSeconds $providerFailureDeadlineSeconds | Out-Null
+    & {
+        <#
+        .SYNOPSIS
+        Hold the clock steady until the final sleep and simulate an early wake.
+        #>
+        function Get-TestProviderFailureDate {
+            if ($providerFailureClock.FinalSleep) {
+                $providerFailureClock.EarlyReads++
+                if ($providerFailureClock.EarlyReads -gt 1) { return $providerFailureClock.Now.AddSeconds(1) }
+            }
+            return $providerFailureClock.Now
+        }
+        <#
+        .SYNOPSIS
+        Advance the synthetic clock to one millisecond before the requested wake.
+        .PARAMETER Milliseconds
+        Final interval requested by the readiness loop.
+        #>
+        function Invoke-TestProviderFailureSleep {
+            param([int]$Milliseconds)
+            $providerFailureClock.Now = $providerFailureClock.Now.AddMilliseconds($Milliseconds - 1)
+            $providerFailureClock.FinalSleep = $true
+        }
+        Set-Alias -Name Get-Date -Value Get-TestProviderFailureDate -Scope Local
+        Set-Alias -Name Start-Sleep -Value Invoke-TestProviderFailureSleep -Scope Local
+        & (Join-Path $RepositoryRoot 'scripts/windows/vmware/get-atlaso-vm-ip.ps1') `
+            -VmxPath $targetVmx `
+            -ExpectedHostname 'issue-584.atlaso.internal' `
+            -VmrunPath $providerFailureVmrun `
+            -TimeoutSeconds $providerFailureDeadlineSeconds `
+            -PollSeconds $providerFailureDeadlineSeconds | Out-Null
+    }
 }
 catch {
     $providerFailureError = $_
@@ -442,7 +469,8 @@ $providerFailureMessage = if ($null -eq $providerFailureError) {
 }
 if ($providerFailureMessage -notlike 'An initial VMware ownership observation completed*' -or
     $providerFailureMessage -notlike '*hostname evidence query failed with exit code 8*' -or
-    $providerFailureMessage -like '*guest initialization did not publish*') {
+    $providerFailureMessage -like '*guest initialization did not publish*' -or
+    -not $providerFailureClock.FinalSleep -or $providerFailureClock.EarlyReads -ne 0) {
     throw "Expected a hostname provider failure with exit code 8 after initial ownership. Observed diagnostic: $providerFailureMessage"
 }
 $addressCounter = Join-Path $OutputDirectory 'transient-address-count.txt'
