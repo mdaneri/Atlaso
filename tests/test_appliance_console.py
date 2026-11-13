@@ -5038,7 +5038,11 @@ def test_console_accepts_only_task_bound_live_ipv4ll(client, monkeypatch, change
         VlanInterface,
     )
     from atlaso.app.services.networking import HostPhysicalInterface
-    from atlaso.app.ui import management_ui_addresses, ordinary_network_ipv4ll_evidence
+    from atlaso.app.ui import (
+        make_appliance_apply_unit,
+        management_ui_addresses,
+        ordinary_network_ipv4ll_evidence,
+    )
 
     address = "169.254.20.10"
     with SessionLocal() as db:
@@ -5129,6 +5133,34 @@ def test_console_accepts_only_task_bound_live_ipv4ll(client, monkeypatch, change
                 appliance_console._verify_settings_native_observation(db, "job_ipv4ll", proof)
             return
         appliance_console._verify_settings_native_observation(db, "job_ipv4ll", proof)
+    if change == "ordinary-task":
+        settings = {"management_interface": name, "management_ip": "", "management_ip_cidr": ""}
+        unit = make_appliance_apply_unit(
+            unit_id="appliance_settings", label="Settings", page_url="/settings", context={}, summary=[],
+            validation_errors=[], config_path="/tmp/settings.json", config_preview=json.dumps(settings), baseline=None,
+        )
+        expected = make_appliance_apply_unit(
+            unit_id="appliance_settings", label="Settings", page_url="/settings", context={}, summary=[],
+            validation_errors=[], config_path="/tmp/settings.json",
+            config_preview=json.dumps(dict(settings, management_ip=address, management_ip_cidr=address + "/16"),
+                                      indent=2, sort_keys=True) + "\n",
+            baseline=None,
+        )
+        assert appliance_console._post_handoff_settings_snapshot(
+            "job_ipv4ll", unit, preview, unit["snapshot_hash"], native_observation=proof,
+        ) == expected["snapshot_hash"]
+        with pytest.raises(ConsoleOperationError, match="different Network snapshot"):
+            appliance_console._post_handoff_settings_snapshot(
+                "job_ipv4ll", unit, preview, unit["snapshot_hash"],
+                native_observation={**proof, "network_preview": preview + "# changed"},
+            )
+        mismatched = {**proof, "physical_interfaces": [
+            {**row, "ipv4ll_address": "169.254.20.11"} for row in proof["physical_interfaces"]
+        ]}
+        with pytest.raises(ConsoleOperationError, match="no matching IPv4 link-local evidence"):
+            appliance_console._post_handoff_settings_snapshot(
+                "job_ipv4ll", unit, preview, unit["snapshot_hash"], native_observation=mismatched,
+            )
     if change in {None, "ordinary-task"}:
         loader = importlib.machinery.SourceFileLoader("atlaso_console_ipv4ll_bootstrap", "scripts/appliance/atlaso-bootstrap-https")
         spec = importlib.util.spec_from_loader(loader.name, loader)

@@ -1275,7 +1275,11 @@ def _post_handoff_settings_snapshot(
         if not isinstance(evidence, dict):
             if payload.get("management_handoff") is True:
                 raise ConsoleOperationError("Successful Network handoff did not record address evidence.")
-            from atlaso.app.ui import network_management_paths
+            from atlaso.app.ui import (
+                completed_management_handoff_evidence,
+                confirmed_management_handoff_ipv4ll_address,
+                network_management_paths,
+            )
 
             paths = network_management_paths(network_preview)
             if not any(path.get("ipv4_method") == "dhcp" for path in paths):
@@ -1298,6 +1302,20 @@ def _post_handoff_settings_snapshot(
                 raise ConsoleOperationError("Completed Network task has no matching fresh DHCP observation for Settings.")
             _verify_settings_native_observation(db, network_job_id, native_observation)
             evidence = native_observation
+            fallback_rows = [row for row in native_observation["physical_interfaces"] if row.get("ipv4ll_address")]
+            if fallback_rows:
+                if native_observation.get("network_preview") != network_preview or captured[0].get("config_preview") != network_preview:
+                    raise ConsoleOperationError("IPv4 link-local evidence belongs to a different Network snapshot.")
+                task_evidence = completed_management_handoff_evidence(payload, network_job_id)
+                try:
+                    for row in fallback_rows:
+                        if confirmed_management_handoff_ipv4ll_address(
+                            network_preview, task_evidence, row["mac"], row["name"],
+                        ) != row["ipv4ll_address"]:
+                            raise RuntimeError("The native address differs from the completed task.")
+                except RuntimeError as exc:
+                    raise ConsoleOperationError("Completed Network task has no matching IPv4 link-local evidence for Settings.") from exc
+                evidence = {**native_observation, "management_address_observation": task_evidence["management_address_observation"]}
         original = json.loads(str(captured_settings.get("raw_config_preview") or "{}"))
         old_management_ip = str(original.get("management_ip") or "")
         projected = deepcopy(captured_settings)
