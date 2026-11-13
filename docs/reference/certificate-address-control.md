@@ -999,10 +999,19 @@ For the ordinary CA DHCP baseline, carry forward those selectors and add `applia
 retained wheel from the original deployment. Keep the import, deployed software, and reviewed source commits
 distinct. The baseline rechecks the installed payload and helper through pinned SSH on the admitted private address.
 
-The verifier also requires the original `appliance_ova_private_lan_intent` and `appliance_ova_private_lan`
-receipts from a supported OVA transition. They bind the original VM, boot, private LAN, and management MAC before
-and after the move. The factory can admit the host-only OVA before that transition. A supported OVA transition
-producer is still required before the DHCP baseline can run.
+After the peer factory creates the peer and registers its private LAN, prepare the trusted-host plan with the
+original peer and LAN receipts. Shut down the original OVA through the normal Workstation lifecycle and confirm
+fresh host admission. Run `scripts/windows/vmware/move-ova-to-certificate-lan.ps1` from the reviewed checkout.
+Pass the plan and its SHA-256, the checkout commit and branch, the owning PR and imported VM name, the admitted
+`vmrun.exe` SHA-256, and the prepared Python interpreter. The command checks the original appliance and the
+registered LAN, moves only the management NIC, and leaves the services NIC disconnected and the appliance stopped.
+
+The command writes `atlaso-test-vm-ova-private-lan-intent-<invocation>.json` and
+`atlaso-test-vm-ova-private-lan-complete-<invocation>.json` beside the original import receipt. Use their original
+paths and SHA-256 digests as `appliance_ova_private_lan_intent` and `appliance_ova_private_lan` in the baseline
+plan. An existing intent consumes the attempt even if completion is missing. Preserve that state for diagnosis.
+After successful readback, start the appliance through the normal lifecycle and recheck the private topology
+before collecting the DHCP baseline.
 
 ## Failure handling and limits
 

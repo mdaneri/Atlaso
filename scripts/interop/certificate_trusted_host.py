@@ -297,9 +297,47 @@ def _parse_segments(payload: bytes) -> dict[str, str]:
         raise Refusal("trusted_host_preferences_invalid")
     if set(names) != set(range(declared_count)) or set(ids) != set(range(declared_count)):
         raise Refusal("trusted_host_preferences_invalid")
-    if len(set(names.values())) != len(names) or len(set(ids.values())) != len(ids):
+    if (len({name.casefold() for name in names.values()}) != len(names)
+            or len({value.casefold() for value in ids.values()}) != len(ids)):
         raise Refusal("trusted_host_preferences_ambiguous")
-    return dict(zip(names.values(), ids.values(), strict=True))
+    return {names[index]: ids[index] for index in names}
+
+
+def verify_registered_segment(
+    preferences: bytes, receipt_bytes: bytes, *, expected_sha256: str, task_id: str,
+    repository: str, pr: int, source_commit: str, name: str, segment_id: str,
+) -> None:
+    """Verify an existing LAN registration against its original creation receipt.
+
+    Args:
+        preferences: Exact preferences bytes from the host catalog.
+        receipt_bytes: Exact original segment creation receipt bytes.
+        expected_sha256: Independently retained receipt digest.
+        task_id: Original owner task.
+        repository: Original owner repository.
+        pr: Original owner pull request.
+        source_commit: Original peer and LAN creation source.
+        name: Expected LAN registration name.
+        segment_id: Exact LAN registration identifier.
+    """
+    if not isinstance(expected_sha256, str) or _sha256(receipt_bytes) != expected_sha256:
+        raise Refusal("trusted_host_segment_receipt_digest_mismatch")
+    try:
+        receipt = json.loads(receipt_bytes)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise Refusal("trusted_host_segment_receipt_invalid") from None
+    binding = {"schema": 1, "task_id": task_id, "repository": repository, "pr": pr,
+               "source_commit": source_commit, "name": name, "pvn_id": segment_id}
+    if (not isinstance(receipt, dict) or type(receipt.get("schema")) is not int
+            or type(receipt.get("pr")) is not int
+            or any(receipt.get(key) != value for key, value in binding.items())):
+        raise Refusal("trusted_host_segment_receipt_binding_mismatch")
+    if not isinstance(segment_id, str) or _SEGMENT_ID.fullmatch(segment_id) is None:
+        raise Refusal("trusted_host_segment_id_invalid")
+    registered = _parse_segments(preferences)
+    actual = next((value for label, value in registered.items() if label.casefold() == name.casefold()), None)
+    if actual != segment_id:
+        raise Refusal("trusted_host_segment_registration_changed")
 
 
 def _run_vmrun(executable: Path) -> tuple[list[Path], str]:
@@ -432,28 +470,12 @@ def inspect_trusted_host(plan: dict[str, Any]) -> dict[str, Any]:
     segment_source = _segment_creation_source(plan, host)
     receipt_path, receipt_bytes = _ordinary_file(receipt.get("path"), "trusted_host_segment_receipt_invalid", limit=262144)
     expected_receipt_sha = receipt.get("sha256")
-    if not isinstance(expected_receipt_sha, str) or _sha256(receipt_bytes) != expected_receipt_sha:
-        raise Refusal("trusted_host_segment_receipt_digest_mismatch")
-    try:
-        receipt_value = json.loads(receipt_bytes)
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        raise Refusal("trusted_host_segment_receipt_invalid") from None
-    if (not isinstance(receipt_value, dict) or receipt_value.get("schema") != 1
-            or receipt_value.get("task_id") != plan["task_id"]
-            or receipt_value.get("repository") != plan["repository"]
-            or receipt_value.get("pr") != plan["pr"]
-            or receipt_value.get("source_commit") != segment_source
-            or receipt_value.get("name") != host["segment_name"]
-            or receipt_value.get("pvn_id") != host["segment_id"]):
-        raise Refusal("trusted_host_segment_receipt_binding_mismatch")
-
     segment_id = host["segment_id"]
-    if not isinstance(segment_id, str) or _SEGMENT_ID.fullmatch(segment_id) is None:
-        raise Refusal("trusted_host_segment_id_invalid")
-    segments = _parse_segments(preferences)
-    registered_id = next((value for name, value in segments.items() if name.casefold() == str(host["segment_name"]).casefold()), None)
-    if registered_id != segment_id:
-        raise Refusal("trusted_host_segment_registration_changed")
+    verify_registered_segment(
+        preferences, receipt_bytes, expected_sha256=expected_receipt_sha, task_id=plan["task_id"],
+        repository=plan["repository"], pr=plan["pr"], source_commit=segment_source,
+        name=host["segment_name"], segment_id=segment_id,
+    )
 
     registered, stale_registration_count, vacant_registration_count = _parse_inventory(inventory)
     running, running_digest = _run_vmrun(vmrun_path)
