@@ -465,8 +465,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends rpm rpm2cpio cpio createrepo-c
-          python -m pip install --require-hashes --requirement target-source/requirements-appliance.lock
-          python -m pip install --require-hashes --requirement requirements-release-tools.lock
+          python -m venv "$RUNNER_TEMP/iso-python"
+          "$RUNNER_TEMP/iso-python/bin/python" -m pip install --require-hashes --requirement target-source/requirements-appliance.lock
       - name: Build and sign the exact software bundle
         if: steps.state.outputs.state == 'absent'
         env:
@@ -493,11 +493,11 @@ jobs:
             --bundle "dist/release/atlaso-appliance-$VERSION.tar.gz" \
             --trust-key "image/common/update-trust/$RELEASE_KEY_ID.pem" \
             --output "$RUNNER_TEMP/software" --expected-version "$VERSION" --expected-commit "$RELEASE_SHA"
-          python scripts/build_installation_iso.py prepare --commit "$RELEASE_SHA" --version "$VERSION" \
+          "$RUNNER_TEMP/iso-python/bin/python" scripts/build_installation_iso.py prepare --commit "$RELEASE_SHA" --version "$VERSION" \
             --software "$RUNNER_TEMP/software" --payload "$RUNNER_TEMP/payload" \
             --rpms "$RUNNER_TEMP/capture/rpms" --powercli "$RUNNER_TEMP/capture/powercli"
           mkdir "$RUNNER_TEMP/iso-validation"
-          python scripts/build_installation_iso.py validate --commit "$RELEASE_SHA" --version "$VERSION" \
+          "$RUNNER_TEMP/iso-python/bin/python" scripts/build_installation_iso.py validate --commit "$RELEASE_SHA" --version "$VERSION" \
             --payload "$RUNNER_TEMP/payload" --scratch "$RUNNER_TEMP/iso-validation"
           rm -rf -- "$RUNNER_TEMP/capture" "$RUNNER_TEMP/software" "$RUNNER_TEMP/iso-validation"
           python -m scripts.installation.release_capture check-capacity \
@@ -513,7 +513,7 @@ jobs:
           trap 'rm -f -- "$RUNNER_TEMP/release-signing-key.pem"' EXIT
           unset RELEASE_SIGNING_PRIVATE_KEY
           mkdir "$RUNNER_TEMP/iso-assets" "$RUNNER_TEMP/iso-build"
-          python scripts/build_installation_iso.py finalize --commit "$RELEASE_SHA" --version "$VERSION" \
+          "$RUNNER_TEMP/iso-python/bin/python" scripts/build_installation_iso.py finalize --commit "$RELEASE_SHA" --version "$VERSION" \
             --payload "$RUNNER_TEMP/payload" --source-iso "$RUNNER_TEMP/photon.iso" \
             --output "$RUNNER_TEMP/iso-assets" --scratch "$RUNNER_TEMP/iso-build" \
             --signing-key "$RUNNER_TEMP/release-signing-key.pem" --bind-software
