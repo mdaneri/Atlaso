@@ -5014,7 +5014,7 @@ def test_console_final_native_attestation_shares_physical_vlan_deadline(monkeypa
         appliance_console._reattest_settings_native_observation(proof)
 
 
-@pytest.mark.parametrize("change", [None, "missing-task-proof", "native-withdrawal", "new-dhcp", "fallback-disabled"])
+@pytest.mark.parametrize("change", [None, "ordinary-task", "wrong-ordinary-task", "missing-task-proof", "native-withdrawal", "new-dhcp", "fallback-disabled"])
 def test_console_accepts_only_task_bound_live_ipv4ll(client, monkeypatch, change):
     """Keep APIPA setup-only while checking task evidence, live identity and Settings admission.
 
@@ -5038,7 +5038,7 @@ def test_console_accepts_only_task_bound_live_ipv4ll(client, monkeypatch, change
         VlanInterface,
     )
     from atlaso.app.services.networking import HostPhysicalInterface
-    from atlaso.app.ui import management_ui_addresses
+    from atlaso.app.ui import management_ui_addresses, ordinary_network_ipv4ll_evidence
 
     address = "169.254.20.10"
     with SessionLocal() as db:
@@ -5058,10 +5058,24 @@ def test_console_accepts_only_task_bound_live_ipv4ll(client, monkeypatch, change
             ],
         }]}
         evidence = {"candidate_addresses": [address], "management_address_observation": native}
+        ordinary = change in {"ordinary-task", "wrong-ordinary-task"}
+        result = {"unit_id": "network", "management_handoff": evidence}
+        if ordinary:
+            helper_output = json.dumps({
+                "network": "systemd-networkd apply complete",
+                "network_address_evidence": {"job_id": "job_ipv4ll", "observation": native},
+            })
+            ordinary_evidence = ordinary_network_ipv4ll_evidence(helper_output, preview, "job_ipv4ll")
+            assert ordinary_evidence["candidate_addresses"] == [address]
+            assert ordinary_network_ipv4ll_evidence(helper_output, preview, "job_other") == {}
+            if change == "wrong-ordinary-task":
+                ordinary_evidence["job_id"] = "job_other"
+            result = {"unit_id": "network", "success": True, "dry_run": False, "network_ipv4ll_evidence": ordinary_evidence}
         db.add(Job(id="job_ipv4ll", type="appliance-apply", status=JobStatus.SUCCEEDED.value, created_by="test",
                    result=json.dumps({"captured_units": [{"unit_id": "network", "config_preview": preview}],
-                                      "management_handoff": change != "missing-task-proof",
-                                      "units": [{"unit_id": "network", "management_handoff": evidence}]})))
+                                      "management_handoff": not ordinary and change != "missing-task-proof",
+                                      "network_application_committed": ordinary, "network_runtime_commit_pending": False,
+                                      "units": [result]})))
         db.commit()
 
     host = HostPhysicalInterface(name=name, mac_address=mac, driver=None, speed=None, host_ip_cidr=None,
@@ -5083,7 +5097,7 @@ def test_console_accepts_only_task_bound_live_ipv4ll(client, monkeypatch, change
 
     monkeypatch.setattr(SystemAdapter, "read_network_address_status", address_status)
     monkeypatch.setattr(appliance_console.time, "sleep", lambda _: pytest.fail("one native pass expected"))
-    if change in {"missing-task-proof", "native-withdrawal"}:
+    if change in {"missing-task-proof", "native-withdrawal", "wrong-ordinary-task"}:
         clock = [0.0]
 
         def expire_on_wait(seconds):
@@ -5115,7 +5129,7 @@ def test_console_accepts_only_task_bound_live_ipv4ll(client, monkeypatch, change
                 appliance_console._verify_settings_native_observation(db, "job_ipv4ll", proof)
             return
         appliance_console._verify_settings_native_observation(db, "job_ipv4ll", proof)
-    if change is None:
+    if change in {None, "ordinary-task"}:
         loader = importlib.machinery.SourceFileLoader("atlaso_console_ipv4ll_bootstrap", "scripts/appliance/atlaso-bootstrap-https")
         spec = importlib.util.spec_from_loader(loader.name, loader)
         bootstrap = importlib.util.module_from_spec(spec)

@@ -1665,7 +1665,7 @@ def _refresh_management_addresses(
                 raise ConsoleOperationError("The completed task's management Network snapshot is unavailable.")
             network_preview = str(units[0].get("config_preview") or "")
             expected_paths = network_management_paths(network_preview)
-            handoff = completed_management_handoff_evidence(payload)
+            handoff = completed_management_handoff_evidence(payload, network_job_id)
             if not expected_paths or any(path.get("management_eligible") != "true" for path in expected_paths):
                 raise ConsoleOperationError(
                     "An applied management path is ineligible. Certificate recovery and Appliance Settings were not started."

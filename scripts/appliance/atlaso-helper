@@ -16329,7 +16329,7 @@ def _handle_network_locked(
                     raise ValueError("previous management route reconfigure failed")
             if _apply_vlan_interfaces(config_path, defer_removed=True) != 0:
                 raise ValueError("candidate VLAN activation failed")
-            _wait_network_addresses(config_path, started_at=activation_started)
+            address_observation = _wait_network_addresses(config_path, started_at=activation_started)
             _install_route_domain_intent(config_path, held_addresses=held_sources)
             _apply_route_domain_ingress(config_path, retain_removed_vlan_guards=True)
             _reconcile_route_domains()
@@ -16353,17 +16353,21 @@ def _handle_network_locked(
         else:
             print(str(exc), file=sys.stderr)
         return 2
-    print(
-        json.dumps(
-            {
-                "network": "systemd-networkd apply complete",
-                "admin_down_links": admin_down_links,
-                "installed_files": installed,
-                "reconfigure_links": reconfigure_links,
-            },
-            sort_keys=True,
-        )
-    )
+    result = {
+        "network": "systemd-networkd apply complete",
+        "admin_down_links": admin_down_links,
+        "installed_files": installed,
+        "reconfigure_links": reconfigure_links,
+    }
+    if not preserve_transition_routes and address_observation and any(
+        item.get("source") == "IPv4LL" and item.get("state") == "assigned"
+        for link in address_observation.get("links", []) for item in link.get("addresses", [])
+    ):
+        task = _network_transaction_state()
+        job_id = task.get("job_id")
+        if task.get("phase") == "awaiting-commit" and job_id and job_id != "manual":
+            result["network_address_evidence"] = {"job_id": job_id, "observation": address_observation}
+    print(json.dumps(result, sort_keys=True))
     return 0
 
 

@@ -593,15 +593,16 @@ def fix_state_permissions() -> None:
             path.chmod(0o750 if path.is_dir() else 0o600)
 
 
-def _recovery_ipv4ll_addresses(db, preview: str, payload: dict) -> dict[str, str]:
+def _recovery_ipv4ll_addresses(db, preview: str, payload: dict, job_id: str) -> dict[str, str]:
     """Select task-confirmed setup addresses for the applied management NIC.
 
     Args:
         db: Admitted recovery transaction.
         preview: Exact completed Network snapshot.
         payload: Completed Network job result.
+        job_id: Exact completed Network task being consumed.
     """
-    evidence = _ui_call("completed_management_handoff_evidence", payload)
+    evidence = _ui_call("completed_management_handoff_evidence", payload, job_id)
     if not evidence:
         return {}
     settings = db.scalar(select(ApplianceSettings).order_by(ApplianceSettings.id))
@@ -754,7 +755,7 @@ def ensure_recovery_ca_state(
         )
         if not network_management_paths(preview) or network_management_paths(preview) != network_management_paths(current):
             return ["Management paths changed after Network apply; pending edits prevent certificate recovery."]
-    ipv4ll = _recovery_ipv4ll_addresses(db, preview, payload) if network_job_id is not None else {}
+    ipv4ll = _recovery_ipv4ll_addresses(db, preview, payload, network_job_id) if network_job_id is not None else {}
     if network_job_id is not None and not recovery_dynamic_addresses_available(db, preview, ipv4ll=ipv4ll):
         return ["Applied dynamic management observation is unavailable; certificate recovery was not started."]
     if network_job_id is not None:
@@ -893,7 +894,7 @@ def acknowledge_console_publication(network_job_id: str, receipt_sha256: str) ->
             settings = db.scalar(select(CaSettings))
             certificates = db.scalars(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https")).all()
             preview = str(units[0].get("config_preview") or "")
-            ipv4ll = _recovery_ipv4ll_addresses(db, preview, payload)
+            ipv4ll = _recovery_ipv4ll_addresses(db, preview, payload, network_job_id)
             if not recovery_dynamic_addresses_available(db, preview, ipv4ll=ipv4ll):
                 return 2
             current = render_ca_apply_payload(settings, certificates, include_private_keys=False, profiles=db.scalars(select(CaProfile)).all())
@@ -954,7 +955,7 @@ def completed_network_binding_is_current(db, network_job_id: str) -> bool:
     return bool(job is not None and job.status == JobStatus.SUCCEEDED.value
                 and network_management_paths(preview)
                 and network_management_paths(preview) == network_management_paths(current)
-                and recovery_dynamic_addresses_available(db, preview, ipv4ll=_recovery_ipv4ll_addresses(db, preview, payload)))
+                and recovery_dynamic_addresses_available(db, preview, ipv4ll=_recovery_ipv4ll_addresses(db, preview, payload, network_job_id)))
 
 
 def verify_console_http_recovery(network_job_id: str, http_port: int) -> int:
@@ -987,7 +988,7 @@ def verify_console_http_recovery(network_job_id: str, http_port: int) -> int:
             job = db.get(Job, network_job_id)
             payload = json.loads(job.result)
             preview = next(unit["config_preview"] for unit in payload["captured_units"] if unit["unit_id"] == "network")
-            ipv4ll = _recovery_ipv4ll_addresses(db, preview, payload)
+            ipv4ll = _recovery_ipv4ll_addresses(db, preview, payload, network_job_id)
             if (receipt["network_job_id"] != network_job_id or receipt["http_settings_snapshot"] != applied
                     or recovery_dynamic_address_binding(db, preview, native=True, ipv4ll=ipv4ll) != receipt["dynamic_address_binding"]):
                 return 2
@@ -1012,7 +1013,7 @@ def refresh_completed_management_certificate(network_job_id: str) -> int:
         payload = json.loads(job.result or "{}") if job is not None else {}
         captured = [unit for unit in payload.get("captured_units", []) if unit.get("unit_id") == "network"]
         preview = str(captured[0].get("config_preview") or "") if len(captured) == 1 else ""
-        ipv4ll = _recovery_ipv4ll_addresses(db, preview, payload)
+        ipv4ll = _recovery_ipv4ll_addresses(db, preview, payload, network_job_id)
         settings_baseline = load_appliance_apply_baselines(db).get("appliance_settings")
         try:
             applied_settings = json.loads(str((settings_baseline or {}).get("config_preview") or "{}"))

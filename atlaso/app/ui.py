@@ -10971,18 +10971,75 @@ def confirmed_management_handoff_ipv4ll_address(
         raise RuntimeError("Protected handoff did not confirm the resolved DHCP management address.") from exc
 
 
-def completed_management_handoff_evidence(payload: dict[str, Any]) -> dict[str, Any]:
-    """Select the unique Network result of a successful protected handoff.
+def ordinary_network_ipv4ll_evidence(
+    stdout: str, network_preview: str, job_id: str,
+) -> dict[str, Any]:
+    """Retain only uniquely owned management fallback from the ordinary helper result.
+
+    Args:
+        stdout: Complete successful helper output before task-log abbreviation.
+        network_preview: Captured Network intent executed for this task.
+        job_id: Exact task identifier placed in the staged Network intent.
+    """
+    from atlaso.app.services.dynamic_management import native_management_addresses
+
+    try:
+        lines = stdout.rstrip().splitlines()
+        if not lines or len(lines[-1]) > 262144:
+            return {}
+        result = json.loads(lines[-1])
+        envelope = result.get("network_address_evidence", {})
+        if result.get("network") != "systemd-networkd apply complete" or envelope.get("job_id") != job_id:
+            return {}
+        observation = envelope["observation"]
+        rows = network_interface_entries(network_preview)
+        links = []
+        candidates = []
+        for row in rows:
+            if row.get("kind") != "physical" or row.get("role") != "management":
+                continue
+            native = native_management_addresses(row, observation)
+            for address in native["apipa_addresses"]:
+                confirmed_management_handoff_ipv4ll_address(
+                    network_preview, {"candidate_addresses": [address], "management_address_observation": observation},
+                    row["mac"], row["name"],
+                )
+                link = next(link for link in observation["links"] if link["name"] == row["name"])
+                links.append({**link, "addresses": [
+                    item for item in link["addresses"] if item["address"] == address and item["state"] == "assigned"
+                ]})
+                candidates.append(address)
+        if candidates:
+            return {"job_id": job_id, "candidate_addresses": candidates, "management_address_observation": {
+                "observed_at": observation["observed_at"], "complete": True, "links": links,
+            }}
+    except (AttributeError, KeyError, TypeError, ValueError, RuntimeError):
+        pass
+    return {}
+
+
+def completed_management_handoff_evidence(payload: dict[str, Any], job_id: str) -> dict[str, Any]:
+    """Select native fallback evidence from the unique completed Network result.
 
     Args:
         payload: Result from the completed Network Apply job.
+        job_id: Exact completed Network task being consumed.
     """
-    if payload.get("management_handoff") is not True:
-        return {}
     units = [unit for unit in payload.get("units", [])
              if isinstance(unit, dict) and unit.get("unit_id") == "network"]
-    evidence = units[0].get("management_handoff") if len(units) == 1 else None
-    return evidence if isinstance(evidence, dict) else {}
+    if len(units) != 1:
+        return {}
+    unit = units[0]
+    if payload.get("management_handoff") is True:
+        evidence = unit.get("management_handoff")
+        return evidence if isinstance(evidence, dict) else {}
+    evidence = unit.get("network_ipv4ll_evidence")
+    if (payload.get("network_application_committed") is True
+            and payload.get("network_runtime_commit_pending") is False
+            and unit.get("success") is True and unit.get("dry_run") is False
+            and isinstance(evidence, dict) and evidence.get("job_id") == job_id):
+        return evidence
+    return {}
 
 
 def recheck_management_handoff_ipv4ll(
@@ -16137,6 +16194,12 @@ def execute_appliance_apply_unit(
         "config_preview": unit["config_preview"],
         "config_diff": unit["config_diff"],
     }
+    if unit_id == "network" and succeeded and not unit_result["dry_run"] and unit.get("network_transaction_job_id"):
+        evidence = ordinary_network_ipv4ll_evidence(
+            results[-1].stdout, unit["raw_config_preview"], unit["network_transaction_job_id"],
+        )
+        if evidence:
+            unit_result["network_ipv4ll_evidence"] = evidence
     if unit_id == "appliance_settings":
         management_status_transition = appliance_settings_management_status_transition(results)
         if management_status_transition is not None:
