@@ -277,6 +277,26 @@ def _rewrite_reference(inputs: SimpleNamespace, record_name: str, reference_name
     inputs.spec[reference_name] = _write_json(path, record)
 
 
+def test_inspect_inputs_dispatches_ova_and_retains_peer_media_checks(admitted_inputs, monkeypatch):
+    """Only the selected OVA receipt verifier may admit the appliance."""
+    from scripts.interop import certificate_ova_identity
+
+    spec = dict(admitted_inputs.spec, appliance_media="ova")
+    boot = spec.pop("appliance_installed_boot")
+    spec.update(appliance_ova_import_readback=boot, appliance_ova_isolation=boot, appliance_ova_boot=boot)
+    calls = []
+
+    def admit(plan, vmx, repository, *, mac):
+        calls.append((plan, vmx, repository, mac))
+        return {"directory_identity": "synthetic-original-ova"}
+
+    monkeypatch.setattr(certificate_ova_identity, "admit_ova", admit)
+    result = factory.inspect_inputs(spec, admitted_inputs.repo)
+    assert result["appliance_directory_identity"] == "synthetic-original-ova"
+    assert result["source_disk_sha256"] == spec["peer_vmdk_sha256"]
+    assert calls == [(spec, Path(spec["appliance_vmx"]), admitted_inputs.repo, spec["appliance_mac"])]
+
+
 def test_inspect_inputs_admits_original_iso_and_checksum_bound_standalone_peer(
     admitted_inputs: SimpleNamespace,
 ) -> None:

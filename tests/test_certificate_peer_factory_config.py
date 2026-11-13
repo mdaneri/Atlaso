@@ -74,6 +74,22 @@ def test_validate_spec_accepts_trusted_host_inputs_and_returns_a_copy() -> None:
     assert source == original
 
 
+def test_validate_spec_keeps_ova_and_iso_receipt_selectors_distinct() -> None:
+    """Require the original OVA receipt set when the factory selects OVA media."""
+    reference = {"path": _PATH, "sha256": _DIGEST}
+    spec = _spec(
+        appliance_media="ova", appliance_ova_import_readback=reference,
+        appliance_ova_isolation=reference, appliance_ova_boot=reference,
+    )
+    iso = spec.pop("appliance_installed_boot")
+    assert validate_spec(spec) == spec
+    with pytest.raises(ValueError, match="appliance_installed_boot"):
+        validate_spec({**spec, "appliance_installed_boot": iso})
+    spec.pop("appliance_ova_boot")
+    with pytest.raises(ValueError, match="appliance_ova_boot"):
+        validate_spec(spec)
+
+
 def test_validate_spec_accepts_the_smallest_supported_subnet() -> None:
     validated = validate_spec(
         _spec(

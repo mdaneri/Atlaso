@@ -61,6 +61,62 @@ def test_guest_identity_validates_real_asset_marker_after_active_wheel_measureme
         next(replies)
 
 
+@pytest.mark.parametrize("changed_payload", [False, True])
+def test_guest_identity_rechecks_ova_wheel_at_the_private_address(monkeypatch, changed_payload):
+    """Exercise the actual encoded OVA inspection program with a synthetic guest."""
+    from scripts.interop import certificate_ova_identity
+
+    address = "192.168.77.10"
+    remote = "/var/tmp/atlaso-ova-deploy-" + "1" * 32 + "/atlaso-0.9.500-py3-none-any.whl"
+    facts = {
+        "schema": 1, "wheel_sha256": "a" * 64, "helper_sha256": "b" * 64,
+        "wheel_payload_sha256": "c" * 64, "installed_payload_sha256": "c" * 64,
+        "verified_payload_files": 316, "mac": "00:0c:29:f9:ff:49", "interface": "eth0",
+    }
+    monkeypatch.setattr(certificate_ova_identity, "admit_ova_runtime", lambda _plan: facts)
+    monkeypatch.setattr(bootstrap, "reviewed_helper_identity", lambda _plan: {
+        "helper_source_commit": "1" * 40, "helper_sha256": facts["helper_sha256"],
+    })
+    plan = {"appliance_media": "ova", "appliance_ova_remote_wheel": remote}
+    session = SimpleNamespace(private_ip=address, command=lambda command:
+        b"LoadState=loaded\nActiveState=active\n" if command.startswith("systemctl ")
+        else (facts["helper_sha256"] + "  /opt/atlaso/bin/atlaso-helper\n").encode())
+    programs = []
+
+    def read(_session, command, _password):
+        programs.append(command)
+        if len(programs) == 1:
+            return b'{"state":"proven-absent"}'
+        import zlib
+
+        payload = re.search(r'b64decode\("([A-Za-z0-9+/=]+)"\)', command)
+        assert payload is not None
+        program = zlib.decompress(base64.b64decode(payload[1])).decode()
+        definitions, call = program.rsplit("print(json.dumps(", 1)
+        assert "def deployment_evidence(" in definitions
+        assert "raise SystemExit(main())" not in definitions
+
+        def measure(wheel, requested_address):
+            assert wheel == Path(remote)
+            assert requested_address == address
+            value = dict(facts, address=address)
+            if changed_payload:
+                value["wheel_payload_sha256"] = "d" * 64
+            return value
+
+        assert call == f"deployment_evidence(Path({remote!r}), {address!r})))\n"
+        return json.dumps(measure(Path(remote), address)).encode()
+
+    monkeypatch.setattr(bootstrap, "sudo_read", read)
+    if changed_payload:
+        with pytest.raises(bootstrap.Refusal, match="bootstrap_ova_payload_changed"):
+            bootstrap.guest_identity(session, plan, "synthetic-password")
+    else:
+        result = bootstrap.guest_identity(session, plan, "synthetic-password")
+        assert result["wheel_sha256"] == facts["wheel_sha256"]
+    assert len(programs) == 2
+
+
 def test_guest_python_transport_preserves_multiline_docstrings_and_quotes(tmp_path):
     """Run the exact encoded command argument through a native Python process.
 

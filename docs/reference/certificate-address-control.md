@@ -8,7 +8,8 @@ status: current
 
 # Certificate handoff address-control procedure
 
-This procedure defines a trusted-host acceptance path for certificate address handoff on an ISO-installed appliance.
+This procedure defines a trusted-host acceptance path for certificate address handoff on an ISO-installed or originally
+imported OVA appliance.
 It uses one task-owned Workstation appliance and one task-owned Linux peer attached to the same dedicated private LAN
 segment. The maintainer trusts the Windows Workstation host administrator to account for that host's VMs and to avoid
 changing the test topology during acceptance. The evidence supports a controlled lab result; it is not proof against
@@ -984,6 +985,25 @@ the blocking condition. Do not substitute broad provider cleanup or recursive de
 cleanup complete while retention or release gates remain unresolved. Branch/worktree completion separately follows
 the [completed-task cleanup policy](../contribute/completed-task-cleanup.md).
 
+## Use an original OVA for the ordinary DHCP baseline
+
+The standalone peer factory accepts `"appliance_media": "ova"` for the original task-owned OVA import. Supply the
+original `appliance_intent` and `appliance_ownership` references, plus `appliance_ova_import_readback`,
+`appliance_ova_isolation`, and `appliance_ova_boot`. Keep the original import phase files in their original ownership
+directory and preserve each related evidence file's basename. The factory checks the original VMware directory,
+all four disk identities, the first-boot VMX identity, the management MAC, and isolation before admitting the peer.
+The selected Ed25519 public key and its SSH-agent counterpart are still required for peer creation and use.
+
+For the ordinary CA DHCP baseline, carry forward those selectors and add `appliance_ova_runtime`,
+`appliance_ova_deploy_admission`, and `appliance_ova_remote_wheel`. The last field is the absolute guest path of the
+retained wheel from the original deployment. Keep the import, deployed software, and reviewed source commits
+distinct. The baseline rechecks the installed payload and helper through pinned SSH on the admitted private address.
+
+The verifier also requires the original `appliance_ova_private_lan_intent` and `appliance_ova_private_lan`
+receipts from a supported OVA transition. They bind the original VM, boot, private LAN, and management MAC before
+and after the move. The factory can admit the host-only OVA before that transition. A supported OVA transition
+producer is still required before the DHCP baseline can run.
+
 ## Failure handling and limits
 
 If any admission fact is missing, stale, or ambiguous, make no appliance change and preserve the VM, peer, LAN,
@@ -1004,7 +1024,7 @@ a supported cleanup capability, or another release gate remains uncertain, recor
 reason, and retry condition and preserve it; uncertainty is neither cleanup authorization nor indefinite unrecorded
 retention. A terminal failed run does not waive any branch/worktree completion gate.
 
-The trusted-host bootstrap and proof wrappers admit the original ISO and peer receipt kinds for the current task and
+The trusted-host bootstrap and proof wrappers admit the original appliance and peer receipt kinds for the current task and
 PR, then repeat inventory, reservation, identity, and trust checks before obtaining guest credentials. The standalone
 peer fixture binds the LAN receipt at its original path under the configured Codex worktree root's `lan-segments`
 directory. Keep the plan, public CA, and byte-identical copies of its direct receipt inputs under `test-results`.

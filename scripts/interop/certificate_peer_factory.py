@@ -1,4 +1,4 @@
-"""Read-only original-input admission for the standalone ISO certificate peer."""
+"""Read-only original-input admission for the standalone certificate peer."""
 
 from __future__ import annotations
 
@@ -101,7 +101,7 @@ def require_ancestor(repository: Path, source: str, head: str) -> None:
 
 
 def inspect_inputs(spec: dict, repository: Path) -> dict:
-    """Admit an original ISO appliance and independently verified read-only source disk.
+    """Admit an original appliance and independently verified read-only source disk.
 
     The caller retains ordinary Windows source/receipt pins throughout creation.
     This function performs no provider operation, creates no receipt and adopts no VM.
@@ -111,10 +111,44 @@ def inspect_inputs(spec: dict, repository: Path) -> dict:
         repository: Exact task checkout admitted by the owning PowerShell wrapper.
     """
     spec = validate_spec(spec)
+    vmx = Path(spec["appliance_vmx"])
+    if spec.get("appliance_media") == "ova":
+        from scripts.interop.certificate_ova_identity import admit_ova
+
+        directory_identity = admit_ova(spec, vmx, repository, mac=spec["appliance_mac"])["directory_identity"]
+    else:
+        directory_identity = _inspect_iso(spec, vmx, repository)
+    preparation = bound_json(spec["peer_source_preparation"])
+    disk = Path(str(preparation.get("vmdk") or ""))
+    qcow = Path(str(preparation.get("qcow2") or ""))
+    if not disk.is_absolute() or not qcow.is_absolute() or disk == qcow:
+        raise Refusal("peer_source_paths_invalid")
+    canonical = repository / "scripts/windows/vmware/prepare-tiny-linux-client.ps1"
+    source = canonical.read_text(encoding="utf-8")
+    pins = re.findall(r"\[string\]\$ExpectedSha512 = '([0-9a-f]{128})'", source)
+    if len(pins) != 1 or str(preparation.get("sha512", "")).lower() != pins[0]:
+        raise Refusal("peer_source_release_pin_mismatch")
+    for path, algorithm, expected in ((qcow, "sha512", pins[0]), (disk, "sha256", spec["peer_vmdk_sha256"])):
+        with public_file(path), path.open("rb") as stream:
+            if hashlib.file_digest(stream, algorithm).hexdigest() != expected:
+                raise Refusal("peer_source_content_changed")
+    standalone_disk(disk)
+    return {"spec": spec, "appliance_directory_identity": directory_identity,
+            "source_disk": str(disk), "source_qcow2": str(qcow),
+            "source_disk_sha256": spec["peer_vmdk_sha256"], "source_qcow2_sha512": pins[0]}
+
+
+def _inspect_iso(spec: dict, vmx: Path, repository: Path) -> str:
+    """Return the directory identity of an original ISO appliance.
+
+    Args:
+        spec: Validated ISO factory specification.
+        vmx: Original installation VMX path.
+        repository: Exact task checkout for ancestry validation.
+    """
     intent = bound_json(spec["appliance_intent"])
     original = bound_json(spec["appliance_ownership"])
     boot = bound_json(spec["appliance_installed_boot"])
-    vmx = Path(spec["appliance_vmx"])
     root = vmx.parent
     for record in (intent, original, boot):
         if (record.get("schema") != 1 or record.get("task_id") != spec["task_id"]
@@ -162,24 +196,7 @@ def inspect_inputs(spec: dict, repository: Path) -> dict:
             or any(key.startswith("ethernet") and key.endswith(".present") and key != "ethernet0.present"
                    and value.upper() == "TRUE" for key, value in values.items())):
         raise Refusal("original_iso_native_identity_mismatch")
-    preparation = bound_json(spec["peer_source_preparation"])
-    disk = Path(str(preparation.get("vmdk") or ""))
-    qcow = Path(str(preparation.get("qcow2") or ""))
-    if not disk.is_absolute() or not qcow.is_absolute() or disk == qcow:
-        raise Refusal("peer_source_paths_invalid")
-    canonical = repository / "scripts/windows/vmware/prepare-tiny-linux-client.ps1"
-    source = canonical.read_text(encoding="utf-8")
-    pins = re.findall(r"\[string\]\$ExpectedSha512 = '([0-9a-f]{128})'", source)
-    if len(pins) != 1 or str(preparation.get("sha512", "")).lower() != pins[0]:
-        raise Refusal("peer_source_release_pin_mismatch")
-    for path, algorithm, expected in ((qcow, "sha512", pins[0]), (disk, "sha256", spec["peer_vmdk_sha256"])):
-        with public_file(path), path.open("rb") as stream:
-            if hashlib.file_digest(stream, algorithm).hexdigest() != expected:
-                raise Refusal("peer_source_content_changed")
-    standalone_disk(disk)
-    return {"spec": spec, "appliance_directory_identity": directory_identity,
-            "source_disk": str(disk), "source_qcow2": str(qcow),
-            "source_disk_sha256": spec["peer_vmdk_sha256"], "source_qcow2_sha512": pins[0]}
+    return directory_identity
 
 
 def main() -> int:
