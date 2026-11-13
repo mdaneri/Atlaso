@@ -55,6 +55,7 @@ TRUSTED_ROOT_REFS_BY_WORKFLOW = {
     },
 }
 TRUSTED_PREFIXED_REFS_BY_WORKFLOW = {
+    "release.yml": {"${{ needs.prepare.outputs.release_sha }}"},
     "wheel.yml": {"${{ steps.target.outputs.commit }}"},
 }
 

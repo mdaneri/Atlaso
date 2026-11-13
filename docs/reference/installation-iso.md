@@ -1,6 +1,6 @@
 ---
 title: Offline installation ISO build and verification
-description: Prepare, verify, and release the planned signed Atlaso installation ISO.
+description: Prepare, verify, and release the signed Atlaso installation ISO.
 audience:
   - contributor
   - maintainer
@@ -116,7 +116,41 @@ root. Receipt resource ownership and source/task identity before creating dispos
 [completed-task cleanup policy](../contribute/completed-task-cleanup.md). Keep release signing inside the protected
 hosted workflow.
 
-## Prepare inputs
+## Stage and publish a standard release
+
+Starting with `v0.9.501`, **Publish appliance release** builds the signed x86-64 UEFI installation ISO alongside the
+signed appliance software for each eligible main commit. Both asset sets go to the same hidden `vX.Y.Z` draft. The
+draft's workflow summary reports the full ISO SHA-256. Earlier published versions retain their software-only assets.
+
+Use the [native refresh workflow](installation-iso-refresh.md) to capture the approved Photon RPM closure, guest
+tools and PowerCLI. From the original successful capture's source checkout, export the retained capture and its
+verified provenance to an absent archive path:
+
+```text
+python -m scripts.installation.release_capture pack --capture-state <original-capture-state-directory> --archive <absent-capture.tar.gz>
+```
+
+Store the archive as an immutable object in maintainer-managed private HTTPS storage. Set `INSTALLATION_CAPTURE_URL`
+and `INSTALLATION_CAPTURE_SHA256` together in the protected `appliance-release` GitHub environment. Store the
+read-only Bearer credential as `INSTALLATION_CAPTURE_TOKEN` using the repository credential procedure. Use a direct
+HTTPS endpoint that does not redirect. Rotate the object and both pins after a new compatible capture is admitted.
+CI checks the archive digest, capture fingerprint for the release source, RPM signatures and transactions, PowerCLI
+lock, pinned Photon source, and free space. An admission failure leaves the version unpublished. Once inputs are fixed,
+dispatch the workflow from `main` with the full release commit and blank approval fields to retry staging.
+
+Download the complete signed draft and verify and reconstruct the ISO as described below. Record disconnected UEFI
+installation, boot without media, Appliance Update and rollback persistence, unselected-disk preservation, and
+representative physical acceptance for that exact SHA-256 on an Atlaso issue or PR. Dispatch **Publish appliance
+release** from `main` with `release_sha`, `validated_iso_sha256`, and `installation_acceptance_evidence` set to that
+record's GitHub URL. Publication rechecks the draft bytes and verifies the public asset inventory and digests before
+advancing `development`. A later dispatch with the same evidence can recover the channel after publication. An older
+approval can publish its release without moving Latest or `development` backward.
+
+Keep any partial or conflicting draft for maintainer reconciliation. Compare its asset names, sizes, and digests with
+the original successful build evidence before correcting the draft. A complete verified draft can be reused without a
+rebuild. Any rebuilt image requires new exact-media acceptance before publication.
+
+## Prepare inputs for a standalone prerelease
 
 Use the full source commit and exact software version being prepared. Select an absent destination for each newly
 created output. Begin from authorized builder preparation state and capture the resolved, signed Photon RPM closure
@@ -164,9 +198,9 @@ or a guest-tools package transaction. Use **Settings → Hardware** afterward to
 without contacting a repository. The portable first-boot selector keeps its separate empty ISO agent inventory.
 
 The workflow then signs the candidate, assembles the ISO, and stages the signed installation assets in the existing hidden
-`installation-vX.Y.Z-rc.N` draft. This staging run leaves the release as a draft. Installation artifacts remain
-separate from software-update and virtualization release assets. The signed release index covers the ISO manifest
-and assets; phase one requires Secure Boot disabled. ARM support is a possible second phase and is not included in
+`installation-vX.Y.Z-rc.N` draft. Standard releases use the combined path above. The signed release index covers the
+ISO manifest and assets.
+Phase one requires Secure Boot disabled. ARM support is a possible second phase and is outside
 the x86-64 release contract.
 
 ## Development-only VMware test image
@@ -701,7 +735,7 @@ account-identity challenge.
 Earlier capacity-refusal and planned-layout cancellation scenarios passed with both fixture disks unchanged.
 Do not infer reboot or persistence results from a completed installation run.
 
-Publication is a separate, explicit workflow dispatch after the exact ISO has been validated. The maintainer supplies
+Standalone prerelease publication is a separate dispatch after the exact ISO has been validated. The maintainer supplies
 `publish=true` and `validated_iso_sha256` for the ISO whose disconnected UEFI installation, reboot, Appliance Update
 success and rollback persistence, and unselected-disk preservation were tested. The workflow requires that checksum
 to match the signed draft index before publishing, then downloads and verifies the published assets again. The
@@ -818,6 +852,8 @@ original absent-adapter configuration before returning the VM to isolated inspec
 
 ## Verify a release
 
+Open the desired `vX.Y.Z` on [GitHub Releases](https://github.com/mdaneri/Atlaso/releases). Download the installation
+index and signature, `verify-installation.pyz`, and the versioned ISO or every numbered part from that release.
 Get the public verification key from an independently trusted Atlaso repository checkout. Do not trust a copy of the
 key obtained only from the release assets being verified. Use Python 3.11 or newer with OpenSSL available. The
 verifier first checks the signed installation artifact index against the selected version and full source commit,

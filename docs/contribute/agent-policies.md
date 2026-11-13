@@ -667,13 +667,12 @@ preserved with their affected subsystem below. Keep new requirements at their to
   signed update
   lineage at `v0.9.18`; do not publish or consume a retired-product bridge. Preserve tag/release commit and asset-byte
   idempotency checks. A rerun after tag/release publication must verify the existing asset bytes before retrying channel
-  advancement. Keep the protected GitHub-hosted workflow limited to the signed software/update bundle, immutable
-  `vX.Y.Z` Release, and `development` channel. Retain exact-successful-main-SHA manual dispatch for idempotent recovery;
-  authenticate the existing pointer under the shared Pages lock and refuse semantic-version downgrades so historical
-  CI reruns and replayed handoffs cannot move `development` backward.
-  Resolve retained wheel candidates and verify any existing immutable Release in an unlocked, read-only prerequisite
-  job. Pass those bounded verified inputs through the current workflow run, and acquire the shared Pages lock only for
-  the protected signing, Release publication, channel mutation, and live publication verification stages.
+  advancement. Starting with v0.9.501, the protected workflow builds the signed offline ISO and stages it with
+  the exact software bundle in one hidden draft. Revalidate the pinned native capture, RPMs and PowerCLI before
+  signing the installer. A maintainer dispatch approves the exact ISO checksum and records acceptance evidence.
+  Only the verified public release may advance development. Keep ISO assembly outside the shared Pages lock,
+  authenticate the current pointer under the lock, and prevent older approvals from replacing a newer Latest
+  software release or moving development backward. Retain exact successful-main SHA recovery and byte-idempotency.
 - Virtualization publication is separate. A clean Windows workstation consumes the exact signed `vX.Y.Z` bundle,
   installs its exact application wheel and complete hash-verified offline CPython 3.14 wheelhouse during template
   construction without rebuilding them. Preserve installed VMware Tools, both verified offline QEMU/Hyper-V RPM
