@@ -401,6 +401,13 @@ The inspector checks the four SCSI slots, virtual capacities and distinct local 
 before first boot. The controller retains the original import and directory receipts and
 verifies network isolation separately.
 
+For an acceptance lab, `scripts/windows/vmware/import-local-atlaso-ova.ps1` takes the original
+local OVA validation receipt and its SHA-256. It pins the archive and writes the intent, process,
+directory, and terminal records outside the VM directory. It then checks the powered-off VMX and
+its four disk backings before recording the original import. A failed import preserves the
+records and any materialized files. Network isolation and first-boot preparation require their
+own verified operations.
+
 VMware deployment continues through OVF-property customization. The first-boot selector retains `open-vm-tools`,
 discards the unused offline QEMU and Hyper-V RPM payloads, and records success before Atlaso services start.
 Supply a unique FQDN, Atlaso administrator password, and root password in the OVF deployment properties. The release
