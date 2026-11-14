@@ -308,7 +308,12 @@ def test_stopped_ova_transition_owner(tmp_path: Path, monkeypatch: pytest.Monkey
              "source_commit": "e" * 40}
 
     def original_reference(path: Path, payload: dict) -> dict:
-        """Write the synthetic original and compute its exact digest."""
+        """Write the synthetic original and compute its exact digest.
+
+        Args:
+            path: Destination for the synthetic original.
+            payload: Public fixture data to encode.
+        """
         data = json.dumps(payload).encode()
         path.write_bytes(data)
         return {"path": str(path), "sha256": hashlib.sha256(data).hexdigest()}
@@ -345,7 +350,15 @@ def test_stopped_ova_transition_owner(tmp_path: Path, monkeypatch: pytest.Monkey
 
     def admit_import(_plan: dict, _vmx: Path, _repository: Path, *,
                      mac: str, read_receipt: Callable[[dict], dict]) -> _OvaImportProof:
-        """Supply synthetic provenance while retaining the real receipt read pins."""
+        """Supply synthetic provenance while retaining the real receipt read pins.
+
+        Args:
+            _plan: Synthetic plan supplied by the owning entry point.
+            _vmx: Synthetic appliance VMX path.
+            _repository: Synthetic repository root.
+            mac: Expected management MAC.
+            read_receipt: Reader that pins the original fixture receipts.
+        """
         assert mac == _MAC
         assert read_receipt(import_ref) == {"import": True}
         assert read_receipt(boot_ref) == {"boot": True}
@@ -354,7 +367,11 @@ def test_stopped_ova_transition_owner(tmp_path: Path, monkeypatch: pytest.Monkey
     observed = []
 
     def inventory(executable: Path) -> tuple[list[Path], str]:
-        """Observe held pins and the claim state at each provider call."""
+        """Observe held pins and the claim state at each provider call.
+
+        Args:
+            executable: Synthetic VMware executable presented by the transition.
+        """
         assert executable == vmrun
         observed.append(intent.is_file())
         with pytest.raises(PermissionError):

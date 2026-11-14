@@ -681,7 +681,11 @@ def _transition_stopped_ova(plan: dict, repository: Path, *, vmrun_sha256: str) 
     files = WindowsFiles()
     with ExitStack() as pins:
         def pin_input(path: Path) -> None:
-            """Protect original inputs while allowing sibling receipt publication."""
+            """Protect original inputs while allowing sibling receipt publication.
+
+            Args:
+                path: Absolute path to the file whose original handle remains pinned.
+            """
             if not path.is_absolute() or ".." in path.parts:
                 raise Refusal("public_input_path_invalid")
             for parent in reversed(path.parents):
@@ -689,7 +693,11 @@ def _transition_stopped_ova(plan: dict, repository: Path, *, vmrun_sha256: str) 
             pins.enter_context(files.opened(path))
 
         def pinned_receipt(reference: dict) -> dict:
-            """Keep every validated original receipt pinned through completion."""
+            """Keep every validated original receipt pinned through completion.
+
+            Args:
+                reference: Original receipt path and independently retained digest.
+            """
             pin_input(Path(reference["path"]))
             return bound_json(reference)
 
