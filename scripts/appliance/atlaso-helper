@@ -3090,6 +3090,119 @@ def _restore_management_resolver(
     _reload_management_resolver(interface_name, network_path)
 
 
+def _resolver_wan_default_routes(interface_name: str) -> list[tuple[int, int, str, int]]:
+    """Capture only live, last-applied WAN defaults owned by the resolver link.
+
+    Args:
+        interface_name: Resolver link whose live routes will be captured.
+    """
+    if WAN_RUNTIME_CONFIG_PATH.is_symlink():
+        raise ValueError("applied WAN configuration is unsafe")
+    if not WAN_RUNTIME_CONFIG_PATH.exists():
+        return []
+    if not WAN_RUNTIME_CONFIG_PATH.is_file():
+        raise ValueError("applied WAN configuration is unsafe")
+    if WAN_RUNTIME_CONFIG_PATH.stat().st_size > 2_000_000:
+        raise ValueError("applied WAN configuration exceeds the observation limit")
+    applied = _mirrored_wan_defaults(_parse_wan_config(WAN_RUNTIME_CONFIG_PATH))
+    routes = []
+    for (destination, name), route in applied.items():
+        if name != interface_name:
+            continue
+        family = ip_network(destination).version
+        gateway = ip_address(route["gateway"])
+        metric = int(route.get("metric", "100") or "100") or (1024 if family == 6 else 0)
+        if gateway.version != family or not 0 <= metric <= 0xFFFFFFFF:
+            raise ValueError("applied WAN default is invalid")
+        for table in (254, LAB_ROUTE_TABLE_ID):
+            identity = (family, table, str(gateway), metric)
+            if _resolver_wan_default_present(interface_name, identity):
+                routes.append(identity)
+    return routes
+
+
+def _resolver_wan_default_present(
+    interface_name: str, route: tuple[int, int, str, int], *, restoring: bool = False,
+) -> bool:
+    """Observe an exact WAN-owned default without inferring hidden iproute2 fields.
+
+    Args:
+        interface_name: Resolver link to match.
+        route: Expected address family, table, gateway, and metric.
+        restoring: Whether to reject a competing route before restoration.
+    """
+    family, table, gateway, metric = route
+    command = ["ip", "-j", "-details", f"-{family}", "route", "show", "table", "all", "default"]
+    result = _network_observation_command(command)
+    if result.returncode:
+        raise ValueError("unable to observe WAN defaults")
+    rows = json.loads(result.stdout)
+    if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+        raise ValueError("WAN default observation is malformed")
+    tables = {"main", "254"} if table == 254 else {str(table)}
+    candidates = [
+        row for row in rows
+        if str(row.get("table", "main")) in tables
+        and row.get("dst", "default") in {"default", "0.0.0.0/0", "::/0"}
+        and row.get("metric", 0 if family == 4 else 1024) == metric
+    ]
+    present = any(
+        row.get("dev") == interface_name and row.get("gateway") == gateway
+        and str(row.get("scope", "global")) in {"global", "0"}
+        and not row.get("expires")
+        and _transition_route_protocol(row.get("protocol")) == "boot"
+        and str(row.get("type", "unicast")) in {"unicast", "1"}
+        and not row.get("prefsrc") and not row.get("multipath")
+        and row.get("nhid") is None and row.get("from", "all") == "all"
+        and not row.get("flags")
+        for row in candidates
+    )
+    if restoring and candidates and not present:
+        raise ValueError(f"competing IPv{family} default in table {table} blocks WAN recovery")
+    return present
+
+
+def _restore_resolver_wan_defaults(interface_name: str, routes: list[tuple[int, int, str, int]]) -> None:
+    """Reinstate captured routes after networkd settles.
+
+    Args:
+        interface_name: Resolver link to wait for and restore routes on.
+        routes: Captured address families, tables, gateways, and metrics.
+    """
+    if not routes:
+        return
+    command = ["networkctl", "--json=short", "list"]
+    deadline = time.monotonic() + 15
+    while True:
+        state = _network_observation_command(command)
+        if state.returncode == 0 and any(
+            isinstance(row, dict) and row.get("Name") == interface_name
+            and row.get("AdministrativeState") == "configured"
+            for row in json.loads(state.stdout).get("Interfaces", [])
+        ):
+            break
+        if time.monotonic() >= deadline:
+            raise ValueError("networkd did not settle before WAN default recovery")
+        time.sleep(0.25)
+    failures = []
+    for route in routes:
+        family, table, gateway, metric = route
+        try:
+            if _resolver_wan_default_present(interface_name, route, restoring=True):
+                continue
+            result = _run([
+                "ip", f"-{family}", "route", "add", "default", "via", gateway,
+                "dev", interface_name, "metric", str(metric), "table", str(table), "proto", "boot",
+            ], timeout=4)
+            # An exact concurrent replay is success; never replace a competing route.
+            if not _resolver_wan_default_present(interface_name, route):
+                raise ValueError(f"WAN default was not restored (exit {result.returncode})")
+        except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+            failures.append(f"IPv{family} table {table}: {exc}")
+    if failures:
+        raise ValueError(", ".join(failures))
+
+
 def _configure_resolver(interface_name: str, servers: list[str], domains: list[str]) -> subprocess.CompletedProcess[str]:
     """Perform configure resolver.
 
@@ -12631,7 +12744,19 @@ def _handle_appliance_settings(action: str, args: list[str]) -> int:
     hostname = _apply_hostname(fqdn)
     if hostname != 0:
         return hostname
-    resolver = _configure_dhcp_resolver(management_interface) if resolver_mode == "dhcp" else _configure_resolver(management_interface, resolver_servers, domains)
+    # The resolver reload can drop WAN's foreign routes before any later
+    # Settings step succeeds. Recover them even if resolver publication rolls back.
+    try:
+        routes = (_resolver_wan_default_routes(management_interface)
+                  if _management_resolver_network_path(management_interface) is not None else [])
+        try:
+            resolver = (_configure_dhcp_resolver(management_interface) if resolver_mode == "dhcp"
+                        else _configure_resolver(management_interface, resolver_servers, domains))
+        finally:
+            _restore_resolver_wan_defaults(management_interface, routes)
+    except (OSError, ValueError, KeyError, subprocess.TimeoutExpired) as exc:
+        print(f"Appliance Settings resolver/WAN transition failed: {exc}", file=sys.stderr)
+        return 1
     if resolver.returncode != 0:
         return resolver.returncode
     root_ssh = _configure_root_ssh(bool(payload.get("root_ssh_enabled")))

@@ -506,6 +506,9 @@ compete with the management default. A default on the effective flagged-access m
 installed in the main table for appliance-originated traffic. A successful apply copies the validated config to
 `/etc/atlaso/wan/atlaso-wan.conf` and enables `atlaso-wan.service`, which replays the route, rule, forwarding, and
 WAN-policy runtime after `network-online.target`; management-handoff rollback snapshots and restores both artifacts.
+Ordinary Appliance Settings Apply records the exact live WAN defaults for the resolver interface before reconfiguring
+networkd. Once the link settles, it verifies and restores any missing captured default in tables 200 and main, including
+after resolver rollback. Recovery uses only last-applied WAN intent and reports a competing route without replacing it.
 The browser wizard derives explicit IPv4 or IPv6 defaults as canonical
 `0.0.0.0/0` or `::/0`, requires a same-family next hop that is on-link for the selected target (or IPv6 link-local),
 and rejects a second default of the same family. The UI/API,
