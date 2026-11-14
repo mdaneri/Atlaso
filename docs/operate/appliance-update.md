@@ -276,6 +276,10 @@ correct the entry without rebuilding it.
 Successful module saves use the same preserved-workspace reload so the read-only module detail immediately reflects the
 new policy and state.
 
+When an Atlaso release raises its default `VCF.PowerCLI` version, startup advances the saved pin for appliances
+that follow the Atlaso default. Operator-selected versions and repositories keep their saved values. Run
+**Check for updates** and then **Install updates** for **PowerShell Modules** to install the new version.
+
 A single
 shared Tasks grid remains below both Appliance Update tab panels, so recent work stays visible from Update Streams and
 Update Sources. It is server-scoped to Appliance Update tasks and preserves standard sorting, filtering, progress,

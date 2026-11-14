@@ -2321,6 +2321,7 @@ class ManagedPackage(Base):
         source_id: Identifier of the associated source.
         policy: Persisted policy for the managedpackage resource.
         target_version: Persisted target version for the managedpackage resource.
+        atlaso_default_version: Last release pin applied by Atlaso, or empty for operator-managed versions.
         enabled: Whether the resource is enabled.
         created_at: UTC timestamp when the resource was created.
         updated_at: UTC timestamp when the resource was last updated.
@@ -2335,6 +2336,7 @@ class ManagedPackage(Base):
     source_id: Mapped[int | None] = mapped_column(ForeignKey("update_sources.id"), nullable=True, index=True)
     policy: Mapped[str] = mapped_column(String(40), default="pinned")
     target_version: Mapped[str] = mapped_column(String(120), default="")
+    atlaso_default_version: Mapped[str] = mapped_column(String(120), default="", server_default="")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

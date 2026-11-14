@@ -2,12 +2,23 @@
 
 import json
 import logging
+import re
 from collections.abc import Generator
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
-from sqlalchemy import create_engine, delete, event, inspect, select, text
+from sqlalchemy import (
+    String,
+    cast,
+    create_engine,
+    delete,
+    event,
+    inspect,
+    select,
+    text,
+    update,
+)
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
@@ -87,6 +98,7 @@ def _create_database_schema(bind: Engine) -> None:
                 _reconcile_dhcp_availability_column(connection)
                 _reconcile_vcf_backup_probe_column(connection)
                 _reconcile_vault_service_type_column(connection)
+                _reconcile_default_powercli_pin(connection)
             except Exception:
                 connection.rollback()
                 raise
@@ -107,6 +119,7 @@ def _create_database_schema(bind: Engine) -> None:
             _reconcile_dhcp_availability_column(connection)
             _reconcile_vcf_backup_probe_column(connection)
             _reconcile_vault_service_type_column(connection)
+            _reconcile_default_powercli_pin(connection)
         return
     with bind.begin() as connection:
         Base.metadata.create_all(bind=connection)
@@ -118,6 +131,73 @@ def _create_database_schema(bind: Engine) -> None:
         _reconcile_dhcp_availability_column(connection)
         _reconcile_vcf_backup_probe_column(connection)
         _reconcile_vault_service_type_column(connection)
+        _reconcile_default_powercli_pin(connection)
+
+
+def _reconcile_default_powercli_pin(connection: Connection) -> None:
+    """Advance the saved PowerCLI default under the startup database lock.
+
+    Args:
+        connection: Transaction holding the startup schema lock.
+    """
+    from atlaso.app.models import AuditEvent, ManagedPackage, UpdateSource, utcnow
+    from atlaso.app.seed import DEFAULT_POWERCLI_VERSION
+    from atlaso.app.services.update_sources import PSGALLERY_NAME, PSGALLERY_SOURCE_URL
+
+    packages = ManagedPackage.__table__
+    sources = UpdateSource.__table__
+    audits = AuditEvent.__table__
+    builtin_source = select(sources.c.id).where(
+        sources.c.kind == "powershell",
+        sources.c.name == PSGALLERY_NAME,
+        sources.c.url.in_((PSGALLERY_SOURCE_URL, f"{PSGALLERY_SOURCE_URL}/")),
+    )
+    default_package = (
+        packages.c.ecosystem == "powershell",
+        packages.c.name == "VCF.PowerCLI",
+        packages.c.policy == "pinned",
+        packages.c.source_id.in_(builtin_source),
+    )
+    columns = {column["name"] for column in inspect(connection).get_columns(packages.name)}
+    if "atlaso_default_version" not in columns:
+        connection.execute(text(
+            "ALTER TABLE managed_packages ADD COLUMN atlaso_default_version VARCHAR(120) NOT NULL DEFAULT ''"
+        ))
+        operator_edit = select(audits.c.id).where(
+            audits.c.resource_type == "managed_package",
+            audits.c.resource_id == cast(packages.c.id, String),
+            audits.c.created_at >= packages.c.created_at,
+            audits.c.action.in_(("create_managed_package", "update_managed_package")),
+            audits.c.success.is_(True),
+        ).exists()
+        # These were the shipped pins before explicit ownership was recorded.
+        connection.execute(update(packages).where(
+            *default_package,
+            packages.c.enabled.is_(True),
+            packages.c.target_version.in_(("9.1.0.25380678", "9.1.1.25718932")),
+            ~operator_edit,
+        ).values(atlaso_default_version=packages.c.target_version))
+
+    tracked = (*default_package, packages.c.target_version == packages.c.atlaso_default_version)
+    current_pin = connection.scalar(select(packages.c.target_version).where(*tracked))
+    if not current_pin or current_pin == DEFAULT_POWERCLI_VERSION:
+        return
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?", current_pin):
+        return
+    # PowerShell versions have at most four components. A release rollback
+    # must not lower a pin already advanced by a newer release.
+    current_parts = tuple(map(int, f"{current_pin}.0".split(".")[:4]))
+    default_parts = tuple(map(int, f"{DEFAULT_POWERCLI_VERSION}.0".split(".")[:4]))
+    if current_parts < default_parts:
+        connection.execute(
+            update(packages)
+            .where(*tracked, packages.c.target_version == current_pin)
+            .values(
+                target_version=DEFAULT_POWERCLI_VERSION,
+                atlaso_default_version=DEFAULT_POWERCLI_VERSION,
+                updated_at=utcnow(),
+            )
+        )
 
 
 def _reconcile_vault_service_type_column(connection: Connection) -> None:

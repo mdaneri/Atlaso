@@ -4714,6 +4714,8 @@ def _restore_managed_packages(db: Session, rows: list[dict[str, Any]]) -> int:
     }
     for row in rows:
         payload = _model_kwargs(ManagedPackage, row, exclude={"source_id"})
+        # Older archives do not record which pins came from Atlaso.
+        payload["atlaso_default_version"] = payload.get("atlaso_default_version") or ""
         payload["source_id"] = sources.get((str(row.get("source_kind") or ""), str(row.get("source_name") or "")))
         db.add(ManagedPackage(**payload))
     db.flush()
