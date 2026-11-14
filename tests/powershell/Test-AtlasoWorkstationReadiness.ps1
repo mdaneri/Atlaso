@@ -233,15 +233,9 @@ if ($identity.VmxPath -cne (Resolve-Path -LiteralPath $targetVmx).Path -or
     throw 'Successful readiness did not retain the complete VMX, MAC, hostname, and address identity tuple.'
 }
 
-$stalledVmrun = Join-Path $OutputDirectory 'stalled-first-boot-vmrun.cmd'
-[System.IO.File]::WriteAllText(
-    $stalledVmrun,
-    "@echo off`r`nif /I `"%3`"==`"getGuestIPAddress`" (`r`n  echo 192.168.167.135`r`n  exit /b 0`r`n)`r`nif /I `"%3`"==`"readVariable`" (`r`n  if /I `"%6`"==`"guestinfo.atlaso.test_vm_first_boot_stage`" echo failed-hostname`r`n  exit /b 0`r`n)`r`nif /I `"%3`"==`"list`" (`r`n  echo Total running VMs: 1`r`n  echo `"$targetVmx`"`r`n  exit /b 0`r`n)`r`nexit /b 9`r`n",
-    [System.Text.UTF8Encoding]::new($false)
-)
 <#
 .SYNOPSIS
-Return synthetic Windows neighbor evidence for the stalled first-boot fixture.
+Return synthetic Windows neighbor evidence for the readiness scenarios.
 .PARAMETER AddressFamily
 Ignored address-family selector.
 .PARAMETER IPAddress
@@ -257,9 +251,10 @@ function Get-TestNetNeighbor {
     )
     return [pscustomobject]@{ State = 'Reachable'; LinkLayerAddress = $targetMac }
 }
+
 <#
 .SYNOPSIS
-Populate synthetic neighbor state for the stalled first-boot fixture.
+Populate synthetic neighbor state for the readiness scenarios.
 .PARAMETER TargetName
 Ignored fixture address.
 .PARAMETER Count
@@ -281,173 +276,168 @@ function Test-TestConnection {
     )
     return $true
 }
-$hostnameCounter = Join-Path $OutputDirectory 'hostname-confirmation-count.txt'
-[System.IO.File]::WriteAllText($hostnameCounter, '0', [System.Text.UTF8Encoding]::new($false))
-$hostnameTimeoutVmrun = Join-Path $OutputDirectory 'hostname-confirmation-timeout-vmrun.cmd'
-[System.IO.File]::WriteAllText(
-    $hostnameTimeoutVmrun,
-    "@echo off`r`nsetlocal EnableDelayedExpansion`r`nif /I `"%3`"==`"getGuestIPAddress`" (`r`n  echo 192.168.167.135`r`n  exit /b 0`r`n)`r`nif /I `"%3`"==`"readVariable`" (`r`n  if /I not `"%6`"==`"guestinfo.atlaso.test_vm_hostname`" exit /b 0`r`n  set /p count=<`"$hostnameCounter`"`r`n  set /a count+=1`r`n  >`"$hostnameCounter`" echo !count!`r`n  if !count! EQU 1 (`r`n    echo issue-584.atlaso.internal`r`n    exit /b 0`r`n  )`r`n  ping -n 6 127.0.0.1 >nul`r`n  exit /b 0`r`n)`r`nif /I `"%3`"==`"list`" (`r`n  echo Total running VMs: 1`r`n  echo `"$targetVmx`"`r`n  exit /b 0`r`n)`r`nexit /b 9`r`n",
-    [System.Text.UTF8Encoding]::new($false)
-)
-$hostnameTimeoutError = $null
-try {
-    Set-Alias -Name Get-NetNeighbor -Value Get-TestNetNeighbor -Scope Global
-    Set-Alias -Name Test-Connection -Value Test-TestConnection -Scope Global
-    & (Join-Path $RepositoryRoot 'scripts/windows/vmware/get-atlaso-vm-ip.ps1') `
-        -VmxPath $targetVmx `
-        -ExpectedHostname 'issue-584.atlaso.internal' `
-        -VmrunPath $hostnameTimeoutVmrun `
-        -TimeoutSeconds 2 `
-        -PollSeconds 1 | Out-Null
+
+<#
+.SYNOPSIS
+Run the production readiness script against scripted provider responses and a controlled poll clock.
+.PARAMETER Responses
+Ordered provider operations with optional stdout, exit code, or a real stalled-child marker.
+#>
+function Invoke-TestReadinessScenario {
+    param([Parameter(Mandatory = $true)][hashtable[]]$Responses)
+
+    $clock = @{ Now = [datetime]'2026-01-01T00:00:00'; Deadline = [datetime]'2026-01-01T00:00:02' }
+    $provider = @{ Next = 0; Failure = ''; StalledCalls = 0 }
+    $expectedStalls = @($Responses | Where-Object { $_.Stall }).Count
+    try {
+        # Aliases also intercept calls inside the re-imported production module.
+        # Use the module-qualified function to exercise the actual child timeout where requested.
+        Set-Item Function:global:Get-TestReadinessDate -Value {
+            <#
+            .SYNOPSIS
+            Return the scenario's current time.
+            #>
+            $clock.Now
+        }.GetNewClosure()
+        Set-Item Function:global:Wait-TestReadinessPoll -Value {
+            <#
+            .SYNOPSIS
+            Advance the scenario clock by the actual requested poll duration.
+            .PARAMETER Milliseconds
+            Requested poll duration.
+            #>
+            param([int]$Milliseconds)
+            $clock.Now = $clock.Now.AddMilliseconds($Milliseconds)
+        }.GetNewClosure()
+        Set-Item Function:global:Invoke-TestReadinessVmrun -Value {
+            <#
+            .SYNOPSIS
+            Verify provider order and deadline, then supply the next response.
+            .PARAMETER VmrunPath
+            Fixture executable, used for a deliberately stalled child.
+            .PARAMETER Arguments
+            Actual provider argument list.
+            .PARAMETER Deadline
+            Absolute readiness deadline supplied by the call.
+            #>
+            param([string]$VmrunPath, [string[]]$Arguments, [datetime]$Deadline)
+
+            if ($Deadline -ne $clock.Deadline) {
+                $provider.Failure = "Expected the shared readiness deadline, received '$Deadline'."
+                throw $provider.Failure
+            }
+            if ($clock.Now -ge $Deadline) {
+                return Atlaso.WorkstationReadiness\Invoke-AtlasoWorkstationVmrunBounded @PSBoundParameters
+            }
+            $operation = $Arguments[2]
+            if ($operation -eq 'readVariable') { $operation = $Arguments[5] }
+            $response = $Responses[$provider.Next]
+            if ($null -eq $response -or $operation -cne $response.Operation) {
+                $provider.Failure = "Unexpected provider operation '$operation' at position $($provider.Next + 1)."
+                throw $provider.Failure
+            }
+            $provider.Next++
+            if ($response.Stall) {
+                # Earlier observations have consumed part of the shared budget.
+                $clock.Now = $Deadline.AddMilliseconds(-250)
+                $result = Atlaso.WorkstationReadiness\Invoke-AtlasoWorkstationVmrunBounded @PSBoundParameters
+                if (-not $result.TimedOut) {
+                    $provider.Failure = "The real stalled child for '$operation' did not time out."
+                    throw $provider.Failure
+                }
+                $provider.StalledCalls++
+                $clock.Now = $Deadline
+                return $result
+            }
+            return [pscustomobject]@{
+                ExitCode = [int]$response.ExitCode
+                TimedOut = $false
+                StdOut   = [string]$response.StdOut
+                StdErr   = ''
+            }
+        }.GetNewClosure()
+        Set-Alias -Name Get-Date -Value Get-TestReadinessDate -Scope Global
+        Set-Alias -Name Start-Sleep -Value Wait-TestReadinessPoll -Scope Global
+        Set-Alias -Name Invoke-AtlasoWorkstationVmrunBounded -Value Invoke-TestReadinessVmrun -Scope Global
+        Set-Alias -Name Get-NetNeighbor -Value Get-TestNetNeighbor -Scope Global
+        Set-Alias -Name Test-Connection -Value Test-TestConnection -Scope Global
+        $diagnostic = '<no error>'
+        try {
+            & $readinessScript -VmxPath $targetVmx -ExpectedHostname 'issue-584.atlaso.internal' `
+                -VmrunPath $slowVmrun -TimeoutSeconds 2 -PollSeconds 1 | Out-Null
+        }
+        catch {
+            $diagnostic = $_.Exception.Message
+        }
+        if ($provider.Failure -or $provider.Next -ne $Responses.Count -or
+            $provider.StalledCalls -ne $expectedStalls) {
+            throw "Readiness provider sequence failed ($($provider.Next)/$($Responses.Count) operations). $($provider.Failure) Diagnostic: $diagnostic"
+        }
+        return $diagnostic
+    }
+    finally {
+        Remove-Item Alias:Get-Date, Alias:Start-Sleep, Alias:Invoke-AtlasoWorkstationVmrunBounded,
+            Alias:Get-NetNeighbor, Alias:Test-Connection -ErrorAction SilentlyContinue
+        Remove-Item Function:Get-TestReadinessDate, Function:Wait-TestReadinessPoll,
+            Function:Invoke-TestReadinessVmrun -ErrorAction SilentlyContinue
+    }
 }
-catch {
-    $hostnameTimeoutError = $_
+
+$ip = @{ Operation = 'getGuestIPAddress'; StdOut = '192.168.167.135' }
+$missingIp = @{ Operation = 'getGuestIPAddress' }
+$inventory = @{ Operation = 'list'; StdOut = "Total running VMs: 1`n`"$targetVmx`"" }
+$hostnameKey = 'guestinfo.atlaso.test_vm_hostname'
+$stageKey = 'guestinfo.atlaso.test_vm_first_boot_stage'
+$hostname = @{ Operation = $hostnameKey; StdOut = 'issue-584.atlaso.internal' }
+$emptyHostname = @{ Operation = $hostnameKey }
+$hostnameFailure = @{ Operation = $hostnameKey; ExitCode = 8 }
+$stage = @{ Operation = $stageKey; StdOut = 'failed-hostname' }
+$unknownStage = @{ Operation = $stageKey; StdOut = 'credential-shaped-value' }
+$hostnameStall = @{ Operation = $hostnameKey; Stall = $true }
+$stageStall = @{ Operation = $stageKey; Stall = $true }
+
+$hostnameTimeoutMessage = Invoke-TestReadinessScenario -Responses @($ip, $hostname, $inventory, $hostnameStall)
+if ($hostnameTimeoutMessage -notlike '*hostname confirmation exceeded*' -or
+    $hostnameTimeoutMessage -notlike '*Earlier observed hostname: ''issue-584.atlaso.internal''*' -or
+    $hostnameTimeoutMessage -notlike '*Readiness was not returned*' -or
+    $hostnameTimeoutMessage -like '*guest initialization did not publish*') {
+    throw "A timed-out hostname confirmation returned readiness or discarded the earlier observation. Diagnostic: $hostnameTimeoutMessage"
 }
-finally {
-    Remove-Item Alias:Get-NetNeighbor -ErrorAction SilentlyContinue
-    Remove-Item Alias:Test-Connection -ErrorAction SilentlyContinue
+
+$stalledObservation = @($ip, $emptyHostname, $inventory, $emptyHostname, $stage, $inventory, $ip)
+$stalledMessage = Invoke-TestReadinessScenario -Responses ($stalledObservation + $stalledObservation)
+if ($stalledMessage -notlike 'VMware address ownership was proven*' -or
+    $stalledMessage -notlike '*Last allowlisted first-boot stage: ''failed-hostname''*' -or
+    $stalledMessage -notlike '*Observed hostname: ''<not reported>''*' -or
+    $stalledMessage -like 'No uniquely bound IPv4 address*') {
+    throw "A guest-initialization stall after stable address ownership did not report the sanitized first-boot layer. Diagnostic: $stalledMessage"
 }
-if ($null -eq $hostnameTimeoutError -or
-    $hostnameTimeoutError.Exception.Message -notlike '*hostname confirmation exceeded*' -or
-    $hostnameTimeoutError.Exception.Message -notlike '*Earlier observed hostname: ''issue-584.atlaso.internal''*' -or
-    $hostnameTimeoutError.Exception.Message -notlike '*Readiness was not returned*' -or
-    $hostnameTimeoutError.Exception.Message -like '*guest initialization did not publish*') {
-    throw 'A timed-out hostname confirmation returned readiness or discarded the earlier diagnostic observation.'
+
+$stageTimeoutMessage = Invoke-TestReadinessScenario -Responses @($ip, $emptyHostname, $inventory, $emptyHostname, $stageStall)
+if ($stageTimeoutMessage -notlike 'No uniquely bound IPv4 address*' -or
+    $stageTimeoutMessage -like 'VMware address ownership was proven*' -or
+    $stageTimeoutMessage -like '*guest initialization did not publish*') {
+    throw "A timed-out first-boot-stage read reused stale ownership for an initialization diagnosis. Diagnostic: $stageTimeoutMessage"
 }
-$stalledError = $null
-try {
-    Set-Alias -Name Get-NetNeighbor -Value Get-TestNetNeighbor -Scope Global
-    Set-Alias -Name Test-Connection -Value Test-TestConnection -Scope Global
-    & (Join-Path $RepositoryRoot 'scripts/windows/vmware/get-atlaso-vm-ip.ps1') `
-        -VmxPath $targetVmx `
-        -ExpectedHostname 'issue-584.atlaso.internal' `
-        -VmrunPath $stalledVmrun `
-        -TimeoutSeconds 2 `
-        -PollSeconds 1 | Out-Null
-}
-catch {
-    $stalledError = $_
-}
-finally {
-    Remove-Item Alias:Get-NetNeighbor -ErrorAction SilentlyContinue
-    Remove-Item Alias:Test-Connection -ErrorAction SilentlyContinue
-}
-if ($null -eq $stalledError -or
-    $stalledError.Exception.Message -notlike 'VMware address ownership was proven*' -or
-    $stalledError.Exception.Message -notlike '*failed-hostname*' -or
-    $stalledError.Exception.Message -notlike '*Observed hostname: ''<not reported>''*' -or
-    $stalledError.Exception.Message -like 'No uniquely bound IPv4 address*') {
-    throw 'A guest-initialization stall after stable address ownership did not report the sanitized first-boot layer.'
-}
-$stageTimeoutVmrun = Join-Path $OutputDirectory 'first-boot-stage-timeout-vmrun.cmd'
-[System.IO.File]::WriteAllText(
-    $stageTimeoutVmrun,
-    "@echo off`r`nif /I `"%3`"==`"getGuestIPAddress`" (`r`n  echo 192.168.167.135`r`n  exit /b 0`r`n)`r`nif /I `"%3`"==`"readVariable`" (`r`n  if /I `"%6`"==`"guestinfo.atlaso.test_vm_first_boot_stage`" ping -n 6 127.0.0.1 >nul`r`n  exit /b 0`r`n)`r`nif /I `"%3`"==`"list`" (`r`n  echo Total running VMs: 1`r`n  echo `"$targetVmx`"`r`n  exit /b 0`r`n)`r`nexit /b 9`r`n",
-    [System.Text.UTF8Encoding]::new($false)
-)
-$stageTimeoutError = $null
-try {
-    Set-Alias -Name Get-NetNeighbor -Value Get-TestNetNeighbor -Scope Global
-    Set-Alias -Name Test-Connection -Value Test-TestConnection -Scope Global
-    & (Join-Path $RepositoryRoot 'scripts/windows/vmware/get-atlaso-vm-ip.ps1') `
-        -VmxPath $targetVmx `
-        -ExpectedHostname 'issue-584.atlaso.internal' `
-        -VmrunPath $stageTimeoutVmrun `
-        -TimeoutSeconds 2 `
-        -PollSeconds 1 | Out-Null
-}
-catch {
-    $stageTimeoutError = $_
-}
-finally {
-    Remove-Item Alias:Get-NetNeighbor -ErrorAction SilentlyContinue
-    Remove-Item Alias:Test-Connection -ErrorAction SilentlyContinue
-}
-if ($null -eq $stageTimeoutError -or
-    $stageTimeoutError.Exception.Message -notlike 'No uniquely bound IPv4 address*' -or
-    $stageTimeoutError.Exception.Message -like 'VMware address ownership was proven*' -or
-    $stageTimeoutError.Exception.Message -like '*guest initialization did not publish*') {
-    throw 'A timed-out first-boot-stage read reused stale ownership for an initialization diagnosis.'
-}
-$providerFailureVmrun = Join-Path $OutputDirectory 'hostname-provider-failure-vmrun.cmd'
-[System.IO.File]::WriteAllText(
-    $providerFailureVmrun,
-    "@echo off`r`nif /I `"%3`"==`"getGuestIPAddress`" (`r`n  echo 192.168.167.135`r`n  exit /b 0`r`n)`r`nif /I `"%3`"==`"readVariable`" exit /b 8`r`nif /I `"%3`"==`"list`" (`r`n  echo Total running VMs: 1`r`n  echo `"$targetVmx`"`r`n  exit /b 0`r`n)`r`nexit /b 9`r`n",
-    [System.Text.UTF8Encoding]::new($false)
-)
-# Allow one complete ownership and hostname observation on hosted Windows. A late retry can replace it
-# with a deadline failure, which the separate timeout cases cover.
-$providerFailureDeadlineSeconds = 10
-$providerFailureError = $null
-try {
-    Set-Alias -Name Get-NetNeighbor -Value Get-TestNetNeighbor -Scope Global
-    Set-Alias -Name Test-Connection -Value Test-TestConnection -Scope Global
-    & (Join-Path $RepositoryRoot 'scripts/windows/vmware/get-atlaso-vm-ip.ps1') `
-        -VmxPath $targetVmx `
-        -ExpectedHostname 'issue-584.atlaso.internal' `
-        -VmrunPath $providerFailureVmrun `
-        -TimeoutSeconds $providerFailureDeadlineSeconds `
-        -PollSeconds $providerFailureDeadlineSeconds | Out-Null
-}
-catch {
-    $providerFailureError = $_
-}
-finally {
-    Remove-Item Alias:Get-NetNeighbor -ErrorAction SilentlyContinue
-    Remove-Item Alias:Test-Connection -ErrorAction SilentlyContinue
-}
-$providerFailureMessage = if ($null -eq $providerFailureError) {
-    '<no error>'
-} else {
-    $providerFailureError.Exception.Message
-}
+
+$failedObservation = @($ip, $hostnameFailure, $inventory, $hostnameFailure)
+$providerFailureMessage = Invoke-TestReadinessScenario -Responses ($failedObservation + $failedObservation)
 if ($providerFailureMessage -notlike 'An initial VMware ownership observation completed*' -or
     $providerFailureMessage -notlike '*hostname evidence query failed with exit code 8*' -or
     $providerFailureMessage -like '*guest initialization did not publish*') {
-    throw "Expected a hostname provider failure with exit code 8 after initial ownership. Observed diagnostic: $providerFailureMessage"
+    throw "Expected a hostname provider failure with exit code 8 after initial ownership. Diagnostic: $providerFailureMessage"
 }
-$addressCounter = Join-Path $OutputDirectory 'transient-address-count.txt'
-[System.IO.File]::WriteAllText($addressCounter, '0', [System.Text.UTF8Encoding]::new($false))
-$transientVmrun = Join-Path $OutputDirectory 'transient-address-vmrun.cmd'
-[System.IO.File]::WriteAllText(
-    $transientVmrun,
-    "@echo off`r`nsetlocal EnableDelayedExpansion`r`nif /I `"%3`"==`"getGuestIPAddress`" (`r`n  set /p count=<`"$addressCounter`"`r`n  set /a count+=1`r`n  >`"$addressCounter`" echo !count!`r`n  if !count! LEQ 2 echo 192.168.167.135`r`n  exit /b 0`r`n)`r`nif /I `"%3`"==`"readVariable`" (`r`n  if /I `"%6`"==`"guestinfo.atlaso.test_vm_first_boot_stage`" echo failed-hostname`r`n  exit /b 0`r`n)`r`nif /I `"%3`"==`"list`" (`r`n  echo Total running VMs: 1`r`n  echo `"$targetVmx`"`r`n  exit /b 0`r`n)`r`nexit /b 9`r`n",
-    [System.Text.UTF8Encoding]::new($false)
-)
-$transientError = $null
-try {
-    Set-Alias -Name Get-NetNeighbor -Value Get-TestNetNeighbor -Scope Global
-    Set-Alias -Name Test-Connection -Value Test-TestConnection -Scope Global
-    & (Join-Path $RepositoryRoot 'scripts/windows/vmware/get-atlaso-vm-ip.ps1') `
-        -VmxPath $targetVmx `
-        -ExpectedHostname 'issue-584.atlaso.internal' `
-        -VmrunPath $transientVmrun `
-        -TimeoutSeconds 3 `
-        -PollSeconds 1 | Out-Null
+
+$transientMessage = Invoke-TestReadinessScenario -Responses ($stalledObservation + $missingIp)
+if ($transientMessage -notlike 'No uniquely bound IPv4 address*' -or
+    $transientMessage -like 'VMware address ownership was proven*') {
+    throw "A later loss of address evidence reused a stale ownership tuple. Diagnostic: $transientMessage"
 }
-catch {
-    $transientError = $_
-}
-finally {
-    Remove-Item Alias:Get-NetNeighbor -ErrorAction SilentlyContinue
-    Remove-Item Alias:Test-Connection -ErrorAction SilentlyContinue
-}
-if ($null -eq $transientError -or
-    $transientError.Exception.Message -notlike 'No uniquely bound IPv4 address*' -or
-    $transientError.Exception.Message -like 'VMware address ownership was proven*') {
-    throw 'A later loss of address evidence reused a stale ownership tuple for guest-initialization diagnostics.'
-}
-$unknownStageVmrun = Join-Path $OutputDirectory 'unknown-first-boot-stage-vmrun.cmd'
-[System.IO.File]::WriteAllText(
-    $unknownStageVmrun,
-    (Get-Content -LiteralPath $stalledVmrun -Raw).Replace('failed-hostname', 'credential-shaped-value'),
-    [System.Text.UTF8Encoding]::new($false)
-)
-$unknownStage = Get-AtlasoWorkstationFirstBootStage `
-    -VmxPath $targetVmx `
-    -VmrunPath $unknownStageVmrun `
-    -Deadline (Get-Date).AddSeconds(2)
-if ($unknownStage) {
+
+$unknownStageObservation = @($ip, $emptyHostname, $inventory, $emptyHostname, $unknownStage, $inventory, $ip)
+$unknownStageMessage = Invoke-TestReadinessScenario -Responses ($unknownStageObservation + $unknownStageObservation)
+if ($unknownStageMessage -notlike '*No allowlisted first-boot stage was reported.*' -or
+    $unknownStageMessage -like '*credential-shaped-value*') {
     throw 'An unknown first-boot stage was accepted into readiness diagnostics.'
 }
 
