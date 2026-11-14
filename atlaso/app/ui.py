@@ -1434,7 +1434,9 @@ def managed_ca_certificate_specs(
         terminal_options = web_terminal_interface_options(interfaces, vlans)
         terminal_ips = web_terminal_addresses(normalized_web_terminal_interfaces(appliance, management), terminal_options) if appliance.web_terminal_enabled else []
         appliance_fqdn = appliance.fqdn
-    appliance_ips = management_ui_addresses(db)
+    appliance_ips = (list(management_snapshot["management_addresses"])
+                     if management_snapshot is not None and "management_addresses" in management_snapshot
+                     else management_ui_addresses(db))
     appliance_ips.extend(address for address in terminal_ips if address not in appliance_ips)
     if management_snapshot is not None:
         appliance_cert = management_snapshot["management_https_cert_path"]
@@ -2432,7 +2434,9 @@ def appliance_settings_management_context(db: Session) -> dict[str, Any]:
         .where(VlanInterface.enabled.is_(True))
         .order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)
     ).scalars().all()
-    return management_ui_context(interfaces, vlans)
+    from atlaso.app.services.dynamic_management import settings_management_context
+
+    return settings_management_context(db, interfaces, vlans)
 
 
 def management_ui_addresses(db: Session) -> list[str]:
@@ -2447,7 +2451,9 @@ def management_ui_addresses(db: Session) -> list[str]:
         .where(VlanInterface.enabled.is_(True))
         .order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)
     ).scalars().all()
-    addresses: list[str] = []
+    from atlaso.app.services.dynamic_management import publication_bindings
+
+    addresses: list[str] = [binding["address"] for binding in publication_bindings(db)]
     for interface in interfaces:
         role = normalize_interface_role(interface.role)
         enabled = role == "management" or (
@@ -2545,7 +2551,7 @@ def ensure_dns_for_appliance_settings(
     dns_settings = get_dns_settings_row(db)
     ensure_dns_domain_for_appliance_settings(dns_settings, settings.fqdn)
     fqdn = normalize_fqdn(settings.fqdn)
-    desired_addresses = management_ui_addresses(db)
+    desired_addresses = [address for address in management_ui_addresses(db) if not ip_address(address).is_link_local]
     if not fqdn or not desired_addresses:
         return None
     actions: list[str] = []
@@ -2658,7 +2664,11 @@ def appliance_settings_context(
     interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
     vlans = db.execute(select(VlanInterface).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all()
     management, observed_dhcp_dns_servers = management_dhcp_dns_context(interfaces, vlans)
-    terminal_options = web_terminal_interface_options(interfaces, vlans)
+    if not management.get("ip"):
+        setup_management = appliance_settings_management_context(db)
+        if setup_management.get("ip"):
+            management = setup_management
+    terminal_options = web_terminal_interface_options(interfaces, vlans, management_interface=management)
     ca_settings = get_ca_settings_row(db)
     management_https_cert_path, management_https_key_path, _management_https_chain_path = ca_managed_certificate_paths(db, "appliance:https")
     management_https_cert_available = bool(management_https_cert_path and management_https_key_path and ca_certificate_available(db, "appliance:https"))
@@ -4833,7 +4843,7 @@ def public_services_context(db: Session, *, reconcile: bool = True) -> dict[str,
         entry["management_ui"] = entry.get("interface") in management_interfaces
     appliance_settings = get_appliance_settings_row(db)
     management = appliance_settings_management_context(db)
-    terminal_options = web_terminal_interface_options(interfaces, vlans)
+    terminal_options = web_terminal_interface_options(interfaces, vlans, management_interface=management)
     terminal_interfaces = web_terminal_listener_interfaces(
         normalized_web_terminal_interfaces(appliance_settings, management),
         terminal_options,
@@ -5242,7 +5252,7 @@ def public_service_directory_context(db: Session, binding: dict[str, Any], *, in
     physical_interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
     vlan_interfaces = db.execute(select(VlanInterface).where(VlanInterface.enabled.is_(True)).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all()
     management = appliance_settings_management_context(db)
-    terminal_options = web_terminal_interface_options(physical_interfaces, vlan_interfaces)
+    terminal_options = web_terminal_interface_options(physical_interfaces, vlan_interfaces, management_interface=management)
     terminal_interfaces = web_terminal_listener_interfaces(
         normalized_web_terminal_interfaces(appliance_settings, management),
         terminal_options,
@@ -5648,7 +5658,10 @@ def network_context(db: Session) -> dict:
     for vlan in vlans:
         vlan_counts[vlan.parent_interface] = vlan_counts.get(vlan.parent_interface, 0) + 1
     observed_ipv4_gateways = discover_host_ipv4_default_gateways()
-    config_preview = render_network_config(interfaces=interfaces, vlans=vlans)
+    fallback_enabled = get_appliance_settings_row(db).ipv4_link_local_fallback_enabled is not False
+    config_preview = render_network_config(
+        interfaces=interfaces, vlans=vlans, ipv4_link_local_fallback_enabled=fallback_enabled,
+    )
     validation_errors = validate_network_state(interfaces=interfaces, vlans=vlans)
     trunk_interfaces = [
         interface
@@ -5657,6 +5670,7 @@ def network_context(db: Session) -> dict:
     ]
     return {
         "physical_interfaces": interfaces,
+        "ipv4_link_local_fallback_enabled": fallback_enabled,
         "physical_interface_rows": [
             dict(physical_interface_to_dict(
                 interface,
@@ -10923,6 +10937,142 @@ def network_management_paths(config_preview: str) -> list[dict[str, str]]:
     )
 
 
+def confirmed_management_handoff_ipv4ll_address(
+    network_preview: str, evidence: dict[str, Any], mac: str, name: str,
+) -> str:
+    """Admit fallback from final helper readback while observer publication is excluded.
+
+    Args:
+        network_preview: Captured Network identity and fallback policy executed by the helper.
+        evidence: Successful handoff result with final native readback and probed addresses.
+        mac: Current physical identity which must still match the captured MAC.
+        name: Captured management interface name being completed.
+    """
+    from atlaso.app.services.dynamic_management import native_management_addresses
+
+    try:
+        observation = evidence.get("management_address_observation") or {}
+        age = (datetime.now(timezone.utc) - datetime.fromisoformat(observation["observed_at"])).total_seconds()
+        rows = [row for row in network_interface_entries(network_preview)
+                if row.get("kind") == "physical" and row.get("name") == name]
+        if (not 0 <= age <= 120 or len(rows) != 1 or rows[0].get("ip_cidr")
+                or not rows[0].get("mac") or rows[0]["mac"].lower() != mac.lower()):
+            raise ValueError("captured identity or freshness differs")
+        row = rows[0]
+        links = [link for link in observation.get("links", []) if link.get("name") == row["name"]]
+        if len(links) != 1 or not links[0].get("configured"):
+            raise ValueError("native configuration is unavailable")
+        native = native_management_addresses(row, observation)
+        addresses = native["apipa_addresses"]
+        if len(addresses) != 1 or addresses[0] not in evidence.get("candidate_addresses", []):
+            raise ValueError("native fallback was not confirmed")
+        return str(addresses[0])
+    except (ValueError, KeyError, TypeError, AttributeError, IndexError) as exc:
+        raise RuntimeError("Protected handoff did not confirm the resolved DHCP management address.") from exc
+
+
+def ordinary_network_ipv4ll_evidence(
+    stdout: str, network_preview: str, job_id: str,
+) -> dict[str, Any]:
+    """Retain only uniquely owned management fallback from the ordinary helper result.
+
+    Args:
+        stdout: Complete successful helper output before task-log abbreviation.
+        network_preview: Captured Network intent executed for this task.
+        job_id: Exact task identifier placed in the staged Network intent.
+    """
+    from atlaso.app.services.dynamic_management import native_management_addresses
+
+    try:
+        lines = stdout.rstrip().splitlines()
+        if not lines or len(lines[-1]) > 262144:
+            return {}
+        result = json.loads(lines[-1])
+        envelope = result.get("network_address_evidence", {})
+        if result.get("network") != "systemd-networkd apply complete" or envelope.get("job_id") != job_id:
+            return {}
+        observation = envelope["observation"]
+        rows = network_interface_entries(network_preview)
+        links = []
+        candidates = []
+        for row in rows:
+            if row.get("kind") != "physical" or row.get("role") != "management":
+                continue
+            native = native_management_addresses(row, observation)
+            for address in native["apipa_addresses"]:
+                confirmed_management_handoff_ipv4ll_address(
+                    network_preview, {"candidate_addresses": [address], "management_address_observation": observation},
+                    row["mac"], row["name"],
+                )
+                link = next(link for link in observation["links"] if link["name"] == row["name"])
+                links.append({**link, "addresses": [
+                    item for item in link["addresses"] if item["address"] == address and item["state"] == "assigned"
+                ]})
+                candidates.append(address)
+        if candidates:
+            return {"job_id": job_id, "candidate_addresses": candidates, "management_address_observation": {
+                "observed_at": observation["observed_at"], "complete": True, "links": links,
+            }}
+    except (AttributeError, KeyError, TypeError, ValueError, RuntimeError):
+        pass
+    return {}
+
+
+def completed_management_handoff_evidence(payload: dict[str, Any], job_id: str) -> dict[str, Any]:
+    """Select native fallback evidence from the unique completed Network result.
+
+    Args:
+        payload: Result from the completed Network Apply job.
+        job_id: Exact completed Network task being consumed.
+    """
+    units = [unit for unit in payload.get("units", [])
+             if isinstance(unit, dict) and unit.get("unit_id") == "network"]
+    if len(units) != 1:
+        return {}
+    unit = units[0]
+    if payload.get("management_handoff") is True:
+        evidence = unit.get("management_handoff")
+        return evidence if isinstance(evidence, dict) else {}
+    evidence = unit.get("network_ipv4ll_evidence")
+    if (payload.get("network_application_committed") is True
+            and payload.get("network_runtime_commit_pending") is False
+            and unit.get("success") is True and unit.get("dry_run") is False
+            and isinstance(evidence, dict) and evidence.get("job_id") == job_id):
+        return evidence
+    return {}
+
+
+def recheck_management_handoff_ipv4ll(
+    network_preview: str, name: str, mac: str, address: str, *, timeout: float,
+) -> bool:
+    """Confirm the same task-proven address still has unique native ownership.
+
+    Args:
+        network_preview: Completed task's exact Network preview.
+        name: Original management interface name.
+        mac: Original management MAC.
+        address: IPv4LL address confirmed by the completed Network task.
+        timeout: Remaining time in the caller's native observation budget.
+    """
+    from atlaso.app.adapters.system import SystemAdapter
+
+    if timeout <= 0:
+        return False
+    deadline = time.monotonic() + timeout
+    try:
+        result = SystemAdapter(dry_run=False).read_network_address_status(timeout_seconds=timeout)
+        if result.returncode or time.monotonic() >= deadline:
+            return False
+        observed = confirmed_management_handoff_ipv4ll_address(
+            network_preview,
+            {"candidate_addresses": [address], "management_address_observation": json.loads(result.stdout)},
+            mac, name,
+        )
+        return observed == address
+    except (OSError, subprocess.TimeoutExpired, RuntimeError, ValueError):
+        return False
+
+
 def refresh_management_handoff_dynamic_observations(
     db: Session,
     config_preview: str,
@@ -10971,7 +11121,14 @@ def refresh_management_handoff_dynamic_observations(
             )
         required = []
         if path.get("ipv4_method") == "dhcp":
-            required.append(("IPv4", observed.host_dhcp_ip_cidr, "host_ip_cidr"))
+            if not observed.host_dhcp_ip_cidr:
+                if str(observed.mac_address).lower() != str(interface.mac_address).lower():
+                    raise RuntimeError("Management handoff could not confirm the observed physical identity.")
+                confirmed_management_handoff_ipv4ll_address(config_preview, handoff_evidence, interface.mac_address or "", name)
+                # Fallback remains setup-only; it is never persisted as a DHCP lease.
+                interface.host_ip_cidr = None
+            else:
+                required.append(("IPv4", observed.host_dhcp_ip_cidr, "host_ip_cidr"))
         if path.get("ipv6_enabled", "").lower() == "true" and not path.get("ipv6_cidr"):
             required.extend(("IPv6", cidr, "host_ipv6_cidr") for cidr in (native_automatic_ipv6_cidrs(observed) or (None,)))
         for family, cidr, attribute in required:
@@ -11054,7 +11211,7 @@ def baseline_management_handoff_dhcp_settings(
     network_preview: str,
     handoff_evidence: dict[str, Any],
 ) -> None:
-    """Bind the captured Settings baseline to the helper-confirmed DHCP lease.
+    """Bind captured Settings to the confirmed DHCP lease or admitted APIPA setup address.
 
     Args:
         db: Apply transaction with refreshed native interface observations.
@@ -11077,8 +11234,11 @@ def baseline_management_handoff_dhcp_settings(
     interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == name))
     cidr = str(interface.host_ip_cidr or "") if interface is not None else ""
     address = address_from_cidr(cidr)
-    if not address or address not in handoff_evidence.get("candidate_addresses", []):
-        raise RuntimeError("Protected handoff did not confirm the resolved DHCP management address.")
+    if not address or ip_address(address).is_link_local or address not in handoff_evidence.get("candidate_addresses", []):
+        if interface is None:
+            raise RuntimeError("Protected handoff did not confirm the resolved DHCP management address.")
+        address = confirmed_management_handoff_ipv4ll_address(network_preview, handoff_evidence, interface.mac_address or "", name)
+        cidr = address + "/16"
     captured["management_ip"] = address
     captured["management_ip_cidr"] = cidr
     if captured.get("web_terminal_enabled"):
@@ -16034,6 +16194,12 @@ def execute_appliance_apply_unit(
         "config_preview": unit["config_preview"],
         "config_diff": unit["config_diff"],
     }
+    if unit_id == "network" and succeeded and not unit_result["dry_run"] and unit.get("network_transaction_job_id"):
+        evidence = ordinary_network_ipv4ll_evidence(
+            results[-1].stdout, unit["raw_config_preview"], unit["network_transaction_job_id"],
+        )
+        if evidence:
+            unit_result["network_ipv4ll_evidence"] = evidence
     if unit_id == "appliance_settings":
         management_status_transition = appliance_settings_management_status_transition(results)
         if management_status_transition is not None:

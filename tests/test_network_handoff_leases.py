@@ -140,7 +140,7 @@ def test_handoff_accepts_retained_address_only_with_proven_lease(tmp_path, monke
     monkeypatch.setattr(helper, "NETWORK_APPLY_DIR", tmp_path)
     row = {"name": "eth0", "role": "management", "ipv4_method": "dhcp", "ipv6_enabled": "false"}
     monkeypatch.setattr(helper, "_parse_network_config", lambda _path: ([row], [], []))
-    native = {"complete": True, "links": [{"name": "eth0", "configured": True, "address_inventory_complete": True,
+    native = {"complete": True, "links": [{"name": "eth0", "configured": True, "up": True, "carrier": True, "address_inventory_complete": True,
               "addresses": [{"address": "192.0.2.10", "cidr": "192.0.2.10/24", "scope": "global",
                              "source": "static", "state": "assigned", "dhcp4_lease": valid}]}], "conflicts": []}
     monkeypatch.setattr(helper, "_network_address_observation", lambda: native)
@@ -185,7 +185,7 @@ def test_retirement_waits_for_stable_address_after_reconfigure(tmp_path, monkeyp
         """Expose the native configured state and record each bounded sample."""
         configured = next(states)
         observed.append(configured)
-        return {"complete": True, "conflicts": [], "links": [{"name": "eth0", "configured": configured,
+        return {"complete": True, "conflicts": [], "links": [{"name": "eth0", "configured": configured, "up": True, "carrier": True,
                 "addresses": [{"address": "192.0.2.10", "cidr": "192.0.2.10/24",
                                "source": "static", "state": "assigned"}]}]}
 

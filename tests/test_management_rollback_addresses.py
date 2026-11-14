@@ -843,6 +843,76 @@ def test_management_handoff_capture_keeps_usable_global_addresses(monkeypatch, l
     assert addresses == ["192.0.2.10", "2001:db8::20"]
 
 
+def test_management_handoff_captures_published_ipv4ll_before_routing_snapshot(monkeypatch):
+    """Discover an APIPA-only old listener before starting its static handoff.
+
+    Args:
+        monkeypatch: Supply read-only native state and the bound publication proof.
+    """
+    helper = load_helper_module()
+    row = {"ifname": "eth0", "address": "02:00:00:00:10:77", "addr_info": [
+        {"family": "inet", "scope": "link", "local": "169.254.20.10", "prefixlen": 16},
+    ]}
+    observed = json.dumps([row])
+    proofs = []
+
+    def published(value, *, expected_interface="", expected_mac=""):
+        """Record previous-path proof while retaining existing snapshot call sites.
+
+        Args:
+            value: Address whose published/native ownership is required.
+            expected_interface: Previous listener interface selected by the query.
+            expected_mac: MAC observed on that same interface.
+        """
+        proofs.append((value, expected_interface, expected_mac))
+        return value == "169.254.20.10"
+
+    monkeypatch.setattr(helper, "_published_ipv4ll_address", published)
+    monkeypatch.setattr(helper, "_run", lambda command: subprocess.CompletedProcess(command, 0, observed, ""))
+    monkeypatch.setattr(helper, "_network_observation_command", lambda command: subprocess.CompletedProcess(
+        command, 0, observed if command[:3] == ["ip", "-j", "address"] else "[]", ""))
+    payload = {"previous_management_addresses": [], "previous_management_interfaces": ["eth0"]}
+    assert helper._management_handoff_previous_addresses(payload) == ["169.254.20.10"]
+    assert proofs == [("169.254.20.10", "eth0", row["address"])]
+    routing = helper._snapshot_management_handoff_routing(["eth0"], {"eth0": 100})
+    assert routing["eth0"]["cidrs"] == []
+    assert routing["eth0"]["ipv4ll_cidrs"] == ["169.254.20.10/16"]
+
+
+@pytest.mark.parametrize("change", ["unpublished", "interface", "mac", "prefix", "tentative", "deprecated", "expired", "ipv6"])
+def test_management_handoff_previous_ipv4ll_refuses_unproven_addresses(monkeypatch, change):
+    """Never turn arbitrary link-scope addresses into a previous management path.
+
+    Args:
+        monkeypatch: Replace native reads without permitting host mutation.
+        change: Invalidated publication, identity, prefix or readiness prerequisite.
+    """
+    helper = load_helper_module()
+    row = {"ifname": "eth0", "address": "02:00:00:00:10:77", "addr_info": [
+        {"family": "inet", "scope": "link", "local": "169.254.20.10", "prefixlen": 16},
+    ]}
+    info = row["addr_info"][0]
+    if change == "interface":
+        row["ifname"] = "eth1"
+    elif change == "mac":
+        row["address"] = "02:00:00:00:10:78"
+    elif change == "prefix":
+        info["prefixlen"] = 24
+    elif change in {"tentative", "deprecated"}:
+        info["flags"] = [change]
+    elif change == "expired":
+        info["valid_life_time"] = 0
+    elif change == "ipv6":
+        info.update(family="inet6", local="fe80::10", prefixlen=64)
+    monkeypatch.setattr(helper, "_published_ipv4ll_address", lambda value, **binding: (
+        change != "unpublished" and value == "169.254.20.10" and binding == {
+            "expected_interface": "eth0", "expected_mac": "02:00:00:00:10:77"}))
+    monkeypatch.setattr(helper, "_run", lambda command: subprocess.CompletedProcess(command, 0, json.dumps([row]), ""))
+    with pytest.raises(ValueError, match="previous management listener addresses could not be captured"):
+        helper._management_handoff_previous_addresses({
+            "previous_management_addresses": [], "previous_management_interfaces": ["eth0"]})
+
+
 def test_management_handoff_capture_preserves_configured_listener_address_when_runtime_is_stale(monkeypatch):
     """Keep an explicit prior listener address even when its runtime row is deprecated.
 

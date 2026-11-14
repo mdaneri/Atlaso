@@ -1205,6 +1205,10 @@ Callback that durably records the suspended root before it is resumed.
 Suppress untrusted console output while retaining Windows job completion proof.
 .PARAMETER DeadlineUtc
 Optional original absolute deadline, including suspended-child publication and startup overhead.
+.PARAMETER ProcessQuiescencePublisher
+Optional one-shot public proof callback after the entire named job is empty and its handles are disposed.
+Requires original suspended-root ownership publication and an explicit absolute deadline. The callback
+must durably bind its own source, resource and transaction admission; this process proof grants no VM authority.
 #>
 function Invoke-AtlasoBoundedStreamingProcess {
     param(
@@ -1215,9 +1219,18 @@ function Invoke-AtlasoBoundedStreamingProcess {
         [string]$ProcessJobName = '',
         [scriptblock]$ProcessOwnershipPublisher,
         [switch]$DiscardOutput,
-        [DateTimeOffset]$DeadlineUtc = [DateTimeOffset]::MaxValue
+        [DateTimeOffset]$DeadlineUtc = [DateTimeOffset]::MaxValue,
+        [scriptblock]$ProcessQuiescencePublisher
     )
 
+    if ($null -ne $ProcessQuiescencePublisher -and (
+            $null -eq $ProcessOwnershipPublisher -or [string]::IsNullOrWhiteSpace($ProcessJobName) -or
+            $DeadlineUtc -eq [DateTimeOffset]::MaxValue -or $DeadlineUtc -le [DateTimeOffset]::UtcNow)) {
+        throw 'Quiescence publication requires named-job ownership publication and a fresh absolute deadline.'
+    }
+    if ($null -ne $ProcessQuiescencePublisher) {
+        $ErrorActionPreference = 'Stop'
+    }
     # DiscardOutput gives untrusted diagnostic tools no console output channel.
     # Otherwise the isolated image child owns redaction. Inheriting the console preserves
     # its sanitized Packer heartbeats and diagnostics without copying plaintext
@@ -1233,9 +1246,30 @@ function Invoke-AtlasoBoundedStreamingProcess {
     $jobCompletionProven = $false
     $interruptionTerminationProven = $false
     $pendingFailure = $null
+    $successfulCompletion = $false
+    $rootStartTimeUtc = $null
+    $quiescenceRecord = $null
     try {
+        if ($null -ne $ProcessQuiescencePublisher) {
+            # This is the original Process.StartTime observation, not a later PID
+            # lookup or a replacement for the caller's independent creation clocks.
+            $rootStartTimeUtc = $process.StartTime.ToUniversalTime().ToString('O')
+        }
         if ($recoverable) {
-            & $ProcessOwnershipPublisher $processJob
+            if ($null -ne $ProcessQuiescencePublisher) {
+                # Opt-in transactions cannot resume after a nonterminating
+                # filesystem/publication error under a caller's Continue policy.
+                $null = & $ProcessOwnershipPublisher $processJob 2>&1 | ForEach-Object {
+                    # A closure can carry its own Continue preference. Inspect
+                    # its error stream as well instead of trusting caller policy.
+                    if ($_ -is [System.Management.Automation.ErrorRecord]) {
+                        throw 'Original process ownership publication reported an error.'
+                    }
+                }
+            }
+            else {
+                & $ProcessOwnershipPublisher $processJob
+            }
             if ([DateTimeOffset]::UtcNow -ge $DeadlineUtc) {
                 throw 'Original process deadline expired during ownership publication; child was not resumed.'
             }
@@ -1261,11 +1295,27 @@ function Invoke-AtlasoBoundedStreamingProcess {
                 throw
             }
         }
+        $descendantCleanupRequired = $null -ne $ProcessQuiescencePublisher -and
+            @($processJob.GetActiveProcessIds()).Count -ne 0
         Complete-AtlasoBoundedProcessTree `
             -Process $process `
             -Job $processJob `
             -Action $Action
         $jobCompletionProven = $true
+        if ($null -ne $ProcessQuiescencePublisher -and $process.ExitTime.ToUniversalTime() -gt $DeadlineUtc.UtcDateTime) {
+            $lateExitFailure = [System.TimeoutException]::new(
+                "$Action exited after its original deadline following proven whole-process-tree termination."
+            )
+            $lateExitFailure.Data['AtlasoProcessTreeTerminationProven'] = $true
+            throw $lateExitFailure
+        }
+        if ($descendantCleanupRequired) {
+            $descendantFailure = [System.InvalidOperationException]::new(
+                "$Action exited while descendants remained; their termination was proven, but submission failed."
+            )
+            $descendantFailure.Data['AtlasoProcessTreeTerminationProven'] = $true
+            throw $descendantFailure
+        }
         if ($process.ExitCode -ne 0) {
             $processFailure = [System.InvalidOperationException]::new(
                 "$Action failed with exit code $($process.ExitCode) after proven whole-process-tree termination."
@@ -1274,6 +1324,7 @@ function Invoke-AtlasoBoundedStreamingProcess {
             $processFailure.Data['AtlasoProcessExitCode'] = $process.ExitCode
             throw $processFailure
         }
+        $successfulCompletion = $true
     }
     catch {
         # Retain the initiating failure across the mandatory job cleanup below.
@@ -1295,6 +1346,18 @@ function Invoke-AtlasoBoundedStreamingProcess {
                 $jobCompletionProven = $true
                 $interruptionTerminationProven = $true
             }
+            if ($null -ne $ProcessQuiescencePublisher -and $null -ne $rootStartTimeUtc) {
+                $quiescenceRecord = [pscustomobject][ordered]@{
+                    Schema = 1
+                    ProcessJobName = $ProcessJobName
+                    RootProcessId = $process.Id
+                    RootStartTimeUtc = $rootStartTimeUtc
+                    DeadlineUtc = $DeadlineUtc.ToUniversalTime().ToString('O')
+                    WholeJobEmpty = $true
+                    Outcome = if ($successfulCompletion) { 'succeeded' } else { 'terminated_failure' }
+                    RootExitCode = $process.ExitCode
+                }
+            }
         }
         catch {
             $interruptionFailure = [System.InvalidOperationException]::new(
@@ -1307,6 +1370,26 @@ function Invoke-AtlasoBoundedStreamingProcess {
         finally {
             $processJob.Dispose()
             $process.Dispose()
+        }
+        if ($null -ne $quiescenceRecord) {
+            try {
+                # No replay follows a failed/unknown publication. In particular,
+                # neither inner SENT nor root exit alone reaches this boundary.
+                $null = & $ProcessQuiescencePublisher $quiescenceRecord 2>&1 | ForEach-Object {
+                    if ($_ -is [System.Management.Automation.ErrorRecord]) {
+                        throw 'One-shot quiescence publication reported an error.'
+                    }
+                }
+            }
+            catch {
+                $publicationFailure = [System.InvalidOperationException]::new(
+                    "$Action stopped, but its one-shot quiescence publication failed; preserve the transaction.",
+                    $(if ($null -ne $pendingFailure) { $pendingFailure } else { $_.Exception })
+                )
+                $publicationFailure.Data['AtlasoProcessTreeTerminationProven'] = $true
+                $publicationFailure.Data['AtlasoQuiescencePublicationFailed'] = $true
+                throw $publicationFailure
+            }
         }
         if ($interruptionTerminationProven) {
             $interruptionFailure = [System.InvalidOperationException]::new(

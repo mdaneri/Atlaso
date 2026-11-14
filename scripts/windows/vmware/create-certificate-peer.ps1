@@ -1,11 +1,11 @@
 <#
 .SYNOPSIS
-Create a new offline, receipt-bound certificate peer for an original ISO appliance.
+Create a new offline, receipt-bound certificate peer for an original ISO or OVA appliance.
 .DESCRIPTION
 Uses public inputs only. Never clones, starts, rewires, or adopts an appliance.
 Preserves the legacy PR-871 lifecycle path. A failed creation preserves every original receipt.
 .PARAMETER Plan
-Absolute public JSON specification with original ISO receipts and independently verified source references.
+Absolute public JSON specification with original appliance receipts and independently verified source references.
 .PARAMETER PythonPath
 Absolute ordinary Python 3.14 executable with the locked pycdlib dependency.
 .PARAMETER Mode
@@ -181,8 +181,38 @@ try {
         -SourceCommit $head -SourceBranch $branch -PullRequestNumber $validation.pr
     if (-not $context.Enabled) { throw 'Certificate peer factory requires original task ownership.' }
     Assert-AtlasoTestVmCheckoutSource -Context $context
-    foreach ($name in @('appliance_intent', 'appliance_ownership', 'appliance_installed_boot', 'peer_source_preparation')) {
-        Add-CertificatePeerPublicPin -Path $validation.$name.path -Pins $pins
+    $ova = $validation.PSObject.Properties['appliance_media'] -and $validation.appliance_media -ceq 'ova'
+    $applianceReferences = if ($ova) {
+        @('appliance_ova_import_readback', 'appliance_ova_isolation', 'appliance_ova_boot')
+    } else { @('appliance_installed_boot') }
+    foreach ($name in (@('appliance_intent', 'appliance_ownership', 'peer_source_preparation') + $applianceReferences)) {
+        $reference = $validation.$name
+        Add-CertificatePeerPublicPin -Path $reference.path -Pins $pins
+        if ((Get-FileHash -LiteralPath $reference.path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $reference.sha256) {
+            throw 'An original certificate peer receipt changed before admission.'
+        }
+    }
+    if ($ova) {
+        $ownership = Get-Content -LiteralPath $validation.appliance_ownership.path -Raw | ConvertFrom-Json
+        $receiptRoot = Split-Path -Parent $validation.appliance_ownership.path
+        $invocation = [string]$ownership.invocation_id
+        if ($invocation -cnotmatch '^[0-9a-f]{32}$') { throw 'Original OVA invocation is invalid.' }
+        foreach ($name in @('process', 'directory', 'terminal')) {
+            $phase = Join-Path $receiptRoot "atlaso-test-vm-ova-import-$name-$invocation.json"
+            if ($phase -ine $ownership.$name.Path) { throw 'Original OVA phase selector changed.' }
+            Add-CertificatePeerPublicPin -Path $phase -Pins $pins
+        }
+        $boot = Get-Content -LiteralPath $validation.appliance_ova_boot.path -Raw | ConvertFrom-Json
+        $isolation = Get-Content -LiteralPath $validation.appliance_ova_isolation.path -Raw | ConvertFrom-Json
+        foreach ($reference in @(
+                @{ Parent = $validation.appliance_ova_boot.path; Name = $boot.independent_boot.receipt },
+                @{ Parent = $validation.appliance_ova_boot.path; Name = $boot.credential_acl.receipt },
+                @{ Parent = $validation.appliance_ova_isolation.path; Name = $isolation.result })) {
+            if ($reference.Name -cnotmatch '^[A-Za-z0-9][A-Za-z0-9_.-]*\.json$') {
+                throw 'Original OVA evidence filename is invalid.'
+            }
+            Add-CertificatePeerPublicPin -Path (Join-Path (Split-Path -Parent $reference.Parent) $reference.Name) -Pins $pins
+        }
     }
     Add-CertificatePeerPublicPin -Path $validation.appliance_vmx -Pins $pins
     Add-CertificatePeerPublicPin -Path $validation.peer_public_key_path -Pins $pins
@@ -207,7 +237,7 @@ try {
     if ($Mode -eq 'Plan') {
         if (Test-Path -LiteralPath $destination) { throw 'Certificate peer factory never adopts an existing output.' }
         [pscustomobject]@{ Mode = 'Plan'; Name = $identity.Name; VmxPath = $context.VmxPath;
-            OriginalIsoAdmitted = $true; SourceDiskAdmitted = $true; StartsVm = $false; UsesCredentials = $false }
+            OriginalIsoAdmitted = (-not $ova); OriginalOvaAdmitted = [bool]$ova; SourceDiskAdmitted = $true; StartsVm = $false; UsesCredentials = $false }
         return
     }
     if ($Mode -eq 'CleanupPrepared') {

@@ -4268,7 +4268,7 @@ ipv6_cidr=
             Args:
                 _statement: Ignored database query for the observed lease.
             """
-            return SimpleNamespace(host_ip_cidr="192.0.2.30/24")
+            return SimpleNamespace(host_ip_cidr="192.0.2.30/24", mac_address="00:0c:29:f9:ff:49")
 
     with pytest.raises(RuntimeError, match="did not confirm"):
         ui.baseline_management_handoff_dhcp_settings(

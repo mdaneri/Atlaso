@@ -1,6 +1,6 @@
 [project]
 name = "atlaso"
-version = "0.9.503"
+version = "0.9.504"
 description = "Atlaso supports POC, lab, and test environments by simplifying deployment, maintenance, and validation."
 readme = "README.md"
 license = "MIT"
@@ -112,6 +112,15 @@ files = [
   "atlaso/app/services/dhcp_pool_verification.py",
   "scripts/interop/dedicated_host_contract.py",
   "scripts/interop/dedicated_host_proof.py",
+  "scripts/interop/certificate_dual_stack_contract.py",
+  "scripts/interop/certificate_dual_stack_guest.py",
+  "scripts/interop/certificate_dual_stack_ui.py",
+  "scripts/interop/certificate_dual_stack_channel.py",
+  "scripts/interop/certificate_dual_stack_inventory.py",
+  "scripts/interop/certificate_dual_stack_retirement.py",
+  "scripts/interop/certificate_dual_stack_restore.py",
+  "scripts/interop/certificate_dual_stack_capture_frames.py",
+  "scripts/interop/certificate_dual_stack_stop.py",
   "scripts/interop/certificate_ca_baseline.py",
   "scripts/interop/certificate_iso_deployment.py",
   "scripts/interop/certificate_iso_transport.py",
@@ -175,6 +184,8 @@ files = [
   "atlaso/app/services/interface_updates.py",
   "atlaso/app/services/management_bindings.py",
   "atlaso/app/services/network_address_status.py",
+  "atlaso/app/services/dynamic_management.py",
+  "atlaso/dynamic_management.py",
   "atlaso/app/services/physical_interfaces.py",
   "atlaso/app/services/port_forwarding.py",
   "atlaso/app/services/service_dns_defaults.py",

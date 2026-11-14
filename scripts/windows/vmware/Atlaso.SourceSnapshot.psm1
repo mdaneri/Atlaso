@@ -505,6 +505,29 @@ function Protect-AtlasoCertificateProofInputs {
                 throw 'Certificate proof receipt changed before credentialed admission.'
             }
         }
+        if ($planValue.PSObject.Properties['appliance_media'] -and $planValue.appliance_media -ceq 'ova') {
+            foreach ($name in @('appliance_ova_boot', 'appliance_ova_isolation', 'appliance_ova_runtime')) {
+                $parent = $planValue.$name
+                if (-not $references.Contains($parent)) { throw 'Original OVA proof reference is invalid.' }
+                $record = Get-Content -LiteralPath $parent.path -Raw | ConvertFrom-Json -ErrorAction Stop
+                $links = switch ($name) {
+                    'appliance_ova_boot' { $record.independent_boot; $record.credential_acl }
+                    'appliance_ova_isolation' { @{ receipt = $record.result; sha256 = $record.result_sha256 } }
+                    'appliance_ova_runtime' { $record.canonical_deployment; $record.installed_readback; $record.expected }
+                }
+                foreach ($link in $links) {
+                    if ([string]$link.receipt -cnotmatch '^[A-Za-z0-9][A-Za-z0-9_.-]*[.]json$' -or
+                        [string]$link.sha256 -cnotmatch '^[0-9a-f]{64}$') {
+                        throw 'Original OVA proof evidence filename or digest is invalid.'
+                    }
+                    $path = Join-Path (Split-Path -Parent $parent.path) $link.receipt
+                    $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($path, $true))
+                    if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $link.sha256) {
+                        throw 'Original OVA proof evidence changed before credentialed admission.'
+                    }
+                }
+            }
+        }
         # Resolve the embedded LAN reference only after the fixture bytes are pinned
         # and checked. All direct plan references remain inside the evidence root.
         $fixture = $planValue.PSObject.Properties['peer_fixture']
@@ -631,6 +654,8 @@ function New-AtlasoCertificateInspectorSnapshot {
         if ($Purpose -eq 'certificate') {
             $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath(
                     (Join-Path $scriptsRoot 'installation'), $false, $true))
+            $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath(
+                    (Join-Path $scriptsRoot 'virtualization'), $false, $true))
         }
         $inspectorFiles = if ($Purpose -eq 'certificate') { @(
                 'scripts/__init__.py',
@@ -643,6 +668,12 @@ function New-AtlasoCertificateInspectorSnapshot {
                 'scripts/interop/certificate_retirement.py',
                 'scripts/interop/certificate_iso_bootstrap.py',
                 'scripts/interop/certificate_iso_identity.py',
+                'scripts/interop/certificate_ova_identity.py',
+                'scripts/interop/certificate_peer_factory.py',
+                'scripts/interop/certificate_peer_factory_config.py',
+                'scripts/interop/routing_deployment_inspection.py',
+                'scripts/virtualization/inspect_workstation_ova_disks.py',
+                'scripts/virtualization/validate_ova.py',
                 'scripts/interop/certificate_iso_deployment.py',
                 'scripts/interop/certificate_iso_transport.py',
                 'scripts/interop/certificate_fixture_init.py',

@@ -704,6 +704,7 @@ class ApplianceSettings(Base):
         web_terminal_enabled: Whether web terminal is enabled.
         web_terminal_interfaces_json: Serialized JSON representation of web terminal interfaces.
         root_ssh_enabled: Whether root ssh is enabled.
+        ipv4_link_local_fallback_enabled: Global DHCPv4 link-local fallback opt-out.
         vmware_ceip_enabled: Whether vmware ceip is enabled.
         service_dns_target_naming: Persisted service dns target naming for the appliancesettings
             resource.
@@ -721,6 +722,7 @@ class ApplianceSettings(Base):
     web_terminal_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     web_terminal_interfaces_json: Mapped[str] = mapped_column(Text, default="[]")
     root_ssh_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    ipv4_link_local_fallback_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     vmware_ceip_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     service_dns_target_naming: Mapped[str] = mapped_column(String(20), default="ip")
     browser_session_idle_timeout_minutes: Mapped[int] = mapped_column(Integer, default=30)

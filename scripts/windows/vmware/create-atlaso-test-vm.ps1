@@ -104,6 +104,10 @@ Recreate the exact managed depot and backup disks after safety validation.
 Unsupported for normal test VMs because first boot must consume and scrub the
 shared development signing key.
 
+.PARAMETER Headless
+Use headless VMware starts for first boot and the verified signer-scrub restart,
+including pending import recovery. All ownership and import checks still apply.
+
 .PARAMETER SkipNetworkPrepare
 Use existing VMware networks without running network preparation.
 
@@ -226,6 +230,7 @@ param(
     [switch]$IncludeLabNetworkAdapters,
     [switch]$ResetDataDisks,
     [switch]$NoStart,
+    [switch]$Headless,
     [switch]$SkipNetworkPrepare,
     [switch]$WaitForIp,
     [switch]$TrustRootCa,
@@ -2371,13 +2376,17 @@ Resolved VMware vmrun executable used for bounded stop and readback.
 
 .PARAMETER TimeoutSeconds
 Positive per-operation deadline.
+
+.PARAMETER StartMode
+VMware launch mode retained for the restart after verified signer import.
 #>
 function Complete-AtlasoDevelopmentCaSuccessfulImport {
     param(
         [Parameter(Mandatory = $true)][object]$Marker,
         [Parameter(Mandatory = $true)][string]$VmrunPath,
         [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds,
-        [psobject]$OwnershipContext
+        [psobject]$OwnershipContext,
+        [ValidateSet('gui', 'nogui')][string]$StartMode = 'gui'
     )
 
     if ($OwnershipContext) {
@@ -2483,7 +2492,7 @@ function Complete-AtlasoDevelopmentCaSuccessfulImport {
                     (Join-Path $PSScriptRoot 'start-atlaso-vm.ps1'),
                     '-VmxPath', $Marker.VmxPath,
                     '-VmrunPath', $VmrunPath,
-                    '-Mode', 'gui'
+                    '-Mode', $StartMode
                 ) `
                 -TimeoutSeconds $TimeoutSeconds `
                 -Action 'Restart the normal test VM after powered-off signer scrub' | Out-Null
@@ -2532,6 +2541,9 @@ Checked-in public development-root fingerprint used to recognize completed impor
 
 .PARAMETER MarkerRoot
 Per-user marker directory; override only for focused tests.
+
+.PARAMETER StartMode
+VMware launch mode forwarded when recovery completes a proven signer import.
 #>
 function Invoke-PendingAtlasoDevelopmentCaCleanup {
     param(
@@ -2539,7 +2551,8 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
         [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds,
         [string]$ExpectedFingerprint = ('0' * 64),
         [string]$MarkerRoot = (Get-AtlasoDevelopmentCaCleanupMarkerRoot),
-        [psobject]$OwnershipContext
+        [psobject]$OwnershipContext,
+        [ValidateSet('gui', 'nogui')][string]$StartMode = 'gui'
     )
 
     if (-not (Test-Path -LiteralPath $MarkerRoot -PathType Container)) {
@@ -2663,7 +2676,8 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
                     -Marker $marker `
                     -VmrunPath $VmrunPath `
                     -TimeoutSeconds $TimeoutSeconds `
-                    -OwnershipContext $OwnershipContext
+                    -OwnershipContext $OwnershipContext `
+                    -StartMode $StartMode
                 continue
             }
         }
@@ -3286,7 +3300,8 @@ if (-not $WhatIfPreference) {
         -VmrunPath $resolvedVmrunPath `
         -TimeoutSeconds ([Math]::Min($TimeoutSeconds, 30)) `
         -ExpectedFingerprint $developmentRootCaFingerprint `
-        -OwnershipContext $ownershipContext
+        -OwnershipContext $ownershipContext `
+        -StartMode $(if ($Headless) { 'nogui' } else { 'gui' })
 }
 if ($CleanupRecoveryReceiptPath) { return }
 if ($ownershipContext.Enabled -and (Test-Path -LiteralPath $targetVmx) -and -not $Redeploy) {
@@ -3733,7 +3748,7 @@ if (-not $WhatIfPreference) {
                     (Join-Path $PSScriptRoot 'start-atlaso-vm.ps1'),
                     '-VmxPath', $targetVmx,
                     '-VmrunPath', $resolvedVmrunPath,
-                    '-Mode', 'gui'
+                    '-Mode', $(if ($Headless) { 'nogui' } else { 'gui' })
                 ) `
                 -TimeoutSeconds $TimeoutSeconds `
                 -Action 'Start the normal test VM after development-signer staging' | Out-Null
@@ -3768,7 +3783,8 @@ if (-not $WhatIfPreference) {
             -Marker $successfulImportMarker `
             -VmrunPath $resolvedVmrunPath `
             -TimeoutSeconds $TimeoutSeconds `
-            -OwnershipContext $ownershipContext
+            -OwnershipContext $ownershipContext `
+            -StartMode $(if ($Headless) { 'nogui' } else { 'gui' })
         $developmentCaCleanupMarkerPath = ''
     }
     catch {

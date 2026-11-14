@@ -1,0 +1,903 @@
+"""Exercise the private capture exchange using only memory and synthetic clocks."""
+
+from __future__ import annotations
+
+import copy
+import hashlib
+import json
+import os
+import shutil
+import struct
+import subprocess
+import threading
+from dataclasses import replace
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from scripts.interop.certificate_dual_stack_capture_frames import (
+    HEADER_BYTES,
+    CaptureBinding,
+    CaptureChildFrames,
+    CaptureControllerFrames,
+    CaptureFrameRefusal,
+    ClockSample,
+    FrameKind,
+    parse_header,
+)
+from scripts.interop.certificate_dual_stack_guest import (
+    MAX_PUBLIC_BYTES,
+    GuestRefusal,
+    public_bytes,
+)
+from scripts.interop.certificate_dual_stack_restore import capture_restoration_baseline
+from tests.test_certificate_dual_stack_restore import _MAC, _PATHS, _Transport
+from tests.test_certificate_dual_stack_restore import dns_form as dns_form
+
+_BINDING = CaptureBinding(b"r" * 16, b"n" * 16, b"c" * 32, b"l" * 32, b"p" * 32, b"b" * 32, 2_000, 100, 20_000)
+_RECEIPT = b"j" * 32
+
+
+def clock(offset: int = 0) -> ClockSample:
+    """Build a progressing same-boot synthetic sample.
+
+    Args:
+        offset: Elapsed counter ticks.
+    """
+    return ClockSample(_BINDING.boot_sha256, 1_000 + offset, 100, 10_000 + offset * 10)
+
+
+def frame(kind: FrameKind, data: bytes) -> bytes:
+    """Construct a fixture independently of the encoder.
+
+    Args:
+        kind: Wire message type.
+        data: Exact frame body.
+    """
+    return struct.pack("!4sBBI", b"ARCP", 1, kind, len(data)) + data
+
+
+def started() -> tuple[CaptureControllerFrames, CaptureChildFrames]:
+    """Prepare the two memory endpoints after a synthetic GO."""
+    controller = CaptureControllerFrames(_BINDING)
+    child = CaptureChildFrames(_BINDING)
+    child.accept_go(controller.go(clock()), clock(1))
+    return controller, child
+
+
+@pytest.fixture
+def baseline(dns_form: str) -> bytes:
+    """Return real stage1 canonical bytes from synthetic normal UI responses.
+
+    Args:
+        dns_form: Rendered current normal DNS settings form.
+    """
+    return public_bytes(capture_restoration_baseline(_Transport(dns_form).client, "eth1", _MAC, lambda _: None))
+
+
+def host_frame_expression(method: str, fields: tuple[bytes | int, ...]) -> str:
+    """Build a PowerShell call using only fixture bytes and exact integer literals.
+
+    Args:
+        method: The fixed host encoder method selected by the test.
+        fields: Synthetic fixed-width fields in wire order.
+    """
+    arguments = [
+        f"[Convert]::FromHexString('{field.hex()}')" if isinstance(field, bytes) else f"[long]({field})"
+        for field in fields
+    ]
+    return f"[Atlaso.RestorationControlFrames]::{method}({', '.join(arguments)})"
+
+
+def run_host_frames(executable: str, script: str, input_text: str | None = None) -> list[str]:
+    """Run the in-memory Windows frame fixture and return its lines.
+
+    Args:
+        executable: Resolved PowerShell executable.
+        script: Test-only calls built from fixed synthetic fields.
+        input_text: Optional synthetic fixture input sent over standard input.
+    """
+    result = subprocess.run(
+        [executable, "-NoProfile", "-NonInteractive", "-Command",
+         "$ErrorActionPreference = 'Stop'; "
+         "Import-Module ./scripts/windows/vmware/Atlaso.RestorationControlFrames.psm1; " + script],
+        cwd=Path(__file__).resolve().parents[1], input=input_text, capture_output=True, text=True, timeout=30, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout.splitlines()
+
+
+@pytest.mark.parametrize("high", [False, True], ids=["asymmetric", "signed-maximum"])
+def test_windows_control_frames_match_python_oracle(high: bool, baseline: bytes) -> None:
+    """Compare every host byte with the normative controller's real GO and ACK.
+
+    Args:
+        high: Use the maximum signed counter and maximum UTC deadline.
+        baseline: Exact stage1 DATA from the synthetic normal UI fixture.
+    """
+    pwsh = shutil.which("pwsh") if os.name == "nt" else None
+    if pwsh is None:
+        pytest.skip("Windows PowerShell 7 is required for the host encoder")
+
+    deadline = (1 << 63) - 1 if high else 0x0102030405060708
+    utc_ms = 253_402_300_799_999 if high else 0x010203040506
+    original = tuple(bytes(range(start, start + width)) for start, width in (
+        (1, 16), (25, 16), (42, 32), (76, 32), (111, 32), (147, 32),
+    ))
+    binding = CaptureBinding(*original, deadline, 1_000_003, utc_ms)
+    sample = ClockSample(binding.boot_sha256, deadline - 1_000_004, binding.frequency, utc_ms - 1_002)
+    receipt = bytes(range(185, 217))
+    controller = CaptureControllerFrames(binding)
+    expected_go = controller.go(sample)
+    controller.accept_checkpoint(frame(FrameKind.CHECKPOINT, baseline), sample)
+    expected_ack = controller.acknowledge(receipt, sample)
+    go = host_frame_expression("EncodeGo", (
+        *original, deadline, binding.frequency, utc_ms, sample.counter, sample.utc_ms,
+    ))
+    ack_fields = (*original[:3], hashlib.sha256(baseline).digest(), receipt)
+    ack = host_frame_expression("EncodeAck", ack_fields)
+    changed_ack = host_frame_expression("EncodeAck", (*ack_fields[:3], receipt, ack_fields[3]))
+    observed = run_host_frames(pwsh, f"[Convert]::ToHexString({go}); [Convert]::ToHexString({ack}); "
+                                    f"[Convert]::ToHexString({changed_ack})")
+    assert len(observed) == 3
+    assert [bytes.fromhex(value) for value in observed[:2]] == [expected_go, expected_ack]
+    assert bytes.fromhex(observed[2]) != expected_ack
+
+
+def test_windows_control_encoder_refuses_invalid_fields() -> None:
+    """Keep width and numeric refusal in the host encoder itself."""
+    pwsh = shutil.which("pwsh") if os.name == "nt" else None
+    if pwsh is None:
+        pytest.skip("Windows PowerShell 7 is required for the host encoder")
+    binding = (b"r" * 16, b"n" * 16, b"i" * 32, b"l" * 32, b"p" * 32, b"b" * 32)
+    calls = (
+        host_frame_expression("EncodeGo", (*binding, 2000, 0, 2000, 1000, 1000)),
+        host_frame_expression("EncodeGo", (*binding, 2000, 1000, 253_402_300_800_000, 1000, 1000)),
+        host_frame_expression("EncodeGo", (*binding, 2000, 1000, 2000, -1, 1000)),
+        host_frame_expression("EncodeAck", (*binding[:3], b"d" * 32, b"j" * 33)),
+    )
+    script = "; ".join(
+        f"try {{ $null = {call}; throw 'Encoder accepted invalid input' }} catch {{ "
+        "if ($_.Exception.GetBaseException() -isnot [ArgumentException]) { throw }; 'refused' }"
+        for call in calls
+    )
+    assert run_host_frames(pwsh, script) == ["refused"] * len(calls)
+
+
+@pytest.fixture
+def windows_frame_pwsh() -> str:
+    """Resolve PowerShell 7 for the Windows DATA fixture."""
+    pwsh = shutil.which("pwsh") if os.name == "nt" else None
+    if pwsh is None:
+        pytest.skip("Windows PowerShell 7 is required for the host DATA reader")
+    return pwsh
+
+
+def test_windows_canonical_data_spelling(windows_frame_pwsh: str) -> None:
+    """Check raw JSON spelling, nesting, and size at the Windows fixture.
+
+    Args:
+        windows_frame_pwsh: Resolved PowerShell 7 executable.
+    """
+    accepted = [
+        b"{}",
+        public_bytes({"a": {"items": [True, False, None, -1, 0]}, "b": {"items": []}}),
+        public_bytes({"a": '  "\\/\x00\b\f\n\r\t\x1f\x7f\u2028\U0001f680  '}),
+        public_bytes({"a": "\ud800"}),
+        b'{"a":[{"x":0},{"x":1}]}',
+    ]
+    rejected = [
+        b"", b"{", b"[]", b"{}{}", b"{}\n", b"{ }", b'{"a" :0}', b'{"a": 0}', b'{"a":0, "b":1}',
+        b'{"b":0,"a":1}', b'{"a":0,"a":1}', b'{"a":{"b":0,"a":1}}', b'{"a":{"b":0,"b":1}}',
+        b'{"a":[{"x":0,"x":1}]}', b'{"a":[{"x":0,"w":1}]}', b'{"a":[{"x":{"y":0}}]}',
+        b'{"a":0,}', b'{"a":/*note*/0}', b'{"a":-0}', b'{"a":00}', b'{"a":0.0}', b'{"a":1e0}',
+        b'{"a":"\xc3\xa9"}', b'{"a":"\x7f"}', b'{"a":"\t"}', b'{"a":"unfinished\\',
+        br'{"\u0061":0}', br'{"a":"\u0041"}', br'{"a":"\/"}', br'{"a":"\u0009"}',
+        br'{"a":"\u007F"}', br'{"a":"\u00e"}', br'{"a":"\ud83d\uDE80"}',
+    ]
+    encoded = ", ".join(f"'{sample.hex()}'" for sample in accepted + rejected)
+    script = f"""
+    $samples = [Collections.Generic.List[byte[]]]::new()
+    foreach ($hex in @({encoded})) {{
+        $samples.Add([Convert]::FromHexString($hex))
+    }}
+    foreach ($size in {MAX_PUBLIC_BYTES}, {MAX_PUBLIC_BYTES + 1}) {{
+        $samples.Add([Text.Encoding]::ASCII.GetBytes('{{"a":"' + ('x' * ($size - 8)) + '"}}'))
+    }}
+    foreach ($sample in $samples) {{
+        try {{
+            [Atlaso.RestorationControlFrames]::RequireCanonicalData($sample)
+            'accepted'
+        }} catch {{
+            $failure = $_.Exception.GetBaseException()
+            if ($failure -isnot [FormatException] -or
+                $failure.Message -cne 'Invalid canonical restoration DATA.') {{ throw }}
+            'refused'
+        }}
+    }}
+    """
+    assert run_host_frames(windows_frame_pwsh, script) == [
+        *["accepted"] * len(accepted), *["refused"] * len(rejected), "accepted", "refused",
+    ]
+
+
+def test_windows_decoded_public_patterns_match_python(windows_frame_pwsh: str, baseline: bytes) -> None:
+    """Compare the two public-pattern checks on canonical Stage1 fixtures.
+
+    Args:
+        windows_frame_pwsh: Resolved PowerShell 7 executable.
+        baseline: Exact Stage1 DATA from synthetic normal UI responses.
+    """
+    cases = [
+        ("-----BEGIN SYNTHETIC PRIVATE KEY-----", False),
+        ("-----begin SYNTHETIC PRIVATE KEY-----", True),
+        ("-----BEGIN SYNTHETIC-PRIVATE KEY-----", True),
+        ('prefix "HTTPS://fixture@host"', False),
+        ("x://@", False),
+        ("x://fixture/path@host", True),
+        ("x://fixture\t@host", True),
+        ("x://fixture\x1c@host", True),
+        ("x://fixture\u00a0@host", True),
+        ("x://fixture\u200b@host", False),
+        ("x://fixture\x00@host", False),
+        ("x://fixture\U0001f680@host", False),
+        ("é://fixture@host", True),
+        ("-----BEGIN " + "x" * 32768 + " PRIVATE KEY----", True),
+        ("x://" + "x" * 32768 + "/@host", True),
+        *((f"{letter}://fixture@host", False) for letter in "\u0130\u0131\u017f\u212a"),
+    ]
+    value = json.loads(baseline)
+    samples = []
+    for candidate, accepted in cases:
+        value["dns_settings"]["upstream_servers"] = candidate
+        value["projection_sha256"]["dns_settings"] = hashlib.sha256(public_bytes(value["dns_settings"])).hexdigest()
+        data = public_bytes(value)
+        controller, _ = started()
+        if accepted:
+            assert controller.accept_checkpoint(frame(FrameKind.CHECKPOINT, data), clock(2)) == data
+        else:
+            with pytest.raises(CaptureFrameRefusal, match="capture_baseline_invalid"):
+                controller.accept_checkpoint(frame(FrameKind.CHECKPOINT, data), clock(2))
+        samples.append(data.hex())
+
+    script = """
+    foreach ($hex in ([Console]::In.ReadToEnd() | ConvertFrom-Json)) {
+        try {
+            [Atlaso.RestorationControlFrames]::RequirePublicData([Convert]::FromHexString($hex))
+            'accepted'
+        } catch {
+            $failure = $_.Exception.GetBaseException()
+            if ($failure -isnot [FormatException] -or
+                $failure.Message -cne 'Restoration DATA contains a private pattern.') { throw }
+            'refused'
+        }
+    }
+    """
+    assert run_host_frames(windows_frame_pwsh, script, json.dumps(samples)) == [
+        "accepted" if accepted else "refused" for _, accepted in cases
+    ]
+
+
+def test_windows_decoded_public_patterns_check_individual_tokens(windows_frame_pwsh: str) -> None:
+    """Check independent names and values, strict decoding, and canonical preconditions.
+
+    Args:
+        windows_frame_pwsh: Resolved PowerShell 7 executable.
+    """
+    samples = [
+        public_bytes({"https://fixture@host": 0}),
+        public_bytes({"items": ["", "https://fixture@host"]}),
+        public_bytes({"items": ["https://fixture", "@host", None, False, 0]}),
+        public_bytes({"text": "\ud800"}),
+        public_bytes({"text": "\udc00"}),
+        b" {}",
+    ]
+    script = """
+    foreach ($hex in ([Console]::In.ReadToEnd() | ConvertFrom-Json)) {
+        try {
+            [Atlaso.RestorationControlFrames]::RequirePublicData([Convert]::FromHexString($hex))
+            'accepted'
+        } catch {
+            $failure = $_.Exception.GetBaseException()
+            if ($failure -isnot [FormatException] -or $null -ne $failure.InnerException -or
+                $failure.Data.Count -ne 0) { throw }
+            $failure.Message
+        }
+    }
+    """
+    assert run_host_frames(windows_frame_pwsh, script, json.dumps([sample.hex() for sample in samples])) == [
+        "Restoration DATA contains a private pattern.",
+        "Restoration DATA contains a private pattern.",
+        "accepted",
+        "Invalid decoded restoration DATA.",
+        "Invalid decoded restoration DATA.",
+        "Invalid canonical restoration DATA.",
+    ]
+
+
+def test_windows_canonical_data_and_typed_stage2(windows_frame_pwsh: str, baseline: bytes) -> None:
+    """Exercise the Python oracle and the two separate host gates on the same bytes.
+
+    Args:
+        windows_frame_pwsh: Resolved PowerShell 7 executable.
+        baseline: Exact Stage1 DATA from synthetic normal UI responses.
+    """
+    original = json.loads(baseline)
+    dns = public_bytes(original["dns_settings"])
+    respelled = b"{ " + dns[1:]
+    raw_digest = hashlib.sha256(respelled).hexdigest().encode("ascii")
+    original_digest = hashlib.sha256(dns).hexdigest().encode("ascii")
+    assert baseline.count(dns) == baseline.count(original_digest) == 1
+    digest_consistent = baseline.replace(dns, respelled).replace(original_digest, raw_digest)
+    reordered = json.dumps(dict(reversed(original.items())), ensure_ascii=True, separators=(",", ":")).encode("ascii")
+
+    typed_invalid = copy.deepcopy(original)
+    typed_invalid["dns_settings"]["cache_size"] = -1
+    typed_invalid["projection_sha256"]["dns_settings"] = hashlib.sha256(
+        public_bytes(typed_invalid["dns_settings"])
+    ).hexdigest()
+    canonical_typed_invalid = public_bytes(typed_invalid)
+    for sample in (baseline, canonical_typed_invalid):
+        controller, _ = started()
+        assert controller.accept_checkpoint(frame(FrameKind.CHECKPOINT, sample), clock(2)) == sample
+    for sample in (digest_consistent, reordered):
+        controller, _ = started()
+        with pytest.raises(CaptureFrameRefusal, match="capture_baseline_invalid"):
+            controller.accept_checkpoint(frame(FrameKind.CHECKPOINT, sample), clock(2))
+
+    encoded = ", ".join(f"'{sample.hex()}'" for sample in (
+        baseline, digest_consistent, reordered, canonical_typed_invalid,
+    ))
+    script = f"""
+    $checkpoint = Import-Module ./scripts/windows/vmware/Atlaso.RestorationCheckpoint.psm1 -PassThru
+    foreach ($hex in @({encoded})) {{
+        $sample = [Convert]::FromHexString($hex)
+        $lexical = try {{
+            [Atlaso.RestorationControlFrames]::RequireCanonicalData($sample)
+            'accepted'
+        }} catch {{
+            if ($_.Exception.GetBaseException() -isnot [FormatException]) {{ throw }}
+            'refused'
+        }}
+        $typed = try {{
+            & $checkpoint {{
+                param([byte[]] $data, [string] $mac)
+                Assert-RestorationBaseline $data @{{ interface = 'eth1'; mac_address = $mac }}
+            }} $sample '{_MAC}'
+            'accepted'
+        }} catch {{
+            if ($_.Exception.Message -cne 'Restoration DNS number refused.') {{ throw }}
+            'refused'
+        }}
+        "$($lexical):$typed"
+    }}
+    """
+    assert run_host_frames(windows_frame_pwsh, script) == [
+        "accepted:accepted", "refused:accepted", "refused:accepted", "accepted:refused",
+    ]
+
+
+def test_windows_stage2_requires_ordinal_values(windows_frame_pwsh: str, baseline: bytes) -> None:
+    """Refuse changes to exact Stage2 strings even with matching projection digests.
+
+    Args:
+        windows_frame_pwsh: Resolved PowerShell 7 executable.
+        baseline: Exact Stage1 DATA from synthetic normal UI responses.
+    """
+    original = json.loads(baseline)
+    samples = [baseline.hex()]
+    expected = ["accepted"]
+    interface_refusal = "Original restoration interface refused."
+    address_refusal = "Restoration address projection refused."
+    dns_refusal = "Restoration DNS controls refused."
+    for part, key, value, result in (
+        ("original_row", "mac_address", _MAC.replace(":", "-"), "accepted"),
+        ("dns_settings", "query_logging_mode", "queries-extra", "accepted"),
+        ("original_row", "name", "eth1\x00", interface_refusal),
+        ("original_row", "mac_address", _MAC + "\x00", interface_refusal),
+        ("original_row", "role", "access\x00", interface_refusal),
+        ("original_row", "mode", "access\x00", interface_refusal),
+        ("original_row", "ipv4_method", "static\x00", interface_refusal),
+        ("browser_fields", "ip_cidr", original["browser_fields"]["ip_cidr"] + "\x00", address_refusal),
+        ("browser_fields", "gateway", None, address_refusal),
+        ("browser_fields", "admin_state", "up\x00", "Restoration admin state refused."),
+        ("dns_settings", "query_logging_mode", original["dns_settings"]["query_logging_mode"] + "\x00", dns_refusal),
+        ("dns_settings", "listen_interfaces_present", "1\x00", dns_refusal),
+        ("review", "plan_error", "\x00", "Restoration review is not clean."),
+        ("review", "plan_error", None, "Restoration review is not clean."),
+        ("projection_sha256", "review", original["projection_sha256"]["review"] + "\x00",
+         "Restoration projection digest differs."),
+    ):
+        data = copy.deepcopy(original)
+        data[part][key] = value
+        if part != "projection_sha256":
+            data["projection_sha256"][part] = hashlib.sha256(public_bytes(data[part])).hexdigest()
+        samples.append(public_bytes(data).hex())
+        expected.append(result)
+
+    data = copy.deepcopy(original)
+    data["test_only\x00"] = data.pop("test_only")
+    samples.append(public_bytes(data).hex())
+    expected.append("Restoration projection fields refused.")
+    script = f"""
+    $checkpoint = Import-Module ./scripts/windows/vmware/Atlaso.RestorationCheckpoint.psm1 -PassThru
+    foreach ($hex in ([Console]::In.ReadToEnd() | ConvertFrom-Json)) {{
+        $sample = [Convert]::FromHexString($hex)
+        try {{
+            & $checkpoint {{
+                param([byte[]] $data, [string] $mac)
+                Assert-RestorationBaseline $data @{{ interface = 'eth1'; mac_address = $mac }}
+            }} $sample '{_MAC}'
+            'accepted'
+        }} catch {{
+            $_.Exception.Message
+        }}
+    }}
+    """
+    assert run_host_frames(windows_frame_pwsh, script, json.dumps(samples)) == expected
+
+
+def test_windows_data_reader_collects_exact_fragments(windows_frame_pwsh: str) -> None:
+    """Collect every header split and fragmented body, leaving the next byte unread.
+
+    Args:
+        windows_frame_pwsh: Resolved PowerShell 7 executable.
+    """
+    body = b"opaque\x00\xff"
+    wire = frame(FrameKind.CHECKPOINT, body) + b"x"
+    assert parse_header(wire[:HEADER_BYTES], FrameKind.CHECKPOINT) == len(body)
+    script = f"""
+    $wire = [Convert]::FromHexString('{wire.hex()}')
+    foreach ($split in 1..9) {{
+        $state = @{{ offset = 0; guardCalls = 0; reads = 0 }}
+        $guard = [Action]{{ $state.guardCalls++ }}
+        $read = [Func[int, byte[]]]{{
+            param([int] $maximum)
+            $end = if ($state.offset -lt 10) {{ 10 }} else {{ $wire.Length - 1 }}
+            if ($maximum -ne ($end - $state.offset) -or $maximum -le 0 -or
+                $state.guardCalls -ne (2 * $state.reads + 1)) {{ throw 'Unexpected read request' }}
+            $count = if ($state.offset -eq 0) {{ $split }} elseif ($state.offset -lt 10) {{ $maximum }}
+                     else {{ [Math]::Min($maximum, 3) }}
+            $offset = $state.offset
+            $state.offset += $count
+            $state.reads++
+            return ,([byte[]] $wire[$offset..($state.offset - 1)])
+        }}
+        $body = [Atlaso.RestorationControlFrames]::ReadData(2, $read, $guard)
+        if ($state.offset -ne ($wire.Length - 1) -or $state.guardCalls -ne (2 * $state.reads)) {{
+            throw 'Unexpected read boundary or guard count'
+        }}
+        [Convert]::ToHexString($body)
+    }}
+    """
+    assert run_host_frames(windows_frame_pwsh, script) == [body.hex().upper()] * 9
+
+
+def test_windows_data_reader_matches_python_header_bounds(windows_frame_pwsh: str) -> None:
+    """Match Python bounds and refuse invalid headers before requesting the body.
+
+    Args:
+        windows_frame_pwsh: Resolved PowerShell 7 executable.
+    """
+    cases = [
+        struct.pack("!4sBBI", b"ARCP", 1, 4, size)
+        for size in (0, 1, 2, MAX_PUBLIC_BYTES, MAX_PUBLIC_BYTES + 1, 2**31, 2**32 - 1)
+    ]
+    cases.extend(struct.pack("!4sBBI", magic, version, kind, 2) for magic, version, kind in (
+        (b"WRNG", 1, 4), (b"ARCP", 2, 4), (b"ARCP", 1, 2), (b"ARCP", 1, 255),
+    ))
+    expected: list[str] = []
+    for header in cases:
+        try:
+            size = parse_header(header, FrameKind.COMPLETE)
+        except CaptureFrameRefusal:
+            expected.append("refused:10")
+        else:
+            expected.append(f"read:{size}:10,{size}")
+    headers = ", ".join(f"'{header.hex()}'" for header in cases)
+    script = f"""
+    foreach ($hex in @({headers})) {{
+        $header = [Convert]::FromHexString($hex)
+        $requests = [Collections.Generic.List[int]]::new()
+        $read = [Func[int, byte[]]]{{
+            param([int] $maximum)
+            $requests.Add($maximum)
+            if ($requests.Count -eq 1) {{ return ,$header }}
+            if ($maximum -gt {MAX_PUBLIC_BYTES}) {{ throw 'Body request exceeded cap' }}
+            $body = [byte[]]::new($maximum)
+            $body[$maximum - 1] = 0xFF
+            return ,$body
+        }}
+        try {{
+            $body = [Atlaso.RestorationControlFrames]::ReadData(4, $read, [Action]{{}})
+            if ($body[-1] -ne 0xFF) {{ throw 'Body was modified' }}
+            "read:$($body.Length):$($requests -join ',')"
+        }} catch {{
+            if ($_.Exception.GetBaseException() -isnot [FormatException]) {{ throw }}
+            "refused:$($requests -join ',')"
+        }}
+    }}
+    """
+    assert run_host_frames(windows_frame_pwsh, script) == expected
+
+
+def test_windows_data_reader_refuses_bad_progress_or_expiry(windows_frame_pwsh: str) -> None:
+    """Stop on short closure, invalid progress, exceptions or original budget expiry.
+
+    Args:
+        windows_frame_pwsh: Resolved PowerShell 7 executable.
+    """
+    header = frame(FrameKind.CHECKPOINT, b"abc")[:HEADER_BYTES]
+    script = f"""
+    $header = [Convert]::FromHexString('{header.hex()}')
+    foreach ($fault in 'wrong-expected', 'header-eof', 'body-eof', 'null', 'oversized',
+                       'read-error', 'expired-before', 'expired-after') {{
+        $state = @{{ reads = 0; guardCalls = 0 }}
+        $guard = [Action]{{
+            $state.guardCalls++
+            if (($fault -eq 'expired-before' -and $state.guardCalls -eq 3) -or
+                ($fault -eq 'expired-after' -and $state.guardCalls -eq 4)) {{
+                throw [TimeoutException]::new('Original budget expired')
+            }}
+        }}
+        $read = [Func[int, byte[]]]{{
+            param([int] $maximum)
+            $state.reads++
+            if ($state.reads -eq 1) {{
+                if ($fault -in 'header-eof', 'expired-before', 'expired-after') {{
+                    return ,([byte[]] $header[0..2])
+                }}
+                return ,$header
+            }}
+            if ($state.reads -gt 2) {{ throw 'Unexpected extra read' }}
+            switch ($fault) {{
+                'null' {{ return $null }}
+                'oversized' {{ return ,([byte[]]::new($maximum + 1)) }}
+                'read-error' {{ throw [IO.EndOfStreamException]::new() }}
+                'expired-after' {{ return ,([byte[]] $header[3..9]) }}
+                default {{ return ,([byte[]]::new(0)) }}
+            }}
+        }}
+        $kind = if ($fault -eq 'wrong-expected') {{ 1 }} else {{ 2 }}
+        try {{
+            $null = [Atlaso.RestorationControlFrames]::ReadData($kind, $read, $guard)
+            throw 'DATA reader accepted invalid input'
+        }} catch {{
+            $type = $_.Exception.GetBaseException().GetType().Name
+            "$($fault):$($state.reads):$($state.guardCalls):$type"
+        }}
+    }}
+    """
+    assert run_host_frames(windows_frame_pwsh, script) == [
+        "wrong-expected:0:0:ArgumentException",
+        "header-eof:2:4:IOException",
+        "body-eof:2:4:IOException",
+        "null:2:4:IOException",
+        "oversized:2:4:IOException",
+        "read-error:2:3:EndOfStreamException",
+        "expired-before:1:3:TimeoutException",
+        "expired-after:2:4:TimeoutException",
+    ]
+
+
+@pytest.mark.parametrize(
+    "mode", ["success", "go-binding", "go-clock", "ack-receipt", "final-drift", "final-error"],
+)
+def test_exchange_wraps_the_original_stage1_callback_and_final_return(
+    dns_form: str, baseline: bytes, mode: str,
+) -> None:
+    """Require independent peer expectations before the Stage1 capture can complete.
+
+    Args:
+        dns_form: Rendered current normal DNS settings form.
+        baseline: Canonical DATA captured independently from the same synthetic inputs.
+        mode: The successful exchange or the one deliberately refused boundary.
+    """
+    ui = _Transport(dns_form)
+    if mode == "final-drift":
+        ui.rows[2]["gateway"] = ""
+    elif mode == "final-error":
+        ui.status[8] = 500
+
+    peer_binding = CaptureBinding(
+        b"r" * 16, b"n" * 16, b"c" * 32, b"l" * 32, b"p" * 32, b"b" * 32, 2_000, 100, 20_000,
+    )
+    peer_go, peer_checkpoint, peer_ack, peer_complete = (
+        ClockSample(peer_binding.boot_sha256, 1_000 + offset, 100, 10_000 + offset * 10)
+        for offset in (0 if mode == "go-clock" else 1, 2, 5, 6)
+    )
+    receipt_prefix = b"synthetic checkpoint\n" + peer_binding.capture_intent_sha256
+    expected_receipt = receipt_prefix + baseline
+    expected_digest = hashlib.sha256(expected_receipt).digest()
+    substituted_digest = bytes([expected_digest[0] ^ 1]) + expected_digest[1:]
+    published: list[bytes] = []
+    decoded_acks: list[bytes] = []
+    completed: list[bytes] = []
+
+    def exchange() -> bytes:
+        """Run one original exchange with local endpoints and no recovery path.
+
+        Returns:
+            Provisional DATA after exact COMPLETE and synthetic EOF.
+        """
+        controller_binding = replace(_BINDING, run_id=b"x" * 16) if mode == "go-binding" else _BINDING
+        controller = CaptureControllerFrames(controller_binding)
+        child = CaptureChildFrames(peer_binding)
+        child.accept_go(controller.go(clock(1)), peer_go)
+
+        def checkpoint(value: dict[str, Any]) -> None:
+            """Release the original callback only after an independently matching receipt.
+
+            Args:
+                value: Original callback's independent DATA copy.
+            """
+            assert ui.requests == [("GET", path) for path in _PATHS * 2]
+            candidate = child.checkpoint(public_bytes(value), peer_checkpoint)
+            accepted = controller.accept_checkpoint(candidate, clock(3))
+            receipt = b"synthetic checkpoint\n" + controller_binding.capture_intent_sha256 + accepted
+            assert receipt == expected_receipt
+            published.append(receipt)
+            ack = controller.acknowledge(hashlib.sha256(receipt).digest(), clock(4))
+            if mode == "ack-receipt":
+                ack = ack[:-32] + substituted_digest
+            decoded = child.accept_ack(ack, peer_ack)
+            decoded_acks.append(decoded)
+            if decoded != expected_digest:
+                raise CaptureFrameRefusal("synthetic_checkpoint_receipt_differs")
+
+        data = public_bytes(capture_restoration_baseline(ui.client, "eth1", _MAC, checkpoint))
+        assert ui.requests == [("GET", path) for path in _PATHS * 3]
+        complete = child.complete(data, peer_complete)
+        completed.append(complete)
+        controller.accept_complete(complete, clock(7))
+        provisional = controller.accept_eof(b"", clock(8))
+        with pytest.raises(CaptureFrameRefusal, match="capture_phase_invalid"):
+            controller.accept_eof(b"", clock(9))
+        return provisional
+
+    if mode in ("go-binding", "go-clock"):
+        with pytest.raises(CaptureFrameRefusal, match="^capture_go_invalid$"):
+            exchange()
+        assert not ui.requests
+        assert not published and not decoded_acks and not completed
+        return
+
+    if mode == "success":
+        assert exchange() == baseline
+        assert completed == [frame(FrameKind.COMPLETE, baseline)]
+    else:
+        with pytest.raises(GuestRefusal, match="^restoration_checkpoint_uncertain$"):
+            exchange()
+        assert completed == []
+    assert published == [expected_receipt]
+    # The mutated tail passes the frame-level ACK check but must not release the callback.
+    assert decoded_acks == [substituted_digest if mode == "ack-receipt" else expected_digest]
+    assert ui.requests == [("GET", path) for path in _PATHS * (2 if mode == "ack-receipt" else 3)]
+
+
+@pytest.mark.parametrize(("kind", "length"), [
+    (FrameKind.GO, 199), (FrameKind.GO, 201), (FrameKind.ACK, 127), (FrameKind.ACK, 129),
+    (FrameKind.CHECKPOINT, 1), (FrameKind.COMPLETE, MAX_PUBLIC_BYTES + 1),
+])
+def test_reject_length_before_body_allocation(kind: FrameKind, length: int) -> None:
+    """Refuse frame declarations outside the closed bounds.
+
+    Args:
+        kind: Candidate message type.
+        length: Declared out-of-range payload size.
+    """
+    with pytest.raises(CaptureFrameRefusal, match="capture_length_invalid"):
+        parse_header(struct.pack("!4sBBI", b"ARCP", 1, kind, length), kind)
+
+
+@pytest.mark.parametrize("header", [
+    b"", b"ARCP", b"WRNG\x01\x02\x00\x00\x00\x02",
+    b"ARCP\x02\x02\x00\x00\x00\x02", b"ARCP\x01\xff\x00\x00\x00\x02",
+    b"ARCP\x01\x04\x00\x00\x00\x02",
+])
+def test_reject_unknown_partial_or_wrong_direction_header(header: bytes) -> None:
+    """Accept only the complete header for the expected frame kind.
+
+    Args:
+        header: Candidate invalid header bytes.
+    """
+    with pytest.raises(CaptureFrameRefusal, match="capture_header_invalid"):
+        parse_header(header, FrameKind.CHECKPOINT)
+    assert parse_header(frame(FrameKind.CHECKPOINT, b"{}")[:HEADER_BYTES], FrameKind.CHECKPOINT) == 2
+
+
+@pytest.mark.parametrize("mode", ["partial", "trailing", "duplicate", "direction"])
+def test_wrong_frame_consumes_original_controller(mode: str, baseline: bytes) -> None:
+    """Prevent a retry after malformed or mismatched input.
+
+    Args:
+        mode: Frame corruption case.
+        baseline: Canonical stage1 DATA bytes.
+    """
+    controller, child = started()
+    valid = child.checkpoint(baseline, clock(2))
+    wrong = {
+        "partial": valid[:-1], "trailing": valid + b"!", "duplicate": valid + valid,
+        "direction": frame(FrameKind.COMPLETE, baseline),
+    }[mode]
+    with pytest.raises(CaptureFrameRefusal):
+        controller.accept_checkpoint(wrong, clock(3))
+    with pytest.raises(CaptureFrameRefusal, match="capture_phase_invalid"):
+        controller.accept_checkpoint(valid, clock(4))
+
+
+@pytest.mark.parametrize("offset", [0, 16, 32, 64, 96, 128, 160, 168, 176])
+def test_go_rejects_each_mismatched_original_binding(offset: int) -> None:
+    """Bind every launch field to independently supplied child data.
+
+    Args:
+        offset: Byte offset of an original GO field.
+    """
+    good = CaptureControllerFrames(_BINDING).go(clock())
+    altered = bytearray(good)
+    altered[HEADER_BYTES + offset] ^= 1
+    child = CaptureChildFrames(_BINDING)
+    with pytest.raises(CaptureFrameRefusal, match="capture_go_invalid"):
+        child.accept_go(bytes(altered), clock(1))
+    with pytest.raises(CaptureFrameRefusal, match="capture_phase_invalid"):
+        child.accept_go(good, clock(2))
+
+
+@pytest.mark.parametrize("offset", [0, 16, 32, 64])
+def test_ack_rejects_wrong_run_nonce_intent_or_baseline(offset: int, baseline: bytes) -> None:
+    """Prevent ACK from releasing a different checkpoint or attempt.
+
+    Args:
+        offset: Byte offset of an ACK field.
+        baseline: Canonical stage1 DATA bytes.
+    """
+    controller, child = started()
+    controller.accept_checkpoint(child.checkpoint(baseline, clock(2)), clock(3))
+    ack = controller.acknowledge(_RECEIPT, clock(4))
+    altered = bytearray(ack)
+    altered[HEADER_BYTES + offset] ^= 1
+    with pytest.raises(CaptureFrameRefusal, match="capture_ack_invalid"):
+        child.accept_ack(bytes(altered), clock(5))
+    with pytest.raises(CaptureFrameRefusal, match="capture_phase_invalid"):
+        child.accept_ack(ack, clock(6))
+
+
+@pytest.mark.parametrize("mode", ["whitespace", "duplicate", "ascii", "flag", "digest", "private", "nested", "dirty"])
+def test_reject_noncanonical_or_out_of_scope_baselines(mode: str, baseline: bytes) -> None:
+    """Refuse malformed bytes and unexpected stage1 content on both sides.
+
+    Args:
+        mode: DATA corruption case.
+        baseline: Canonical stage1 DATA bytes.
+    """
+    data = json.loads(baseline)
+    data["test_only"] = 1
+    changed = {
+        "whitespace": b" " + baseline, "duplicate": b'{"test_only":true,' + baseline[1:],
+        "ascii": baseline + b"\xff", "flag": public_bytes(data),
+    }
+    data["test_only"] = True
+    data["projection_sha256"]["review"] = "0" * 64
+    changed["digest"] = public_bytes(data)
+    for key, field, value, case in (
+        ("dns_settings", "csrf_token", "private", "private"),
+        ("original_row", "name", {"private": "unexpected"}, "nested"),
+        ("review", "active_task", {"id": 1}, "dirty"),
+    ):
+        modified = json.loads(baseline)
+        modified[key][field] = value
+        modified["projection_sha256"][key] = hashlib.sha256(public_bytes(modified[key])).hexdigest()
+        changed[case] = public_bytes(modified)
+    controller, child = started()
+    with pytest.raises(CaptureFrameRefusal, match="capture_baseline_invalid"):
+        child.checkpoint(changed[mode], clock(2))
+    with pytest.raises(CaptureFrameRefusal, match="capture_baseline_invalid"):
+        controller.accept_checkpoint(frame(FrameKind.CHECKPOINT, changed[mode]), clock(3))
+
+
+@pytest.mark.parametrize("mode", ["different_complete", "trailing_after_complete", "premature_eof", "early_complete"])
+def test_checkpoint_and_ack_alone_cannot_yield_provisional_data(mode: str, baseline: bytes) -> None:
+    """Require an exact completed exchange before returning bytes.
+
+    Args:
+        mode: Missing or invalid completion phase.
+        baseline: Canonical stage1 DATA bytes.
+    """
+    controller, child = started()
+    controller.accept_checkpoint(child.checkpoint(baseline, clock(2)), clock(3))
+    if mode == "early_complete":
+        with pytest.raises(CaptureFrameRefusal, match="capture_phase_invalid"):
+            controller.accept_complete(frame(FrameKind.COMPLETE, baseline), clock(4))
+        return
+    child.accept_ack(controller.acknowledge(_RECEIPT, clock(4)), clock(5))
+    if mode == "premature_eof":
+        with pytest.raises(CaptureFrameRefusal, match="capture_phase_invalid"):
+            controller.accept_eof(b"", clock(6))
+    elif mode == "different_complete":
+        other = json.loads(baseline)
+        other["dns_settings"]["cache_size"] += 1
+        other["projection_sha256"]["dns_settings"] = hashlib.sha256(public_bytes(other["dns_settings"])).hexdigest()
+        changed = public_bytes(other)
+        with pytest.raises(CaptureFrameRefusal, match="capture_complete_differs"):
+            child.complete(changed, clock(6))
+        with pytest.raises(CaptureFrameRefusal, match="capture_complete_differs"):
+            controller.accept_complete(frame(FrameKind.COMPLETE, changed), clock(7))
+    else:
+        controller.accept_complete(child.complete(baseline, clock(6)), clock(7))
+        with pytest.raises(CaptureFrameRefusal, match="capture_eof_invalid"):
+            controller.accept_eof(b"trailing", clock(8))
+        with pytest.raises(CaptureFrameRefusal, match="capture_phase_invalid"):
+            controller.accept_eof(b"", clock(9))
+
+
+@pytest.mark.parametrize(("sample", "diagnostic"), [
+    (replace(clock(), counter=2_000), "capture_deadline_invalid"),
+    (replace(clock(), utc_ms=20_000), "capture_deadline_invalid"),
+    (replace(clock(), boot_sha256=b"x" * 32), "capture_clock_invalid"),
+    (replace(clock(), frequency=101), "capture_clock_invalid"),
+    (replace(clock(), counter=True), "capture_clock_invalid"),
+    (replace(clock(), counter=-1), "capture_clock_invalid"),
+    (replace(clock(), counter=999), "capture_clock_regressed"),
+    (replace(clock(), utc_ms=9_999), "capture_clock_regressed"),
+])
+def test_absolute_clock_rechecks_consume_phase(sample: ClockSample, diagnostic: str, baseline: bytes) -> None:
+    """Refuse cutoff, clock changes and regression without a budget reset.
+
+    Args:
+        sample: Unacceptable clock reading.
+        diagnostic: Expected fixed diagnostic.
+        baseline: Canonical stage1 DATA bytes.
+    """
+    controller, child = started()
+    checkpoint = child.checkpoint(baseline, clock(2))
+    with pytest.raises(CaptureFrameRefusal, match=diagnostic):
+        controller.accept_checkpoint(checkpoint, sample)
+    with pytest.raises(CaptureFrameRefusal, match="capture_phase_invalid"):
+        controller.accept_checkpoint(checkpoint, clock(3))
+
+
+def test_child_accounts_for_elapsed_time_before_go_and_ack(baseline: bytes) -> None:
+    """Use the original cap across launch delay and checkpoint publication.
+
+    Args:
+        baseline: Canonical stage1 DATA bytes.
+    """
+    controller = CaptureControllerFrames(_BINDING)
+    go = controller.go(clock(100))
+    assert _BINDING.remaining_ns(clock(101)) == 8_990_000_000
+    assert _BINDING.remaining_ns(replace(clock(101), utc_ms=19_999)) == 1_000_000
+    with pytest.raises(CaptureFrameRefusal, match="capture_go_invalid"):
+        CaptureChildFrames(_BINDING).accept_go(go, clock(99))
+    with pytest.raises(CaptureFrameRefusal, match="capture_deadline_invalid"):
+        CaptureChildFrames(_BINDING).accept_go(go, clock(1_000))
+    child = CaptureChildFrames(_BINDING)
+    child.accept_go(go, clock(101))
+    controller.accept_checkpoint(child.checkpoint(baseline, clock(102)), clock(103))
+    with pytest.raises(CaptureFrameRefusal, match="capture_deadline_invalid"):
+        controller.acknowledge(_RECEIPT, clock(1_000))
+    with pytest.raises(CaptureFrameRefusal, match="capture_phase_invalid"):
+        controller.acknowledge(_RECEIPT, clock(104))
+
+
+def test_foreign_thread_and_copied_exchange_cannot_advance() -> None:
+    """Keep phase state on its original endpoint and owner thread."""
+    controller = CaptureControllerFrames(_BINDING)
+    errors: list[str] = []
+
+    def foreign_thread() -> None:
+        """Record the original endpoint's refusal on another thread."""
+        try:
+            controller.go(clock())
+        except CaptureFrameRefusal as error:
+            errors.append(str(error))
+
+    worker = threading.Thread(target=foreign_thread)
+    worker.start()
+    worker.join()
+    assert errors == ["capture_owner_invalid"]
+    with pytest.raises(CaptureFrameRefusal, match="capture_owner_invalid"):
+        copy.copy(controller).go(clock())
+    controller.go(clock())
+    with pytest.raises(CaptureFrameRefusal, match="capture_phase_invalid"):
+        controller.go(clock())

@@ -1037,7 +1037,68 @@ Assert-InstallationVmCondition ($startHelper.Contains('[Environment]::CurrentDir
 Assert-InstallationVmCondition ($source.Contains("'compare', '-f', 'vmdk', '-F', 'vmdk'")) 'Disk comparison must use qemu-img logical VMDK comparison.'
 Assert-InstallationVmCondition (-not $source.Contains("'compare', '-s'")) 'Logical comparison must not require sparse allocation layout to match.'
 Assert-InstallationVmCondition ($source.Contains('-Kind installation-baseline')) 'The baseline record must use its dedicated ownership-receipt kind.'
-Assert-InstallationVmCondition ($ownershipSource.Contains("'installation-baseline', 'installation-boot', 'installation-resume', 'installation-interruption', 'installation-recovery-boot', 'installation-private-lan-intent', 'installation-private-lan-rewire')")) 'The immutable ownership publisher must admit baseline, recovery, and private LAN transition record kinds.'
+& {
+    <#
+    .SYNOPSIS
+    Read the actual publisher Kind validator without executing ownership code.
+    .PARAMETER Source
+    Public ownership source or a source-only negative fixture.
+    #>
+    function Get-InstallationPublisherKinds {
+        param([string]$Source)
+        $errors = $null
+        $tree = [Management.Automation.Language.Parser]::ParseInput($Source, [ref]$null, [ref]$errors)
+        Assert-InstallationVmCondition ($errors.Count -eq 0) 'Ownership source must parse before inspecting its validator.'
+        $publishers = @($tree.FindAll({ param($node)
+            $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+                $node.Name -ceq 'Publish-AtlasoTestVmOwnershipRecord'
+        }, $true))
+        Assert-InstallationVmCondition ($publishers.Count -eq 1) 'Expected one immutable ownership publisher.'
+        $parameters = @($publishers[0].Body.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -ceq 'Kind' })
+        Assert-InstallationVmCondition ($parameters.Count -eq 1) 'Expected one publisher Kind parameter.'
+        $validators = @($parameters[0].Attributes | Where-Object { $_.TypeName.Name -ceq 'ValidateSet' })
+        Assert-InstallationVmCondition ($validators.Count -eq 1) 'Publisher Kind must retain its closed ValidateSet.'
+        foreach ($argument in $validators[0].PositionalArguments) {
+            Assert-InstallationVmCondition ($argument -is [Management.Automation.Language.StringConstantExpressionAst]) `
+                'Publisher kinds must remain literal strings.'
+            $argument.Value
+        }
+    }
+    $requiredKinds = @('installation-baseline', 'installation-boot', 'installation-resume', 'installation-interruption',
+        'installation-recovery-boot', 'installation-private-lan-intent', 'installation-private-lan-rewire')
+    <#
+    .SYNOPSIS
+    Require installation membership independently of other receipt categories.
+    .PARAMETER Source
+    Public ownership source or a source-only mutation.
+    #>
+    function Assert-InstallationPublisherAdmission {
+        param([string]$Source)
+        $kinds = @(Get-InstallationPublisherKinds -Source $Source)
+        foreach ($kind in $requiredKinds) {
+            Assert-InstallationVmCondition ($kinds -ccontains $kind) 'The immutable ownership publisher must admit every installation transition kind.'
+        }
+    }
+    Assert-InstallationPublisherAdmission -Source $ownershipSource
+    # Other receipt categories may follow installation kinds; their order and
+    # formatting must not decide whether installation publication is supported.
+    $extended = $ownershipSource.Replace("'installation-private-lan-rewire'", "'future-unrelated-kind', 'installation-private-lan-rewire'")
+    Assert-InstallationPublisherAdmission -Source $extended
+    $reordered = @((Get-InstallationPublisherKinds -Source $ownershipSource) | Where-Object { $_ -cne $requiredKinds[0] })
+    $reordered += $requiredKinds[0]
+    $literals = ($reordered | ForEach-Object { "'$_'" }) -join ', '
+    $finalPosition = 'function Publish-AtlasoTestVmOwnershipRecord {param([ValidateSet(' + $literals + ')] [string]$Kind)}'
+    Assert-InstallationPublisherAdmission -Source $finalPosition
+    foreach ($fixture in @($ownershipSource, $finalPosition)) {
+        foreach ($kind in $requiredKinds) {
+            $missing = $fixture.Replace("'$kind'", "'unrelated-fixture-kind'")
+            $refused = $false
+            try { Assert-InstallationPublisherAdmission -Source $missing }
+            catch { $refused = $_.Exception.Message -ceq 'The immutable ownership publisher must admit every installation transition kind.' }
+            Assert-InstallationVmCondition $refused 'The same contract must refuse every missing installation kind, including the final argument.'
+        }
+    }
+}
 Assert-InstallationVmCondition ($cleanupSource.Contains("'Confirm-AtlasoWorkstationVmInactive'")) 'The guarded VM stop helper must be available to the verification mode.'
 $verifyMode = $source.IndexOf('if ($Mode -in @(''AdmitConsole'', ''AdmitNetwork'', ''RewirePrivateLan'', ''Verify'', ''BootInstalled'', ''ResumeInstalled'', ''ResumeInstaller''))', [StringComparison]::Ordinal)
 Assert-InstallationVmCondition ($verifyMode -ge 0) 'The harness must expose receipt-bound disk verification.'

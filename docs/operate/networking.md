@@ -40,6 +40,122 @@ unreachable after apply.
 4. Review validation and rendered network previews.
 5. Submit the selected network units through [Appliance Apply](appliance-apply.md).
 
+### Set up an appliance without DHCP
+
+**Enable automatic IPv4 link-local fallback** is enabled by default. Every Atlaso-managed physical interface using
+IPv4 DHCP can acquire a conflict-checked APIPA address, from `169.254.1.0` through `169.254.254.255` with prefix `/16`,
+when its link has carrier but DHCP does not provide a lease. DHCPv4 is currently supported on the dedicated management
+role; this setting does not expand role eligibility. Static IPv4 and existing IPv6 configuration are preserved.
+
+1. Connect the appliance's dedicated management adapter and your setup computer to the same isolated Ethernet link.
+   For a VMware lab, select the intended no-DHCP VMnet for the task-owned appliance and peer; verify its DHCP state.
+2. Give the setup computer an unused `169.254.x.y/16` address, or let its own IPv4 link-local mechanism acquire one.
+   A VMnet host adapter with only a `192.168.x.y` address cannot use this setup path until it also has a link-local address.
+3. Wait for the console to show **APIPA fallback**. Use its verified management URL, for example
+   `https://169.254.20.10:443/ui/management/`. Keep the normal authentication and CA trust checks.
+4. Confirm **Physical Interfaces** shows the same interface identity and acquired address. Configure the desired
+   network, review the complete dependency bundle, and submit through **Appliance Apply**.
+
+Photon's networkd starts IPv4LL after three unsuccessful DHCP retry attempts, normally within tens of seconds after
+carrier appears, followed by native ARP conflict checks. Conflicts cause selection of another address; repeated
+conflicts delay availability. This is an acquisition attempt bound, not a promise that an address is usable by a fixed
+wall-clock deadline. DHCP continues retrying with exponential backoff, up to approximately one attempt per minute.
+See the [networkd behavior](https://www.freedesktop.org/software/systemd/man/254/systemd.network.html#LinkLocalAddressing=)
+and [retry implementation](https://github.com/systemd/systemd/blob/v254/src/libsystemd-network/sd-dhcp-client.c).
+
+The applied-state observer checks every five seconds after initialization. For the dedicated DHCP management
+interface, it verifies native MAC identity, carrier and address provenance, refreshes only the existing management
+certificate, proves the served TLS fingerprint and listener readiness, then publishes the setup URL. Pending hostname,
+CA root, protocol, port and unrelated service changes remain pending. A later DHCP lease replaces the APIPA setup
+listener and URL; the obsolete SAN is retired after the listener transition. No-carrier and incomplete observations
+never establish usable fallback. Publication failures leave the URL unpublished or let its short receipt expire;
+use the local console to inspect networking and CA readiness, restore connectivity, and retry the normal Apply workflow.
+When the applied listener is unchanged, the observer verifies its installed certificate/key pair, SANs, validity and
+served fingerprint against the published identity. A certificate prepared by an Appliance Apply review for pending
+static addresses stays pending and is neither deployed nor overwritten by that refresh. Disabled or revoked
+management certificates still block refresh; certificate repair and address changes retain their normal CA checks.
+Public receipt readers still reject expired observations. The observer can use its root-owned,
+applied-identity-bound checkpoint only to repeat native ownership, installed certificate/key, site and live TLS
+verification before publishing a fresh observation. A delay in observer execution cannot by itself overwrite a
+pending certificate, and the stale checkpoint never grants public listener admission.
+After reboot removes the runtime checkpoint, the observer can recover the applied certificate identity from its
+durable CA baseline. It requires matching applied hostname and certificate destinations, the exact expected nginx
+configuration, fresh native ownership, the installed pair and the active served fingerprint before publishing a new
+receipt. Pending certificate edits remain pending during this recovery too.
+Lease changes and certificate repair issue an applied candidate independently of the desired certificate row.
+Only verified activation advances the applied CA baseline; a desired row with prepared hostname, SAN, profile or
+destination changes stays intact on success and failure. An unchanged desired leaf follows the new publication only
+after activation succeeds. Interrupted certificate/key replacement uses the existing durable front-door rollback.
+An interrupted management certificate/key replacement restores the previous pair before retrying listener activation.
+Cold publication helpers load and the initial application-upstream readiness wait runs outside the database writer
+and Network Apply locks, so application startup can commit state and acquire its own native admission. The observer
+then repeats native observation and applied-state admission before activating a listener, keeping audited console
+access available during initialization without accepting stale address or CA inputs.
+On subsequent boots, the completed HTTPS bootstrap admits its existing artifacts and encrypted-root proof without
+requiring a former DHCP address to bind before the control plane starts. The nginx service still validates its
+configuration; the observer then verifies and atomically publishes the current DHCP or IPv4LL listener. Initial
+bootstrap, direct bootstrap invocation and completed Network certificate recovery retain their native validation.
+Protected Network Apply can admit a newly acquired fallback address from the reviewed NIC identity and fresh native
+evidence; the normal TLS certificate-coverage and readiness checks still apply.
+Before recovering an interrupted front-door activation, the observer checks for pending or running Apply jobs under
+writer admission and retains that admission through recovery. A live Settings Apply keeps its candidate files and
+rollback journal; the observer defers until the Apply job is terminal.
+Network Apply can wait up to 30 seconds for the native transaction lock if the observer is already collecting
+addresses. Ordinary and paired Apply acquire the same lock before mutation. If the lock stays busy, Apply fails
+before entering the Network mutation handler.
+When changing static management to DHCP, the temporary networkd holdover retains the link-local address families
+required by both the previous and candidate configurations. The previous policy cannot disable newly enabled IPv4LL
+or IPv6 during readiness. Successful retirement removes the temporary holdover and leaves the candidate's final policy.
+When moving from an APIPA-only setup address to static IPv4, Apply captures the old published listener from fresh
+native interface/MAC ownership before preparing the handoff. Unpublished, stale or unready link-local addresses
+cannot become that previous path; IPv6 link-local addresses remain excluded.
+Settings-only Apply uses the same verified APIPA management context while keeping that address out of ordinary
+DHCP, DNS and service-listener inventory.
+Protected handoff completion uses the helper's fresh final native readback and the captured management MAC and fallback
+policy. A newly acquired APIPA address does not need a prior observer publication while the handoff is still active.
+After a console Network Apply, tty1 can continue recovery with APIPA when the completed task and a fresh native
+readback confirm the same address on the management interface. The setup address stays out of DHCP inventory.
+Carrier loss on an unrelated static interface does not invalidate its complete, assigned-address readiness evidence.
+Dynamic DHCP/IPv4LL and automatic IPv6 acquisition still require an administratively up link with carrier.
+Once a management listener withdrawal has activated successfully, unchanged observer passes refresh its verified
+checkpoint without reloading nginx. A changed site, inactive service or failed activation still requires a retry.
+The selected management NIC also remains available to Web Terminal validation and its Settings preview on APIPA.
+The exact `/terminal/ws` dependency shares that management proxy and its source and authentication restrictions.
+Saving a different management NIC or static address keeps that desired identity selected; the old applied setup
+publication cannot replace it while its new address is pending.
+
+This path serves management UI/API and their static and CA-download dependencies only, to link-local source addresses.
+When management HTTPS is enabled, HTTP still serves the two exact public trust-bootstrap downloads,
+`/ca/downloads/root-ca.pem` and `/ca/downloads/ca-bundle.pem`; other HTTP paths redirect to the configured HTTPS port.
+The link-local source restriction and release-maintenance guard cover both downloads and redirects. Verify the public
+CA fingerprint independently before trusting it; bootstrapping trust does not require disabling TLS verification.
+The Certificate Authority page's root, bundle, certificate, chain and private-key downloads retain their existing
+authenticated management routes on this listener, over TLS when management HTTPS is enabled.
+Existing authentication and management firewall source restrictions still apply. It does not enable public protocols,
+publish APIPA in DNS, invent a gateway or DNS server, or forward link-local traffic between interfaces. APIPA on other
+DHCP interfaces remains visible as acquisition status and is not a general service-listener address.
+
+To opt out, open **Physical Interfaces > Network Settings**, turn off **Enable automatic IPv4 link-local fallback**,
+and wait for autosave. Review and apply **Network**, including any required dependencies. Apply removes networkd-owned
+fallback addresses; without a DHCP lease that can remove your current setup connection. Keep the console available.
+An opt-out by itself also works immediately after first boot: it verifies native fallback withdrawal without requiring
+a replacement DHCP lease. Other pending address, resolver or routing changes retain their normal readiness checks.
+To re-enable fallback, turn the same setting on, wait for autosave, then review and apply **Network**. An otherwise
+unchanged DHCP management interface may start from a completely unaddressed baseline after an opt-out and reboot;
+the kernel's sole local IPv6 multicast route does not count as a previous unicast routing domain. Other existing
+routes and incomplete native inventory still block this unaddressed re-enable path.
+Apply still requires native DHCP or conflict-checked IPv4LL acquisition before it succeeds. Keep the console available
+until the management address and verified setup URL return.
+An explicit disabled choice survives reboot, upgrade and supported settings archive/restore. Restoring an older archive
+without this field retains the target appliance's current choice. Before initial image provisioning, the equivalent
+configuration is `ATLASO_IPV4_LINK_LOCAL_FALLBACK_ENABLED=false`; first-boot customization preserves that explicit choice.
+
+Before the first Network Apply, image provisioning and first-boot customization keep DHCP and automatic IPv6 routes
+in the main routing table. This retains the connected management subnet as well as its default route, so replies to
+clients on the same subnet go directly to the client. Network Apply installs the applied, MAC-bound routing-domain
+owner as it moves management traffic into table `100`. An initial fallback-only change admits this exact bootstrap
+transition; an existing applied owner or any other routing edit retains the normal readiness checks.
+
 ### Convert management DHCP to static IPv4
 
 Use **Convert DHCP lease to static** from the management interface row menu. Atlaso reviews the observed IPv4 CIDR and
@@ -465,7 +581,10 @@ Ordinary Apply writes a durable transaction marker before changing networkd file
 with its referenced backups if marker publication becomes visible but directory synchronization fails.
 The marker remains until the application commits the exact executed Network baseline. Startup restores interrupted
 uncommitted candidates or acknowledges an already committed baseline. Recovery refuses to race a
-live helper, and an unresolved marker blocks another Apply. Terminal backup cleanup warnings do
+live helper, and an unresolved marker blocks another Apply. Acknowledgement waits up to ten seconds
+for an observer to release that same lock; it still requires exclusive ownership before disposing
+the committed transaction. Apply and recovery continue to refuse an already held lock immediately.
+Terminal backup cleanup warnings do
 not cause committed configuration to be rolled back on a later restart.
 Acknowledgement remains pending until backup removal and durable marker cleanup succeed;
 cleanup failure preserves the committed baseline and blocks another Apply until recovery completes.

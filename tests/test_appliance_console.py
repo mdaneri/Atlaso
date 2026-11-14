@@ -5012,3 +5012,209 @@ def test_console_final_native_attestation_shares_physical_vlan_deadline(monkeypa
             appliance_console._reattest_settings_native_observation(proof)
     else:
         appliance_console._reattest_settings_native_observation(proof)
+
+
+@pytest.mark.parametrize("change", [None, "ordinary-task", "wrong-ordinary-task", "missing-task-proof", "native-withdrawal", "new-dhcp", "fallback-disabled"])
+def test_console_accepts_only_task_bound_live_ipv4ll(client, monkeypatch, change):
+    """Keep APIPA setup-only while checking task evidence, live identity and Settings admission.
+
+    Args:
+        client: Initializes the appliance database.
+        monkeypatch: Replaces native provider reads with deterministic observations.
+        change: Missing proof or drift to reject before dependent capture.
+    """
+    from dataclasses import replace
+    from datetime import datetime, timezone
+
+    from sqlalchemy import select
+
+    from atlaso.app.adapters.system import SystemAdapter
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import (
+        ApplianceSettings,
+        Job,
+        JobStatus,
+        PhysicalInterface,
+        VlanInterface,
+    )
+    from atlaso.app.services.networking import HostPhysicalInterface
+    from atlaso.app.ui import (
+        make_appliance_apply_unit,
+        management_ui_addresses,
+        ordinary_network_ipv4ll_evidence,
+    )
+
+    address = "169.254.20.10"
+    with SessionLocal() as db:
+        interface = appliance_console._management_interface(db)
+        interface.ipv4_method, interface.ip_cidr = "dhcp", None
+        interface.host_ip_cidr, interface.host_ip_cidrs = None, []
+        interface.ipv6_enabled, interface.ipv6_cidr = False, None
+        interface_id, name, mac = interface.id, interface.name, interface.mac_address
+        db.flush()
+        preview = appliance_console.render_network_config(
+            interfaces=list(db.scalars(select(PhysicalInterface))), vlans=list(db.scalars(select(VlanInterface))),
+        )
+        native = {"observed_at": datetime.now(timezone.utc).isoformat(), "complete": True, "links": [{
+            "name": name, "mac": mac, "configured": True, "ethernet": True, "up": True, "carrier": True,
+            "address_inventory_complete": True, "addresses": [
+                {"address": address, "cidr": address + "/16", "state": "assigned", "source": "IPv4LL", "scope": "link"},
+            ],
+        }]}
+        evidence = {"candidate_addresses": [address], "management_address_observation": native}
+        ordinary = change in {"ordinary-task", "wrong-ordinary-task"}
+        result = {"unit_id": "network", "management_handoff": evidence}
+        if ordinary:
+            helper_output = json.dumps({
+                "network": "systemd-networkd apply complete",
+                "network_address_evidence": {"job_id": "job_ipv4ll", "observation": native},
+            })
+            ordinary_evidence = ordinary_network_ipv4ll_evidence(helper_output, preview, "job_ipv4ll")
+            assert ordinary_evidence["candidate_addresses"] == [address]
+            assert ordinary_network_ipv4ll_evidence(helper_output, preview, "job_other") == {}
+            if change == "wrong-ordinary-task":
+                ordinary_evidence["job_id"] = "job_other"
+            result = {"unit_id": "network", "success": True, "dry_run": False, "network_ipv4ll_evidence": ordinary_evidence}
+        db.add(Job(id="job_ipv4ll", type="appliance-apply", status=JobStatus.SUCCEEDED.value, created_by="test",
+                   result=json.dumps({"captured_units": [{"unit_id": "network", "config_preview": preview}],
+                                      "management_handoff": not ordinary and change != "missing-task-proof",
+                                      "network_application_committed": ordinary, "network_runtime_commit_pending": False,
+                                      "units": [result]})))
+        db.commit()
+
+    host = HostPhysicalInterface(name=name, mac_address=mac, driver=None, speed=None, host_ip_cidr=None,
+                                 host_mtu=1500, host_admin_state="up", oper_state="up")
+    if change == "native-withdrawal":
+        native["links"][0]["addresses"].clear()
+    monkeypatch.setattr(appliance_console, "discover_host_physical_interfaces", lambda **_kwargs: [host])
+    monkeypatch.setattr(appliance_console, "verify_native_management_vlans", lambda *_args, **_kwargs: True)
+
+    def address_status(_adapter, *, timeout_seconds):
+        """Return the fresh, bounded native result.
+
+        Args:
+            _adapter: Existing native helper adapter.
+            timeout_seconds: Remaining observation budget.
+        """
+        assert timeout_seconds > 0
+        return subprocess.CompletedProcess([], 0, json.dumps(native), "")
+
+    monkeypatch.setattr(SystemAdapter, "read_network_address_status", address_status)
+    monkeypatch.setattr(appliance_console.time, "sleep", lambda _: pytest.fail("one native pass expected"))
+    if change in {"missing-task-proof", "native-withdrawal", "wrong-ordinary-task"}:
+        clock = [0.0]
+
+        def expire_on_wait(seconds):
+            """Advance the shared clock without sleeping.
+
+            Args:
+                seconds: Requested retry delay.
+            """
+            clock[0] += seconds + 3
+
+        monkeypatch.setattr(appliance_console.time, "monotonic", lambda: clock[0])
+        monkeypatch.setattr(appliance_console.time, "sleep", expire_on_wait)
+        with pytest.raises(ConsoleOperationError, match="could not confirm"):
+            appliance_console._refresh_management_addresses(interface_id, network_job_id="job_ipv4ll", timeout=3)
+        return
+
+    proof = appliance_console._refresh_management_addresses(interface_id, network_job_id="job_ipv4ll")
+    assert proof["candidate_addresses"] == [address]
+    assert proof["physical_interfaces"][0]["ipv4ll_address"] == address
+    with SessionLocal() as db:
+        interface = db.get(PhysicalInterface, interface_id)
+        assert interface.host_ip_cidr is None and interface.host_ip_cidrs == []
+        assert address not in management_ui_addresses(db)
+        if change == "fallback-disabled":
+            settings = db.scalar(select(ApplianceSettings).order_by(ApplianceSettings.id))
+            settings.ipv4_link_local_fallback_enabled = False
+            db.flush()
+            with pytest.raises(ConsoleOperationError, match="fallback was disabled"):
+                appliance_console._verify_settings_native_observation(db, "job_ipv4ll", proof)
+            return
+        appliance_console._verify_settings_native_observation(db, "job_ipv4ll", proof)
+    if change == "ordinary-task":
+        settings = {"management_interface": name, "management_ip": "", "management_ip_cidr": ""}
+        unit = make_appliance_apply_unit(
+            unit_id="appliance_settings", label="Settings", page_url="/settings", context={}, summary=[],
+            validation_errors=[], config_path="/tmp/settings.json", config_preview=json.dumps(settings), baseline=None,
+        )
+        expected = make_appliance_apply_unit(
+            unit_id="appliance_settings", label="Settings", page_url="/settings", context={}, summary=[],
+            validation_errors=[], config_path="/tmp/settings.json",
+            config_preview=json.dumps(dict(settings, management_ip=address, management_ip_cidr=address + "/16"),
+                                      indent=2, sort_keys=True) + "\n",
+            baseline=None,
+        )
+        assert appliance_console._post_handoff_settings_snapshot(
+            "job_ipv4ll", unit, preview, unit["snapshot_hash"], native_observation=proof,
+        ) == expected["snapshot_hash"]
+        with pytest.raises(ConsoleOperationError, match="different Network snapshot"):
+            appliance_console._post_handoff_settings_snapshot(
+                "job_ipv4ll", unit, preview, unit["snapshot_hash"],
+                native_observation={**proof, "network_preview": preview + "# changed"},
+            )
+        mismatched = {**proof, "physical_interfaces": [
+            {**row, "ipv4ll_address": "169.254.20.11"} for row in proof["physical_interfaces"]
+        ]}
+        with pytest.raises(ConsoleOperationError, match="no matching IPv4 link-local evidence"):
+            appliance_console._post_handoff_settings_snapshot(
+                "job_ipv4ll", unit, preview, unit["snapshot_hash"], native_observation=mismatched,
+            )
+    if change in {None, "ordinary-task"}:
+        loader = importlib.machinery.SourceFileLoader("atlaso_console_ipv4ll_bootstrap", "scripts/appliance/atlaso-bootstrap-https")
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        bootstrap = importlib.util.module_from_spec(spec)
+        loader.exec_module(bootstrap)
+        monkeypatch.setattr(bootstrap, "discover_host_physical_interfaces", lambda **_kwargs: [host])
+        monkeypatch.setattr(bootstrap, "verify_native_management_vlans", lambda *_args, **_kwargs: True)
+        issued = {}
+
+        def issue(_db, **kwargs):
+            """Capture the isolated certificate projection.
+
+            Args:
+                _db: Unused test database session.
+                **kwargs: Certificate issuance options containing the management snapshot.
+            """
+            issued.update(kwargs["management_snapshot"])
+            return []
+
+        monkeypatch.setattr(bootstrap, "ensure_ca_state", issue)
+        with SessionLocal() as db:
+            assert not bootstrap.ensure_recovery_ca_state(
+                db, "job_ipv4ll", commit=False, management_snapshot={"fqdn": "atlaso.example.test"},
+            )
+        assert issued["management_addresses"] == [address]
+    if change == "new-dhcp":
+        host = replace(host, host_dhcp_ip_cidr="192.0.2.20/24")
+        with pytest.raises(ConsoleOperationError, match="Fresh native"):
+            appliance_console._reattest_settings_native_observation(proof)
+    else:
+        appliance_console._reattest_settings_native_observation(proof)
+
+
+@pytest.mark.parametrize("correct_mac", [False, True])
+def test_console_waits_for_same_ipv4ll_listener_publication(monkeypatch, correct_mac):
+    """Keep the dependent Settings helper behind the matching root publication.
+
+    Args:
+        monkeypatch: In-memory session and root receipt reader.
+        correct_mac: Whether the receipt identifies the task's original management NIC.
+    """
+    from contextlib import nullcontext
+
+    from atlaso.app.services import dynamic_management
+
+    address = "169.254.20.10"
+    mac = "00:15:5d:aa:bb:01"
+    observation = {"physical_interfaces": [{"name": "eth0", "mac": mac, "ipv4ll_address": address}]}
+    monkeypatch.setattr(appliance_console, "SessionLocal", lambda: nullcontext(None))
+    monkeypatch.setattr(dynamic_management, "read_publication", lambda _db: {
+        "interface": "eth0", "mac": mac if correct_mac else "00:15:5d:aa:bb:02", "apipa_addresses": [address],
+    })
+    if correct_mac:
+        appliance_console._wait_for_ipv4ll_settings_publication(observation, timeout=0)
+    else:
+        with pytest.raises(ConsoleOperationError, match="listener publication is unavailable"):
+            appliance_console._wait_for_ipv4ll_settings_publication(observation, timeout=0)

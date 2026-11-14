@@ -115,6 +115,18 @@ def original_vm(plan: dict, role: str, vmx_path: str) -> dict:
     intent = bound_json(intent_reference)
     ownership = bound_json(ownership_reference)
     root = Path(vmx_path).parent
+    if role == "appliance" and plan.get("appliance_media") == "ova":
+        if plan.get("trust_model") != "trusted-host" or ownership.get("phase") != "ova-import-original":
+            raise Refusal("ova_requires_original_trusted_host_appliance")
+        from scripts.completed_task_files import FileRefusal
+        from scripts.interop.certificate_ova_identity import admit_ova
+
+        try:
+            return admit_ova(plan, Path(vmx_path), Path(ownership["worktree"]),
+                             mac=plan["mac"].replace("-", ":").lower(),
+                             private_lan=plan["trusted_host"]["segment_id"])
+        except (FileRefusal, OSError, KeyError, TypeError, ValueError, subprocess.SubprocessError):
+            raise Refusal("original_ova_appliance_unproven") from None
     if plan.get("trust_model") == "trusted-host" and role == "appliance" and ownership.get("phase") == "original-installation-vm-created":
         return original_iso_vm(plan, intent, ownership, ownership_reference, root, vmx_path)
     if (
@@ -262,10 +274,9 @@ def admit_fixture(plan: dict) -> dict:
         raise Refusal("peer_fixture_invalid")
     appliance = original_vm(plan, "appliance", fixture["appliance_vmx"])
     peer = original_vm(plan, "peer", fixture["peer_vmx"])
-    # original_iso_vm already binds the appliance's immutable creation source
-    # to the reviewed harness. A subsequently created peer keeps its own source.
-    original_iso = (plan.get("trust_model") == "trusted-host"
-                    and appliance.get("phase") == "original-installation-vm-created")
+    # Both original-media paths bind the appliance creation source independently.
+    original_media = (plan.get("trust_model") == "trusted-host"
+                      and appliance.get("phase") in {"original-installation-vm-created", "ova-import-original"})
     from scripts.completed_task_files import FileRefusal, WindowsFiles
 
     copy_path = Path(str(fixture.get("client_vmdk_copy") or ""))
@@ -276,7 +287,7 @@ def admit_fixture(plan: dict) -> dict:
     except (FileRefusal, OSError) as exc:
         raise Refusal("fixture_copied_disk_identity_unavailable") from exc
     if (
-        (not original_iso and appliance.get("source_commit") != fixture["source_commit"])
+        (not original_media and appliance.get("source_commit") != fixture["source_commit"])
         or peer.get("source_commit") != fixture["source_commit"]
         or plan["appliance_ownership"]["sha256"] != fixture["appliance_ownership_sha256"]
         or plan["peer_ownership"]["sha256"] != fixture["peer_ownership_sha256"]
@@ -364,6 +375,10 @@ def admit_fixture(plan: dict) -> dict:
             raise Refusal("peer_console_identity_invalid")
     elif identity.get("observation") != "owned-vmware-tools-and-agent-ssh-after-management-restart":
         raise Refusal("peer_original_identity_mismatch")
+    if plan.get("appliance_media") == "ova":
+        from scripts.interop.certificate_ova_identity import admit_ova_runtime
+
+        admit_ova_runtime(plan)
     admit_peer_key(plan, fixture)
     if "iso_wheel_deployment" in plan:
         # The producer preflight runs before its bounded credential bridge.
@@ -421,11 +436,12 @@ def admit_receipts(plan: dict) -> tuple[dict, dict]:
     bootstrap = bound_json(plan["bootstrap_runtime"])
     mode = baseline_mode(plan)
     if mode == "dhcp":
+        phase = "ova-dhcp-baseline-observed" if plan.get("appliance_media") == "ova" else "iso-dhcp-baseline-observed"
         observation = bound_json(plan["dhcp_baseline_observation"])
         if (
-            bootstrap.get("phase") != "iso-dhcp-baseline-observed"
+            bootstrap.get("phase") != phase
             or observation.get("kind") != "certificate-dhcp-baseline-observation"
-            or observation.get("phase") != "iso-dhcp-baseline-observed"
+            or observation.get("phase") != phase
             or observation.get("ordinary_ca_baseline_mode") != "dhcp"
             or observation.get("apply_state") != "clean-applied-baseline"
             or observation.get("mutation_state") != "none"

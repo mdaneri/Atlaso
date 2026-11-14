@@ -330,6 +330,7 @@ class ConsoleStatus:
         maintenance_isolation: Maintenance isolation maintained by this consolestatus.
         services: Services maintained by this consolestatus.
         urls: Urls maintained by this consolestatus.
+        ipv4_acquisition: Current carrier-aware DHCPv4/fallback state.
     """
     hostname: str
     release: str
@@ -352,6 +353,7 @@ class ConsoleStatus:
     maintenance_isolation: bool
     services: tuple[ServiceStatus, ...]
     urls: tuple[str, ...]
+    ipv4_acquisition: str = ""
 
 
 @dataclass(frozen=True)
@@ -909,8 +911,30 @@ def load_console_status() -> ConsoleStatus:
             settings = db.scalar(select(ApplianceSettings).order_by(ApplianceSettings.id))
             firewall = db.scalar(select(FirewallSettings).order_by(FirewallSettings.id))
             method = (interface.ipv4_method or "static").strip().lower()
+            from atlaso.app.services.network_address_status import (
+                read_status,
+                row_status,
+            )
+
+            address_status = row_status(read_status(db), "physical", interface.id)
+            ipv4_acquisition = str(address_status.get("ipv4_state", "unknown")) if method == "dhcp" else "static"
+            from atlaso.app.services.dynamic_management import read_publication
+
+            setup_publication = read_publication(db)
             cidr = (interface.host_ip_cidr if method == "dhcp" else interface.ip_cidr) or _fallback_cidr(interface.name, 4)
             gateway = interface.gateway or _fallback_gateway(interface.name, 4)
+            if setup_publication.get("interface") == interface.name:
+                method = "dhcp"
+                ipv4_acquisition = str(setup_publication["ipv4_state"])
+                if setup_publication.get("apipa_addresses"):
+                    cidr = setup_publication["apipa_addresses"][0] + "/16"
+                    gateway = ""
+                elif setup_publication.get("addresses"):
+                    published_ipv4 = next((value for value in setup_publication["addresses"] if ip_address(value).version == 4), "")
+                    cidr = (interface.host_ip_cidr if interface.host_ip_cidr
+                            and str(ip_interface(interface.host_ip_cidr).ip) == published_ipv4 else published_ipv4)
+            ipv4_acquisition = {"no-carrier": "No carrier", "waiting-dhcp": "Waiting for DHCP",
+                                "apipa": "APIPA fallback", "dhcp-ready": "DHCP lease acquired"}.get(ipv4_acquisition, ipv4_acquisition)
             ipv6_mode = "disabled" if not interface.ipv6_enabled else ("static" if interface.ipv6_cidr else "automatic")
             ipv6_cidr = (
                 interface.ipv6_cidr
@@ -938,6 +962,8 @@ def load_console_status() -> ConsoleStatus:
         ipv6_cidr,
         https_enabled=bool(settings and settings.management_https_enabled),
     )
+    if setup_publication and setup_publication.get("interface") == interface.name:
+        urls = tuple(setup_publication.get("urls", []))
     load_summary, load_severity = _load_status()
     return ConsoleStatus(
         hostname=fqdn or socket.gethostname(),
@@ -961,6 +987,7 @@ def load_console_status() -> ConsoleStatus:
         maintenance_isolation=MAINTENANCE_STATE_PATH.exists(),
         services=services,
         urls=urls,
+        ipv4_acquisition=ipv4_acquisition,
     )
 
 
@@ -1248,7 +1275,11 @@ def _post_handoff_settings_snapshot(
         if not isinstance(evidence, dict):
             if payload.get("management_handoff") is True:
                 raise ConsoleOperationError("Successful Network handoff did not record address evidence.")
-            from atlaso.app.ui import network_management_paths
+            from atlaso.app.ui import (
+                completed_management_handoff_evidence,
+                confirmed_management_handoff_ipv4ll_address,
+                network_management_paths,
+            )
 
             paths = network_management_paths(network_preview)
             if not any(path.get("ipv4_method") == "dhcp" for path in paths):
@@ -1271,6 +1302,20 @@ def _post_handoff_settings_snapshot(
                 raise ConsoleOperationError("Completed Network task has no matching fresh DHCP observation for Settings.")
             _verify_settings_native_observation(db, network_job_id, native_observation)
             evidence = native_observation
+            fallback_rows = [row for row in native_observation["physical_interfaces"] if row.get("ipv4ll_address")]
+            if fallback_rows:
+                if native_observation.get("network_preview") != network_preview or captured[0].get("config_preview") != network_preview:
+                    raise ConsoleOperationError("IPv4 link-local evidence belongs to a different Network snapshot.")
+                task_evidence = completed_management_handoff_evidence(payload, network_job_id)
+                try:
+                    for row in fallback_rows:
+                        if confirmed_management_handoff_ipv4ll_address(
+                            network_preview, task_evidence, row["mac"], row["name"],
+                        ) != row["ipv4ll_address"]:
+                            raise RuntimeError("The native address differs from the completed task.")
+                except RuntimeError as exc:
+                    raise ConsoleOperationError("Completed Network task has no matching IPv4 link-local evidence for Settings.") from exc
+                evidence = {**native_observation, "management_address_observation": task_evidence["management_address_observation"]}
         original = json.loads(str(captured_settings.get("raw_config_preview") or "{}"))
         old_management_ip = str(original.get("management_ip") or "")
         projected = deepcopy(captured_settings)
@@ -1334,6 +1379,10 @@ def _verify_settings_native_observation(db: Session, network_job_id: str, observ
     rows = observation.get("physical_interfaces", [])
     if not rows:
         raise ConsoleOperationError("Completed Network task has no fresh physical-interface observation.")
+    if any(row.get("ipv4ll_address") for row in rows):
+        settings = db.scalar(select(ApplianceSettings).order_by(ApplianceSettings.id))
+        if settings is not None and settings.ipv4_link_local_fallback_enabled is False:
+            raise ConsoleOperationError("IPv4 link-local fallback was disabled before Settings capture.")
     for row in rows:
         interface = db.get(PhysicalInterface, row["id"])
         if (
@@ -1359,6 +1408,8 @@ def _reattest_settings_native_observation(observation: dict[str, Any]) -> None:
     Raises:
         ConsoleOperationError: If current native listeners no longer prove the captured addresses.
     """
+    from atlaso.app.ui import recheck_management_handoff_ipv4ll
+
     deadline = time.monotonic() + 5
     paths = observation.get("management_paths") or []
     try:
@@ -1372,6 +1423,13 @@ def _reattest_settings_native_observation(observation: dict[str, Any]) -> None:
             host, path = matches[0], applied[0]
             ipv4 = (host.host_dhcp_ip_cidr if path.get("ipv4_method") == "dhcp"
                     else native_static_ip_cidr(host, row["ipv4_cidr"]) if row["ipv4_cidr"] else None)
+            fallback = row.get("ipv4ll_address")
+            if fallback and (path.get("ipv4_method") != "dhcp" or ipv4 is not None
+                             or not recheck_management_handoff_ipv4ll(
+                                 observation["network_preview"], row["name"], row["mac"], fallback,
+                                 timeout=deadline - time.monotonic(),
+                             )):
+                raise ValueError("native IPv4LL ownership changed")
             ipv6s = native_automatic_ipv6_cidrs(host) if path.get("ipv6_enabled") == "true" and not path.get("ipv6_cidr") else ()
             ipv6 = (ipv6s[0] if ipv6s else native_static_ip_cidr(host, row["ipv6_cidr"]) if row["ipv6_cidr"] else None)
             if (host.host_admin_state != "up" or host.oper_state != "up"
@@ -1451,6 +1509,8 @@ def _submit_console_apply(
             if (
                 completed is None or completed.status != JobStatus.SUCCEEDED.value
                 or len(submitted) != 1 or len(current) != 1
+                or (native_observation is not None and native_observation.get("network_preview") is not None
+                    and native_observation["network_preview"] != str(submitted[0].get("config_preview") or ""))
                 or not network_management_paths(str(submitted[0].get("config_preview") or ""))
                 or any(path.get("management_eligible") != "true" for path in
                        network_management_paths(str(submitted[0].get("config_preview") or "")))
@@ -1594,7 +1654,15 @@ def _refresh_management_addresses(
     Raises:
         ConsoleOperationError: If fresh host inventory cannot confirm the corrected addresses.
     """
+    from atlaso.app.ui import (
+        completed_management_handoff_evidence,
+        confirmed_management_handoff_ipv4ll_address,
+        recheck_management_handoff_ipv4ll,
+    )
+
     expected_paths = None
+    network_preview = ""
+    handoff = None
     with SessionLocal() as db:
         target = db.get(PhysicalInterface, interface_id)
         if target is None:
@@ -1613,7 +1681,9 @@ def _refresh_management_addresses(
             matches = [row for row in rows if row.get("kind") == "physical" and row.get("name") == target.name]
             if job is None or job.status != JobStatus.SUCCEEDED.value or len(matches) != 1:
                 raise ConsoleOperationError("The completed task's management Network snapshot is unavailable.")
-            expected_paths = network_management_paths(str(units[0].get("config_preview") or ""))
+            network_preview = str(units[0].get("config_preview") or "")
+            expected_paths = network_management_paths(network_preview)
+            handoff = completed_management_handoff_evidence(payload, network_job_id)
             if not expected_paths or any(path.get("management_eligible") != "true" for path in expected_paths):
                 raise ConsoleOperationError(
                     "An applied management path is ineligible. Certificate recovery and Appliance Settings were not started."
@@ -1650,6 +1720,17 @@ def _refresh_management_addresses(
                     break
                 observed_ipv4 = observed.host_dhcp_ip_cidr if applied[0] == "dhcp" else (
                     native_static_ip_cidr(observed, applied[1]) if applied[1] else observed.host_ip_cidr)
+                ipv4ll_address = None
+                if observed_ipv4 is None and applied[0] == "dhcp" and handoff:
+                    try:
+                        candidate = confirmed_management_handoff_ipv4ll_address(network_preview, handoff, mac, name)
+                    except RuntimeError:
+                        pass
+                    else:
+                        if recheck_management_handoff_ipv4ll(
+                            network_preview, name, mac, candidate, timeout=deadline - time.monotonic(),
+                        ):
+                            ipv4ll_address = candidate
                 if identity != interface_id and applied[0] != "dhcp" and not applied[1]:
                     observed_ipv4 = None
                 observed_ipv6 = (observed.host_dynamic_ipv6_cidr if not applied[3] else native_static_ip_cidr(observed, applied[3])) if applied[2] else None
@@ -1657,11 +1738,11 @@ def _refresh_management_addresses(
                 if observed_ipv6_cidrs:
                     observed_ipv6 = observed_ipv6_cidrs[0]
                 required = []
-                if identity == interface_id or applied[0] == "dhcp" or applied[1]:
+                if not ipv4ll_address and (identity == interface_id or applied[0] == "dhcp" or applied[1]):
                     required.append((4, observed_ipv4, applied[1] if applied[0] != "dhcp" else None))
                 if applied[2]:
                     required.extend((6, cidr, applied[3]) for cidr in (observed_ipv6_cidrs or (observed_ipv6,)))
-                verified = bool(required)
+                verified = bool(required or ipv4ll_address)
                 for family, observed_cidr, desired in required:
                     try:
                         address = ip_interface(observed_cidr or "")
@@ -1679,14 +1760,15 @@ def _refresh_management_addresses(
                     break
                 verified_rows.append((identity, name, mac, applied, observed_ipv4, observed_ipv6, observed_ipv6_cidrs,
                                       observed.host_admin_state, observed.oper_state,
-                                      list(observed.host_ip_cidrs or ((observed.host_ip_cidr,) if observed.host_ip_cidr else ()))))
+                                      list(observed.host_ip_cidrs or ((observed.host_ip_cidr,) if observed.host_ip_cidr else ())),
+                                      ipv4ll_address))
             if len(verified_rows) == len(targets) and verify_native_management_vlans(
                 expected_paths or [], timeout=max(0, deadline - time.monotonic()),
             ):
                 # Publish the complete applied observation together, never reconcile unrelated intent.
                 pending = False
                 for (identity, name, mac, applied, observed_ipv4, observed_ipv6, observed_ipv6_cidrs,
-                     observed_admin_state, observed_oper_state, observed_ipv4_cidrs) in verified_rows:
+                     observed_admin_state, observed_oper_state, observed_ipv4_cidrs, _ipv4ll_address) in verified_rows:
                     interface = db.get(PhysicalInterface, identity)
                     if interface is None or interface.name != name or (interface.mac_address or "").lower() != mac.lower():
                         raise ConsoleOperationError("An applied management interface identity changed; recovery was not started.")
@@ -1698,27 +1780,40 @@ def _refresh_management_addresses(
                     interface.host_ipv6_cidrs = list(observed_ipv6_cidrs)
                     pending = pending or (interface.ipv4_method, interface.ip_cidr, interface.ipv6_enabled, interface.ipv6_cidr) != applied
                 if expected_paths is not None:
+                    settings = db.scalar(select(ApplianceSettings).order_by(ApplianceSettings.id))
+                    fallback_enabled = settings is None or settings.ipv4_link_local_fallback_enabled is not False
                     current_preview = render_network_config(
                         interfaces=list(db.scalars(select(PhysicalInterface))),
                         vlans=list(db.scalars(select(VlanInterface))),
+                        ipv4_link_local_fallback_enabled=fallback_enabled,
                     )
-                    pending = pending or not expected_paths or expected_paths != network_management_paths(current_preview)
+                    pending = (
+                        pending or not expected_paths or expected_paths != network_management_paths(current_preview)
+                        or (not fallback_enabled and any(row[-1] for row in verified_rows))
+                    )
                 db.commit()
                 if pending:
                     raise ConsoleOperationError(
                         "The applied management addresses were observed, but newer address edits remain pending. "
                         "Certificate recovery and Appliance Settings were not started; apply or reconcile those edits first."
                     )
+                physical_interfaces = [
+                    {"id": identity, "name": name, "mac": mac, "ipv4_cidr": ipv4,
+                     "host_admin_state": admin_state, "oper_state": oper_state,
+                     "ipv6_cidr": ipv6, "ipv6_cidrs": list(ipv6_cidrs), "ipv4_cidrs": ipv4_cidrs,
+                     **({"ipv4ll_address": ipv4ll_address} if ipv4ll_address else {})}
+                    for (identity, name, mac, _applied, ipv4, ipv6, ipv6_cidrs, admin_state, oper_state,
+                         ipv4_cidrs, ipv4ll_address) in verified_rows
+                ]
                 return {
                     "network_job_id": network_job_id,
                     "management_paths": expected_paths,
-                    "candidate_addresses": [str(ip_interface(row[4]).ip) for row in verified_rows if row[4]],
-                    "physical_interfaces": [
-                        {"id": identity, "name": name, "mac": mac, "ipv4_cidr": ipv4,
-                         "host_admin_state": admin_state, "oper_state": oper_state,
-                         "ipv6_cidr": ipv6, "ipv6_cidrs": list(ipv6_cidrs), "ipv4_cidrs": ipv4_cidrs}
-                        for identity, name, mac, _applied, ipv4, ipv6, ipv6_cidrs, admin_state, oper_state, ipv4_cidrs in verified_rows
+                    "candidate_addresses": [
+                        row.get("ipv4ll_address") or str(ip_interface(row["ipv4_cidr"]).ip)
+                        for row in physical_interfaces if row.get("ipv4ll_address") or row["ipv4_cidr"]
                     ],
+                    "network_preview": network_preview,
+                    "physical_interfaces": physical_interfaces,
                 }
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -1727,6 +1822,32 @@ def _refresh_management_addresses(
                 "could not confirm every requested family. Certificate recovery and Appliance "
                 "Settings were not started; check the interface and DHCP/IPv6 acquisition, then retry."
             )
+        time.sleep(min(1, remaining))
+
+
+def _wait_for_ipv4ll_settings_publication(observation: dict[str, Any], *, timeout: float = 30) -> None:
+    """Wait for the ordinary Settings helper's independently published listener proof.
+
+    Args:
+        observation: Current task-bound physical observations after management recovery.
+        timeout: Maximum wait for the root observer to acknowledge the setup listener.
+    """
+    from atlaso.app.services.dynamic_management import read_publication
+
+    fallback = next((row for row in observation.get("physical_interfaces", []) if row.get("ipv4ll_address")), None)
+    if fallback is None:
+        return
+    deadline = time.monotonic() + timeout
+    while True:
+        with SessionLocal() as db:
+            published = read_publication(db)
+        if (published.get("interface") == fallback["name"]
+                and str(published.get("mac") or "").lower() == fallback["mac"].lower()
+                and fallback["ipv4ll_address"] in published.get("apipa_addresses", [])):
+            return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ConsoleOperationError("IPv4 link-local setup was observed, but its Settings listener publication is unavailable.")
         time.sleep(min(1, remaining))
 
 
@@ -1811,6 +1932,8 @@ def configure_management(
     _refresh_management_addresses(interface_id, network_job_id=network_job_id)
     _recover_management_plane("Network and Firewall were applied", network_job_id=network_job_id)
     native_observation = _refresh_management_addresses(interface_id, network_job_id=network_job_id)
+    if native_observation:
+        _wait_for_ipv4ll_settings_publication(native_observation)
     expected_settings_snapshot = _post_handoff_settings_snapshot(
         network_job_id, captured_settings, captured_network_preview,
         expected_management_snapshots["appliance_settings"], native_observation=native_observation,
@@ -2365,7 +2488,7 @@ class CursesConsole:
             address,
             width,
             gateway=status.gateway or "none",
-            mode=status.ipv4_method,
+            mode=status.ipv4_acquisition or status.ipv4_method,
         )
         self._safe_add(16, 6, ipv4, curses.color_pair(2))
         ipv6_address = status.ipv6_cidr or ("Not configured" if status.ipv6_mode == "disabled" else "Awaiting RA/SLAAC")

@@ -297,6 +297,58 @@ def test_network_wan_review_expands_to_five_unchanged_handoff_dependencies(clien
     assert not payload["plan_error"]
 
 
+def test_dual_stack_driver_accepts_server_expanded_traffic_publishing(client, monkeypatch):
+    """Pass a real expanded browser review through the driver and its public channel.
+
+    Args:
+        client: Isolated authenticated HTTP test client.
+        monkeypatch: Test-scoped replacements for Apply planning inputs.
+    """
+    from scripts.interop import certificate_dual_stack_ui as driver
+    from tests.test_certificate_dual_stack_ui import (
+        FakeClient,
+        assert_public_channel_roundtrip,
+    )
+
+    units, _, _ = _prepare_network_handoff_review(client, monkeypatch)
+    next(unit for unit in units if unit["id"] == "wan")["changed"] = False
+    roots = sorted(driver.PROTECTED)
+    response = client.get(
+        "/ui/management/appliance-apply/review",
+        params=[("selected_units", root) for root in roots],
+    )
+    assert response.status_code == 200
+    review = response.json()
+    assert review["requested_units"] == roots and not review["plan_error"]
+    selected = [unit for unit in review["units"] if unit["selected"]]
+    assert {unit["id"] for unit in selected} == driver.PROTECTED | {"nat"}
+    dependency = next(unit for unit in selected if unit["id"] == "nat")
+    assert dependency["required_dependency"] is True
+
+    synthetic = FakeClient(review)
+
+    def checkpoint(stage, intent):
+        """Verify the original expanded plan before the synthetic submission.
+
+        Args:
+            stage: Checkpoint stage name.
+            intent: Public intent and complete reviewed scope.
+        """
+        assert stage == "apply_intent"
+        assert len(synthetic.requests) == 1
+        assert intent["review"]["requested_units"] == roots
+        assert next(row for row in intent["review"]["units"] if row["id"] == "nat") == dependency
+        assert_public_channel_roundtrip(intent)
+
+    receipt = driver.submit_once(synthetic, roots, checkpoint)
+    assert receipt["job_id"] == "job-123"
+    assert len(synthetic.requests) == 2
+    path, fields = synthetic.requests[1]
+    assert path == "/ui/management/appliance-apply"
+    assert [value for key, value in fields if key == "requested_units"] == roots
+    assert [value for key, value in fields if key == "selected_units"] == [row["id"] for row in selected]
+
+
 def test_reviewed_network_wan_plan_submits_same_ordered_effective_selection(client, monkeypatch):
     """Submit exactly the effective units represented by a reviewed token.
 

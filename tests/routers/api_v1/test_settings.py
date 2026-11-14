@@ -33,6 +33,7 @@ def test_settings_update_openapi_fields_are_omittable_but_non_nullable():
         "web_terminal_enabled",
         "web_terminal_interfaces",
         "root_ssh_enabled",
+        "ipv4_link_local_fallback_enabled",
         "browser_session_idle_timeout_minutes",
         "api_token_max_lifetime_days",
         "external_dns_servers",

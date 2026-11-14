@@ -352,6 +352,11 @@ namespace Atlaso
         }
         public static CreatedDirectoryPins CreateAndPinOrdinaryDirectoryPath(string path, Action<string, string> publish)
         {
+            return CreateAndPinOrdinaryDirectoryPath(path, publish, true);
+        }
+        public static CreatedDirectoryPins CreateAndPinOrdinaryDirectoryPath(string path, Action<string, string> publish,
+            bool retireOnPublicationFailure)
+        {
             var pins = new CreatedDirectoryPins();
             try
             {
@@ -382,8 +387,10 @@ namespace Atlaso
                                 RootDirectory = parent.DangerousGetHandle(), ObjectName = name, Attributes = 0x40 };
                             IntPtr raw;
                             IoStatusBlock status;
-                            int result = NtCreateFile(out raw, 0x00110081, ref attributes, out status,
-                                IntPtr.Zero, 0x10, FileShareRead, 2, 0x00200021, IntPtr.Zero, 0);
+                            uint access = retireOnPublicationFailure ? 0x00110081U : 0x00100081U;
+                            uint sharing = retireOnPublicationFailure ? FileShareRead : FileShareRead | FileShareWrite;
+                            int result = NtCreateFile(out raw, access, ref attributes, out status,
+                                IntPtr.Zero, 0x10, sharing, 2, 0x00200021, IntPtr.Zero, 0);
                             if (result < 0) throw new InvalidOperationException("Exclusive directory creation refused: " + result);
                             handle = new SafeFileHandle(raw, true);
                         }
@@ -410,6 +417,7 @@ namespace Atlaso
                         try { publish(current, identity); }
                         catch (Exception publicationFailure)
                         {
+                            if (!retireOnPublicationFailure) throw;
                             // Only this just-created object can be retired. Retain
                             // its original handle and let nonempty refusal preserve
                             // any concurrently inserted artifacts.
@@ -541,6 +549,17 @@ namespace Atlaso
                 if (!SetFileInformationByHandle(handle, 4, ref delete, 1))
                     throw new Win32Exception(Marshal.GetLastWin32Error());
             }
+        }
+        public static string GetOrdinaryFileHandleIdentity(SafeFileHandle handle) {
+            ByHandleFileInformation information;
+            if (!GetFileInformationByHandle(handle, out information))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            if ((information.FileAttributes & (0x10 | 0x400)) != 0 || information.NumberOfLinks != 1)
+                throw new InvalidOperationException("Expected an ordinary single-identity file handle.");
+            return String.Format("{0:X8}:{1:X8}{2:X8}:{3:X8}{4:X8}",
+                information.VolumeSerialNumber, information.FileIndexHigh, information.FileIndexLow,
+                unchecked((uint)information.CreationTime.dwHighDateTime),
+                unchecked((uint)information.CreationTime.dwLowDateTime));
         }
         public static string Get(string path)
         {

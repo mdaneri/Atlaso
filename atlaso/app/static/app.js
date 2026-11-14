@@ -11184,7 +11184,9 @@ function networkAddressStatusHtml(value) {
   const tone = { conflict: "error", checking: "warn", assigned: "good", unknown: "muted" }[status.state] || "muted";
   const active = (status.active_addresses || []).join(", ");
   const failure = status.last_conflict;
-  return `<strong class="status-pill ${tone}">${escapeHtml(labels[status.state] || "Unable to check")}</strong><br><small>${escapeHtml(status.detail || "Native address evidence has not been collected.")}${active ? `<br>Active: ${escapeHtml(active)}` : ""}${failure ? `<br>Detected: ${escapeHtml(failure.detected_at)}${failure.mac ? ` ; MAC: ${escapeHtml(failure.mac)}` : ""}` : ""}</small>`;
+  const fallbackAddresses = Array.isArray(status.ipv4ll_addresses) ? status.ipv4ll_addresses.map(escapeHtml).join(", ") : "";
+  const acquisition = status.ipv4_detail ? `<br>${escapeHtml(status.ipv4_detail)}${fallbackAddresses ? ` ${fallbackAddresses}` : ""}` : "";
+  return `<strong class="status-pill ${tone}">${escapeHtml(labels[status.state] || "Unable to check")}</strong><br><small>${escapeHtml(status.detail || "Native address evidence has not been collected.")}${acquisition}${active ? `<br>Active: ${escapeHtml(active)}` : ""}${failure ? `<br>Detected: ${escapeHtml(failure.detected_at)}${failure.mac ? ` ; MAC: ${escapeHtml(failure.mac)}` : ""}` : ""}</small>`;
 }
 
 function initializeNetworkAddressStatusRefresh() {

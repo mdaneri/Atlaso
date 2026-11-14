@@ -16,6 +16,45 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $readinessScript = Join-Path $RepositoryRoot 'scripts/windows/vmware/get-atlaso-vm-ip.ps1'
+$parseTokens = $null
+$parseErrors = $null
+$readinessAst = [Management.Automation.Language.Parser]::ParseFile(
+    $readinessScript, [ref]$parseTokens, [ref]$parseErrors)
+$ipFunctions = @($readinessAst.FindAll({
+    param($node)
+    $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'Get-VmwareGuestIPv4Address'
+}, $true))
+if ($parseErrors.Count -or $ipFunctions.Count -ne 1) { throw 'Target IP reader definition is ambiguous.' }
+& {
+    . ([scriptblock]::Create($ipFunctions[0].Extent.Text))
+    <#
+    .SYNOPSIS
+    Model Tools that supplies an address only to the native waiting operation.
+    .PARAMETER VmrunPath
+    Synthetic provider name; no process is started.
+    .PARAMETER Arguments
+    Actual argument list from the production IP reader.
+    .PARAMETER Deadline
+    Original deadline that must remain effective for the waiting query.
+    #>
+    function Invoke-AtlasoWorkstationVmrunBounded {
+        param([string]$VmrunPath, [string[]]$Arguments, [datetime]$Deadline)
+        if ($VmrunPath -cne 'fixture-vmrun' -or $Deadline -ne $expectedDeadline) {
+            throw 'The waiting IP query changed its provider or shared deadline.'
+        }
+        $waiting = ($Arguments -join '|') -ceq '-T|ws|getGuestIPAddress|fixture.vmx|-wait'
+        return [pscustomobject]@{
+            ExitCode = if ($waiting) { 0 } else { 1 }
+            TimedOut = $false
+            StdOut = if ($waiting) { '192.0.2.10' } else { '' }
+            StdErr = if ($waiting) { '' } else { 'ToolsUnavailable' }
+        }
+    }
+    $expectedDeadline = (Get-Date).AddSeconds(3)
+    $reported = Get-VmwareGuestIPv4Address -VmrunPath 'fixture-vmrun' -VmxPath 'fixture.vmx' -Deadline $expectedDeadline
+    if ($reported -cne '192.0.2.10') { throw 'Native waiting Tools address was not admitted.' }
+}
 # Invalid timing must fail during binding, before path or provider access.
 foreach ($invalidTiming in @(
         @{ TimeoutSeconds = 0 }, @{ TimeoutSeconds = -1 },
@@ -282,12 +321,17 @@ function Test-TestConnection {
 Run the production readiness script against scripted provider responses and a controlled poll clock.
 .PARAMETER Responses
 Ordered provider operations with optional stdout, exit code, or a real stalled-child marker.
+.PARAMETER WakeEarlyOnFinalPoll
+Simulate a final poll sleep returning one millisecond before its deadline.
 #>
 function Invoke-TestReadinessScenario {
-    param([Parameter(Mandatory = $true)][hashtable[]]$Responses)
+    param(
+        [Parameter(Mandatory = $true)][hashtable[]]$Responses,
+        [switch]$WakeEarlyOnFinalPoll
+    )
 
     $clock = @{ Now = [datetime]'2026-01-01T00:00:00'; Deadline = [datetime]'2026-01-01T00:00:02' }
-    $provider = @{ Next = 0; Failure = ''; StalledCalls = 0 }
+    $provider = @{ Next = 0; Failure = ''; StalledCalls = 0; EarlyWake = $false }
     $expectedStalls = @($Responses | Where-Object { $_.Stall }).Count
     try {
         # Aliases also intercept calls inside the re-imported production module.
@@ -307,7 +351,12 @@ function Invoke-TestReadinessScenario {
             Requested poll duration.
             #>
             param([int]$Milliseconds)
-            $clock.Now = $clock.Now.AddMilliseconds($Milliseconds)
+            $wake = $clock.Now.AddMilliseconds($Milliseconds)
+            if ($WakeEarlyOnFinalPoll -and $wake -eq $clock.Deadline) {
+                $wake = $wake.AddMilliseconds(-1)
+                $provider.EarlyWake = $true
+            }
+            $clock.Now = $wake
         }.GetNewClosure()
         Set-Item Function:global:Invoke-TestReadinessVmrun -Value {
             <#
@@ -370,7 +419,8 @@ function Invoke-TestReadinessScenario {
             $diagnostic = $_.Exception.Message
         }
         if ($provider.Failure -or $provider.Next -ne $Responses.Count -or
-            $provider.StalledCalls -ne $expectedStalls) {
+            $provider.StalledCalls -ne $expectedStalls -or
+            ($WakeEarlyOnFinalPoll -and -not $provider.EarlyWake)) {
             throw "Readiness provider sequence failed ($($provider.Next)/$($Responses.Count) operations). $($provider.Failure) Diagnostic: $diagnostic"
         }
         return $diagnostic
@@ -421,7 +471,7 @@ if ($stageTimeoutMessage -notlike 'No uniquely bound IPv4 address*' -or
 }
 
 $failedObservation = @($ip, $hostnameFailure, $inventory, $hostnameFailure)
-$providerFailureMessage = Invoke-TestReadinessScenario -Responses ($failedObservation + $failedObservation)
+$providerFailureMessage = Invoke-TestReadinessScenario -Responses ($failedObservation + $failedObservation) -WakeEarlyOnFinalPoll
 if ($providerFailureMessage -notlike 'An initial VMware ownership observation completed*' -or
     $providerFailureMessage -notlike '*hostname evidence query failed with exit code 8*' -or
     $providerFailureMessage -like '*guest initialization did not publish*') {

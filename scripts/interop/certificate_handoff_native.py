@@ -573,11 +573,16 @@ def admit_execution(plan):
     git_environment = os.environ.copy()
     git_environment.pop("ATLASO_NATIVE_ADMIN", None)
     git_environment.pop("ATLASO_NATIVE_PEER", None)
+    trusted = plan.get("trust_model") == "trusted-host"
+    repository = Path(__file__).resolve().parents[2]
+    ova_ownership = None
+    if plan.get("appliance_media") == "ova":
+        ova_ownership = original_vm(plan, "appliance", plan["vmx_path"])
+        repository = Path(ova_ownership["worktree"])
     current_head = subprocess.run(
-        ["git", "-C", str(Path(__file__).resolve().parents[2]), "rev-parse", "HEAD"],
+        ["git", "--no-replace-objects", "-C", str(repository), "rev-parse", "HEAD"],
         capture_output=True, text=True, check=True, env=git_environment,
     ).stdout.strip()
-    trusted = plan.get("trust_model") == "trusted-host"
     expected_head = plan.get("source_commit") if trusted else deployed_commit
     if not re.fullmatch(r"[0-9a-f]{40}", deployed_commit) or expected_head != current_head:
         raise Refusal("wrong_deployed_commit")
@@ -587,7 +592,7 @@ def admit_execution(plan):
             raise Refusal("resource_source_commit_invalid")
         if resource_source != current_head:
             ancestry = subprocess.run(
-                ["git", "-C", str(Path(__file__).resolve().parents[2]), "merge-base", "--is-ancestor", resource_source, current_head],
+                ["git", "--no-replace-objects", "-C", str(repository), "merge-base", "--is-ancestor", resource_source, current_head],
                 capture_output=True, env=git_environment, timeout=15,
             )
             if ancestry.returncode != 0:
@@ -598,7 +603,7 @@ def admit_execution(plan):
         if (plan["vm_creation_intent"] != plan["appliance_intent"]
                 or plan["vm_ownership"] != plan["appliance_ownership"]):
             raise Refusal("trusted_host_original_reference_mismatch")
-        ownership = original_vm(plan, "appliance", plan["vmx_path"])
+        ownership = ova_ownership if ova_ownership is not None else original_vm(plan, "appliance", plan["vmx_path"])
     elif (ownership.get("schema") != 1 or ownership.get("kind") != "vm"
             or ownership.get("repository") != "mdaneri/Atlaso" or ownership.get("pr") != 871
             or ownership.get("task_id") != plan["task_id"]
@@ -739,6 +744,7 @@ def main():
     try:
         plan = json.loads(Path(args.plan).read_text())
         ordinary_rotation = plan.get("scenario") == "ordinary-ca-rotation"
+        inspect_active_wheel = plan.get("appliance_media") == "ova" or "iso_wheel_deployment" in plan
         try:
             mode = baseline_mode(plan)
         except ValueError:
@@ -785,7 +791,7 @@ def main():
                 password, plan["appliance_ssh_host_key"],
             ) as appliance_session:
                 live_reservation = read_private_native(plan, fixture, peer_transport, appliance_session)
-                if "iso_wheel_deployment" in plan:
+                if inspect_active_wheel:
                     from certificate_iso_bootstrap import guest_identity
 
                     active_identity = guest_identity(appliance_session, plan, password)
@@ -846,7 +852,7 @@ def main():
             task_terminal = True
             if hashlib.sha256(Path(plan["ca_path"]).read_bytes()).hexdigest() != evidence["ca_sha256"]:
                 raise Refusal("trusted_ca_changed")
-            if mode == "dhcp" or "iso_wheel_deployment" in plan:
+            if mode == "dhcp" or inspect_active_wheel:
                 with PinnedApplianceSession(peer_transport, management_address, plan["appliance_user"],
                                             password, plan["appliance_ssh_host_key"]) as appliance_session:
                     if mode == "dhcp":
@@ -857,7 +863,7 @@ def main():
                             "phase": "after-ca-rotation", "address": final_native["baseline_address"],
                             "mac": final_native["appliance_mac"], "lease_state": "unexpired-original-mac-lease",
                         }
-                    if "iso_wheel_deployment" in plan and guest_identity(appliance_session, plan, password) != active_identity:
+                    if inspect_active_wheel and guest_identity(appliance_session, plan, password) != active_identity:
                         raise Refusal("post_ca_deployed_payload_changed")
             evidence.update(success=True, stage="ordinary_ca_rotation_verified")
             return
