@@ -79,6 +79,11 @@ from atlaso.app.services.service_registry import (
     RETIRED_SERVICE_IDS,
     SERVICE_STATE_DEFAULTS,
 )
+from atlaso.app.services.update_sources import (
+    PSGALLERY_NAME,
+    PSGALLERY_SOURCE_URL,
+    is_canonical_psgallery_url,
+)
 from atlaso.app.services.vcf_backups import VCF_BACKUP_DEFAULT_USERNAME
 from atlaso.app.services.vcf_offline_depot import VCF_DEPOT_DEFAULT_USERNAME
 
@@ -88,6 +93,7 @@ SEED_EXAMPLES_SETTING_KEY = "seed.include_examples"
 FACTORY_RESET_SETTING_KEY = "factory.reset_complete_v1"
 NTP_NTS_RESTORATION_SETTING_KEY = "ntp.nts_restoration_v1"
 NETWORK_ROLE_RECONCILIATION_SETTING_KEY = "network.roles_canonical_v1"
+DEFAULT_POWERCLI_VERSION = "9.1.1.25718932"
 FACTORY_APPLIANCE_FQDN = "core.atlaso.internal"
 FACTORY_MANAGEMENT_CIDR = "192.168.49.1/24"
 FACTORY_EXTERNAL_DNS_SERVERS = "1.1.1.1\n9.9.9.9"
@@ -800,8 +806,8 @@ def seed_update_sources(db: Session) -> None:
     if powershell_source is None:
         powershell_source = UpdateSource(
             kind="powershell",
-            name="PSGallery",
-            url="https://www.powershellgallery.com/api/v2",
+            name=PSGALLERY_NAME,
+            url=PSGALLERY_SOURCE_URL,
             enabled=True,
             priority=50,
             settings_json='{"trusted": false}',
@@ -826,7 +832,12 @@ def seed_update_sources(db: Session) -> None:
                 name="VCF.PowerCLI",
                 source_id=powershell_source.id,
                 policy="pinned",
-                target_version="9.1.1.25718932",
+                target_version=DEFAULT_POWERCLI_VERSION,
+                atlaso_default_version=(
+                    DEFAULT_POWERCLI_VERSION
+                    if powershell_source.name == PSGALLERY_NAME and is_canonical_psgallery_url(powershell_source.url)
+                    else ""
+                ),
                 enabled=True,
             )
         )

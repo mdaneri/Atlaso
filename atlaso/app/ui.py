@@ -17897,12 +17897,19 @@ def _managed_package_from_form(
         enabled: Whether the requested behavior is enabled.
         db: Active database session.
     """
+    name = name.strip()
+    policy = policy.strip().lower()
+    target_version = target_version.strip() if policy == "pinned" else ""
+    if (name, source_id, policy, target_version) != (
+        package.name, package.source_id, package.policy, package.target_version
+    ):
+        package.atlaso_default_version = ""
     package.ecosystem = "powershell"
-    package.name = name.strip()
+    package.name = name
     package.source_id = source_id
     package.source = db.get(UpdateSource, source_id)
-    package.policy = policy.strip().lower()
-    package.target_version = target_version.strip() if package.policy == "pinned" else ""
+    package.policy = policy
+    package.target_version = target_version
     package.enabled = enabled
     package.updated_at = utcnow()
     return validate_managed_package(package)
