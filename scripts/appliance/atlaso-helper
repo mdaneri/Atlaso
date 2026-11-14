@@ -3091,7 +3091,11 @@ def _restore_management_resolver(
 
 
 def _resolver_wan_default_routes(interface_name: str) -> list[tuple[int, int, str, int]]:
-    """Capture only live, last-applied WAN defaults owned by the resolver link."""
+    """Capture only live, last-applied WAN defaults owned by the resolver link.
+
+    Args:
+        interface_name: Resolver link whose live routes will be captured.
+    """
     if WAN_RUNTIME_CONFIG_PATH.is_symlink():
         raise ValueError("applied WAN configuration is unsafe")
     if not WAN_RUNTIME_CONFIG_PATH.exists():
@@ -3120,7 +3124,13 @@ def _resolver_wan_default_routes(interface_name: str) -> list[tuple[int, int, st
 def _resolver_wan_default_present(
     interface_name: str, route: tuple[int, int, str, int], *, restoring: bool = False,
 ) -> bool:
-    """Observe an exact WAN-owned default without inferring hidden iproute2 fields."""
+    """Observe an exact WAN-owned default without inferring hidden iproute2 fields.
+
+    Args:
+        interface_name: Resolver link to match.
+        route: Expected address family, table, gateway, and metric.
+        restoring: Whether to reject a competing route before restoration.
+    """
     family, table, gateway, metric = route
     command = ["ip", "-j", "-details", f"-{family}", "route", "show", "table", "all", "default"]
     result = _network_observation_command(command)
@@ -3153,7 +3163,12 @@ def _resolver_wan_default_present(
 
 
 def _restore_resolver_wan_defaults(interface_name: str, routes: list[tuple[int, int, str, int]]) -> None:
-    """Reinstate captured routes after networkd has settled, without replacing competing routes."""
+    """Reinstate captured routes after networkd settles.
+
+    Args:
+        interface_name: Resolver link to wait for and restore routes on.
+        routes: Captured address families, tables, gateways, and metrics.
+    """
     if not routes:
         return
     command = ["networkctl", "--json=short", "list"]

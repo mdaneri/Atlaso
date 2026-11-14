@@ -19564,10 +19564,15 @@ def test_runtime_management_address_rejects_unusable_ipv6_status(
     )
 
 
-
 @pytest.mark.parametrize("failure", ["none", "resolver", "powercli", "competing-route"])
 def test_appliance_settings_preserves_applied_wan_defaults(monkeypatch, tmp_path, failure):
-    """An ordinary Settings reload keeps the live WAN defaults even on failure."""
+    """Verify that a Settings reload keeps live WAN defaults even on failure.
+
+    Args:
+        monkeypatch: Replace native commands with deterministic responses.
+        tmp_path: Isolate the networkd and WAN configuration files.
+        failure: Failure scenario to simulate during Settings Apply.
+    """
     helper = load_helper_module()
     network_path = tmp_path / "00-atlaso-mgmt.network"
     original = "[Match]\nName=eth0\n\n[Network]\nAddress=192.0.2.10/24\nDNS=192.0.2.53\n"
@@ -19591,6 +19596,12 @@ def test_appliance_settings_preserves_applied_wan_defaults(monkeypatch, tmp_path
     states = iter(("configuring", "configured"))
 
     def observe(command, **_kwargs):
+        """Return simulated networkd or route state.
+
+        Args:
+            command: Native observation command.
+            **_kwargs: Unused command options.
+        """
         if command[0] == "networkctl":
             state = {"Interfaces": [{"Name": "eth0", "AdministrativeState": next(states)}]}
         else:
@@ -19598,6 +19609,12 @@ def test_appliance_settings_preserves_applied_wan_defaults(monkeypatch, tmp_path
         return subprocess.CompletedProcess(command, 0, json.dumps(state), "")
 
     def run(command, **_kwargs):
+        """Simulate resolver reload and route restoration.
+
+        Args:
+            command: Native command to simulate.
+            **_kwargs: Unused command options.
+        """
         if command == ["networkctl", "reload"]:
             live.clear()
             if failure == "competing-route":
@@ -19624,6 +19641,11 @@ def test_appliance_settings_preserves_applied_wan_defaults(monkeypatch, tmp_path
     monkeypatch.setattr(helper, "_configure_web_terminal", lambda _: 0)
 
     def powercli(_enabled):
+        """Verify WAN recovery before returning the simulated PowerCLI result.
+
+        Args:
+            _enabled: Requested PowerCLI CEIP setting.
+        """
         assert live == defaults
         return (9 if failure == "powercli" else 0), {}
 
@@ -19644,7 +19666,12 @@ def test_appliance_settings_preserves_applied_wan_defaults(monkeypatch, tmp_path
 
 
 def test_resolver_wan_recovers_ipv6_default_with_native_metric(monkeypatch, tmp_path):
-    """Capture an applied IPv6 default whose zero metric is normalized by Linux."""
+    """Capture an applied IPv6 default whose zero metric is normalized by Linux.
+
+    Args:
+        monkeypatch: Supply native route observations and record route additions.
+        tmp_path: Isolate the last-applied WAN configuration.
+    """
     helper = load_helper_module()
     wan_path = tmp_path / "atlaso-wan.conf"
     wan_path.write_text(
@@ -19659,10 +19686,21 @@ def test_resolver_wan_recovers_ipv6_default_with_native_metric(monkeypatch, tmp_
     commands = []
 
     def observe(command):
+        """Return configured link state or the live IPv6 routes.
+
+        Args:
+            command: Native observation command.
+        """
         data = {"Interfaces": [{"Name": "eth0", "AdministrativeState": "configured"}]} if command[0] == "networkctl" else live
         return subprocess.CompletedProcess(command, 0, json.dumps(data), "")
 
     def run(command, *, timeout):
+        """Record a route addition and reflect it in live state.
+
+        Args:
+            command: Native route-add command.
+            timeout: Requested execution timeout in seconds.
+        """
         commands.append(command)
         live.append(route)
         return subprocess.CompletedProcess(command, 0, "", "")
