@@ -381,7 +381,12 @@ def test_stopped_ova_transition_owner(tmp_path: Path, monkeypatch: pytest.Monkey
         replacement.replace(vmx)
 
     def soft_stop(args: list[str], **kwargs: object) -> object:
-        """Replace the VMX while carrying out the durably claimed soft stop."""
+        """Replace the VMX while carrying out the durably claimed soft stop.
+
+        Args:
+            args: Expected vmrun command and original VMX selector.
+            **kwargs: Subprocess options, including the soft-stop timeout.
+        """
         nonlocal stopped
         assert args == [str(vmrun), "-T", "ws", "stop", str(vmx), "soft"]
         assert kwargs["timeout"] == 60 and not stopped
