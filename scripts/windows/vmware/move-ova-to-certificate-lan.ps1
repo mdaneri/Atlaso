@@ -20,6 +20,8 @@ Canonical name of the original imported OVA.
 Independently recorded SHA-256 of the plan's admitted VMware executable.
 .PARAMETER PythonPath
 Absolute path to the admitted Python interpreter.
+.PARAMETER StopRunning
+Capture the running original VMX and request one graceful shutdown before the NIC move.
 #>
 [CmdletBinding(SupportsShouldProcess)]
 param(
@@ -30,7 +32,8 @@ param(
     [Parameter(Mandatory)][ValidateRange(1, 2147483647)][int]$PullRequestNumber,
     [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]{1,79}$')][string]$Name,
     [Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{64}$')][string]$VmrunSha256,
-    [Parameter(Mandatory)][string]$PythonPath
+    [Parameter(Mandatory)][string]$PythonPath,
+    [switch]$StopRunning
 )
 
 $ErrorActionPreference = 'Stop'
@@ -67,7 +70,9 @@ try {
         $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath([IO.Path]::GetDirectoryName($path), $true))
         $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($path, $true))
     }
-    if (-not $PSCmdlet.ShouldProcess($vmx, 'Move the original OVA management NIC to the certificate LAN')) { return }
+    $action = 'Move the original OVA management NIC to the certificate LAN'
+    if ($StopRunning) { $action = 'Gracefully stop the original OVA and move its management NIC to the certificate LAN' }
+    if (-not $PSCmdlet.ShouldProcess($vmx, $action)) { return }
 
     Assert-AtlasoLanSegmentUiClosed
     $entryPoint = @'
@@ -77,13 +82,13 @@ from pathlib import Path
 sys.path.insert(0, sys.argv[1])
 from scripts.interop.certificate_ova_identity import _run_owned_ova_transition
 
-repository, plan, digest, vmx, task, pr, commit, evidence, identity, vmrun = sys.argv[1:]
+repository, plan, digest, vmx, task, pr, commit, evidence, identity, vmrun, stop = sys.argv[1:]
 _run_owned_ova_transition(Path(plan), digest, Path(repository), Path(vmx), task, int(pr), commit,
-                          Path(evidence), identity, vmrun)
+                          Path(evidence), identity, vmrun, stop_running=stop == "True")
 '@
     $arguments = @('-I', '-S', '-B', '-c', $entryPoint, $worktree, $Plan, $PlanSha256, $vmx,
         $context.TaskId, [string]$PullRequestNumber, $SourceCommit, $context.EvidenceDirectory,
-        $context.EvidenceDirectoryId, $VmrunSha256)
+        $context.EvidenceDirectoryId, $VmrunSha256, [string][bool]$StopRunning)
     $launch = @{
         FilePath = $PythonPath
         ArgumentList = $arguments

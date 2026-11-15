@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from pathlib import Path
@@ -276,7 +277,10 @@ def test_ova_stopped_transition_pins_all_original_disks(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Workstation receipt pins require Windows")
-@pytest.mark.parametrize("state", ["stopped", "starts_running", "other_catalog", "changed_plan"])
+@pytest.mark.parametrize("state", [
+    "stopped", "starts_running", "other_catalog", "changed_plan",
+    "controlled_stop", "shutdown_changed", "shutdown_unknown", "already_replaced",
+])
 def test_stopped_ova_transition_owner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state: str) -> None:
     """Hold the original inputs during both stopped checks and refuse a late power change.
 
@@ -285,14 +289,17 @@ def test_stopped_ova_transition_owner(tmp_path: Path, monkeypatch: pytest.Monkey
         monkeypatch: Supplies synthetic import provenance and VMware inventory.
         state: Whether the appliance stays stopped, starts, or the catalog or plan differs.
     """
-    vmx = tmp_path / "synthetic.vmx"
+    vm_root = tmp_path / "original-appliance"
+    vm_root.mkdir()
+    vmx = vm_root / "synthetic.vmx"
     before = _VMX.replace(b'scsi0:0.fileName = "disk.vmdk"\n', b'')
     before += b'scsi0.present = "TRUE"\nscsi0.virtualDev = "pvscsi"\n'
+    before += b'uuid.bios = "56 4d 00 01 02 03 04 05-06 07 08 09 0a 0b 0c 0d"\n'
     disks = []
     files = WindowsFiles()
     for slot, (role, size) in enumerate((("photon_os", 40), ("atlaso_system", 20),
                                         ("atlaso-depot", 500), ("atlaso-backups", 500))):
-        disk = tmp_path / f"disk-{slot}.vmdk"
+        disk = vm_root / f"disk-{slot}.vmdk"
         disk.write_bytes(b"original disk")
         with files.opened(disk) as (_, identity, _):
             disks.append({"slot": slot, "role": role, "virtual_size_bytes": size << 30,
@@ -343,7 +350,7 @@ def test_stopped_ova_transition_owner(tmp_path: Path, monkeypatch: pytest.Monkey
                              "preferences_path": str(catalog), "segment_name": "test", "segment_id": _SEGMENT,
                              "segment_receipt": segment}}
     intent, complete = ova_private_lan_receipt_paths(imported, invocation)
-    with files.opened(tmp_path, directory=True) as (_, directory, _):
+    with files.opened(vm_root, directory=True) as (_, directory, _):
         original = {"directory_identity": "{:08X}:{:08X}{:08X}".format(*directory),
                     "disk_inspection": {"disks": disks}}
     identity = files.mutable_file_identity(vmx)
@@ -365,6 +372,35 @@ def test_stopped_ova_transition_owner(tmp_path: Path, monkeypatch: pytest.Monkey
         return _OvaImportProof(original, imported, invocation, "vmnet2", identity)
 
     observed = []
+    controlled = state in {"controlled_stop", "shutdown_changed", "shutdown_unknown", "already_replaced"}
+    stop_intent = ownership / f"atlaso-test-vm-ova-lan-shutdown-{invocation}.json"
+    stopped = False
+    if state == "already_replaced":
+        replacement = vmx.with_suffix(".tmp")
+        replacement.write_bytes(before)
+        replacement.replace(vmx)
+
+    def soft_stop(args: list[str], **kwargs: object) -> object:
+        """Replace the VMX while carrying out the durably claimed soft stop."""
+        nonlocal stopped
+        assert args == [str(vmrun), "-T", "ws", "stop", str(vmx), "soft"]
+        assert kwargs["timeout"] == 60 and not stopped
+        claim = json.loads(stop_intent.read_bytes())
+        assert claim["before_vmx_identity"] == identity
+        assert claim["before_sha256"] == hashlib.sha256(before).hexdigest()
+        if state == "shutdown_unknown":
+            raise subprocess.TimeoutExpired(args, 60)
+        replacement = vmx.with_suffix(".tmp")
+        next_bytes = before + b'cleanShutdown = "TRUE"\n'
+        if state == "shutdown_changed":
+            next_bytes = next_bytes.replace(b"56 4d 00", b"56 4d 01")
+        replacement.write_bytes(next_bytes)
+        try:
+            replacement.replace(vmx)
+        except OSError as error:
+            pytest.fail(f"Simulated provider could not replace its VMX: {error}")
+        stopped = True
+        return subprocess.CompletedProcess(args, 0)
 
     def inventory(executable: Path) -> tuple[list[Path], str]:
         """Observe held pins and the claim state at each provider call.
@@ -376,15 +412,20 @@ def test_stopped_ova_transition_owner(tmp_path: Path, monkeypatch: pytest.Monkey
         observed.append(intent.is_file())
         with pytest.raises(PermissionError):
             ownership.rename(ownership.with_name("different-ownership"))
-        for path in (imported, Path(boot_ref["path"]), catalog, vmrun, tmp_path / "disk-0.vmdk"):
+        pinned = (imported, Path(boot_ref["path"]), catalog, vmrun)
+        if not controlled or stopped:
+            pinned += (vm_root / "disk-0.vmdk",)
+        for path in pinned:
             with pytest.raises(PermissionError):
                 with path.open("r+b"):
                     pytest.fail("An admitted input unexpectedly allowed a writer")
-        return ([vmx] if state == "starts_running" and observed[-1] else []), ""
+        return ([vmx] if (controlled and not stopped) or (state == "starts_running" and observed[-1]) else []), ""
 
     monkeypatch.setattr(certificate_ova_identity, "_admit_ova_import", admit_import)
     monkeypatch.setattr(certificate_ova_identity, "require_ancestor", lambda *_: None)
     monkeypatch.setattr(certificate_trusted_host, "_run_vmrun", inventory)
+    if controlled:
+        monkeypatch.setattr(certificate_ova_identity.subprocess, "run", soft_stop)
     provider_digest = hashlib.sha256(vmrun.read_bytes()).hexdigest()
     plan_directory = tmp_path / "test-results"
     plan_directory.mkdir()
@@ -397,8 +438,42 @@ def test_stopped_ova_transition_owner(tmp_path: Path, monkeypatch: pytest.Monkey
         _run_owned_ova_transition(
             Path(plan_ref["path"]), "0" * 64 if state == "changed_plan" else plan_ref["sha256"],
             tmp_path, vmx, "test-task", 1084, "e" * 40, ownership, ownership_id, provider_digest,
+            stop_running=controlled,
         )
 
+    if controlled:
+        refusal = {
+            "already_replaced": "ova_original_identity_changed",
+            "shutdown_changed": "ova_shutdown_configuration_changed",
+            "shutdown_unknown": "ova_shutdown_outcome_unknown",
+        }.get(state)
+        if refusal:
+            with pytest.raises(Refusal, match=refusal):
+                run()
+            assert stop_intent.exists() is (state != "already_replaced")
+            assert not intent.exists() and not complete.exists()
+            assert b'connectionType = "custom"' in vmx.read_bytes()
+            return
+        run()
+        assert stopped
+        completed = json.loads(complete.read_bytes())
+        assert completed["boot_vmx_identity"] == identity
+        assert completed["before_vmx_identity"] == files.mutable_file_identity(vmx) != identity
+        assert completed["shutdown_sha256"] == hashlib.sha256(stop_intent.read_bytes()).hexdigest()
+        plan["appliance_ova_private_lan_intent"] = {
+            "path": str(intent), "sha256": hashlib.sha256(intent.read_bytes()).hexdigest(),
+        }
+        plan["appliance_ova_private_lan"] = {
+            "path": str(complete), "sha256": hashlib.sha256(complete.read_bytes()).hexdigest(),
+        }
+        replacement = vmx.with_suffix(".tmp")
+        replacement.write_bytes(vmx.read_bytes().replace(b'cleanShutdown = "TRUE"', b'cleanShutdown = "FALSE"'))
+        replacement.replace(vmx)
+        assert certificate_ova_identity.admit_ova(plan, vmx, tmp_path, mac=_MAC, private_lan=_SEGMENT) == original
+        vmx.write_bytes(vmx.read_bytes().replace(b"56 4d 00", b"56 4d 01"))
+        with pytest.raises(Refusal, match="ova_restart_configuration_changed"):
+            certificate_ova_identity.admit_ova(plan, vmx, tmp_path, mac=_MAC, private_lan=_SEGMENT)
+        return
     if state == "changed_plan":
         with pytest.raises(Refusal, match="original_receipt_changed"):
             run()

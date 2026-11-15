@@ -801,7 +801,7 @@ This case does not establish DHCP-address acceptance.
 Run inspection before execution. Keep the original ISO, appliance, peer, LAN,
 installed source/helper, address evidence, public CA and SSH trust receipts.
 The runner records original public certificate and configuration evidence before
-using **Certificate requests → Revoke certificate → Replace** for this disposable
+using **Certificate requests â†’ Revoke certificate â†’ Replace** for this disposable
 appliance's `appliance:https` certificate. It then reviews only CA changes and
 requires unchanged Appliance Settings and Public Services to replay after CA.
 Unrelated pending edits or missing dependencies refuse submission.
@@ -1004,11 +1004,18 @@ retained wheel from the original deployment. Keep the import, deployed software,
 distinct. The baseline rechecks the installed payload and helper through pinned SSH on the admitted private address.
 
 After the peer factory creates the peer and registers its private LAN, prepare the trusted-host plan with the
-original peer and LAN receipts. Shut down the original OVA through the normal Workstation lifecycle and confirm
-fresh host admission. Run `scripts/windows/vmware/move-ova-to-certificate-lan.ps1` from the reviewed checkout.
-Pass the plan and its SHA-256, the checkout commit and branch, the owning PR and imported VM name, the admitted
-`vmrun.exe` SHA-256, and the prepared Python interpreter. The command checks the original appliance and the
-registered LAN, moves only the management NIC, and leaves the services NIC disconnected and the appliance stopped.
+original peer and LAN receipts and confirm fresh host admission. Run
+`scripts/windows/vmware/move-ova-to-certificate-lan.ps1` from the reviewed checkout. Pass the plan and its SHA-256,
+the checkout commit and branch, the owning PR and imported VM name, the admitted `vmrun.exe` SHA-256, and the prepared
+Python interpreter.
+
+For a running OVA, pass `-StopRunning` so the command records the original VMX before requesting graceful shutdown.
+VMware can replace that file during shutdown. The edit requires every parsed assignment to match the pre-shutdown
+configuration, apart from the Boolean `cleanShutdown` and `softPowerOff` fields. The original directory, four disk
+identities and network must match, and the owner pins the stopped VMX by its observed file identity before editing.
+The completion receipt binds the resulting configuration for the first private-LAN boot. With an already stopped
+OVA, the command requires the exact VMX file identity from first boot. A failed or interrupted shutdown claim
+requires reconciliation. The services NIC stays disconnected, and the command leaves the appliance stopped.
 
 The command writes `atlaso-test-vm-ova-private-lan-intent-<invocation>.json` and
 `atlaso-test-vm-ova-private-lan-complete-<invocation>.json` beside the original import receipt. Use their original

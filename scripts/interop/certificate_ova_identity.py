@@ -73,9 +73,11 @@ def admit_ova(
     """
     proof = _admit_ova_import(plan, vmx, repository, mac=mac, read_receipt=bound_json)
     expected_vmx_id = proof.vmx_identity
+    configuration_digest = None
     if private_lan is not None:
-        expected_vmx_id = _admit_private_lan(plan, repository, vmx, mac, private_lan, proof)
-    _verify_backings(vmx, proof.original, expected_vmx_id, mac, proof.vmnet, private_lan)
+        expected_vmx_id, configuration_digest = _admit_private_lan(plan, repository, vmx, mac, private_lan, proof)
+    _verify_backings(vmx, proof.original, expected_vmx_id, mac, proof.vmnet, private_lan,
+                     configuration_digest=configuration_digest)
     return proof.original
 
 
@@ -201,8 +203,8 @@ def _admit_ova_import(
 
 
 def _admit_private_lan(plan: dict, repository: Path, vmx: Path, mac: str, private_lan: str,
-                       proof: _OvaImportProof) -> str:
-    """Verify the completed private-LAN transition and return its VMX identity.
+                       proof: _OvaImportProof) -> tuple[str, str | None]:
+    """Verify the private-LAN transition and return its VMX identity and configuration digest.
 
     Args:
         plan: Trusted-host selectors including the original transition receipts.
@@ -221,12 +223,30 @@ def _admit_private_lan(plan: dict, repository: Path, vmx: Path, mac: str, privat
     )
     for record in (rewire_intent, rewire):
         require_ancestor(repository, record["source_commit"], plan["source_commit"])
+    binding = _private_lan_binding(plan, vmx, mac, private_lan, proof)
+    configuration_digest = None
+    if "shutdown_sha256" in rewire_intent:
+        shutdown_ref = {"path": str(_shutdown_path(proof)), "sha256": rewire_intent["shutdown_sha256"]}
+        shutdown = bound_json(shutdown_ref)
+        expected = _shutdown_binding(binding, shutdown.get("source_commit"))
+        if (any(shutdown.get(key) != value for key, value in expected.items())
+                or shutdown["source_commit"] != rewire_intent["source_commit"]
+                or not re.fullmatch(r"[0-9a-f]{64}", shutdown.get("configuration_sha256", ""))):
+            raise Refusal("ova_shutdown_binding_mismatch")
+        require_ancestor(repository, shutdown["source_commit"], plan["source_commit"])
+        configuration_digest = rewire_intent.get("after_configuration_sha256", "")
+        stopped_identity = rewire_intent.get("before_vmx_identity", "")
+        if (not re.fullmatch(r"[0-9a-f]{64}", configuration_digest)
+                or not re.fullmatch(r"[0-9A-F]{8}:[0-9A-F]{16}", stopped_identity)):
+            raise Refusal("ova_shutdown_binding_mismatch")
+        binding.update(boot_vmx_identity=proof.vmx_identity, before_vmx_identity=stopped_identity,
+                       shutdown_sha256=shutdown_ref["sha256"], after_configuration_sha256=configuration_digest)
     _verify_private_lan_receipts(
-        rewire_intent, rewire, _private_lan_binding(plan, vmx, mac, private_lan, proof),
+        rewire_intent, rewire, binding,
         intent_path=rewire_intent_ref.get("original_path", rewire_intent_ref["path"]),
         intent_sha256=rewire_intent_ref["sha256"],
     )
-    return rewire["vmx_identity"]
+    return rewire["vmx_identity"], configuration_digest
 
 
 def _private_lan_binding(plan: dict, vmx: Path, mac: str, segment_id: str, proof: _OvaImportProof) -> dict:
@@ -311,7 +331,8 @@ def _verify_private_lan_receipts(
         raise Refusal("ova_private_lan_readback_mismatch")
 
 
-def _verify_backings(vmx: Path, original: dict, vmx_identity: str, mac: str, vmnet: str, private_lan: str | None) -> None:
+def _verify_backings(vmx: Path, original: dict, vmx_identity: str, mac: str, vmnet: str, private_lan: str | None,
+                     *, configuration_digest: str | None = None) -> None:
     """Verify the live appliance against the admitted original backing identities.
 
     Args:
@@ -321,16 +342,19 @@ def _verify_backings(vmx: Path, original: dict, vmx_identity: str, mac: str, vmn
         mac: Original management MAC.
         vmnet: Original host-only network.
         private_lan: Admitted private LAN when the appliance has moved to it.
+        configuration_digest: Preserved post-edit digest for a controlled shutdown and restart.
     """
     from scripts.virtualization.inspect_workstation_ova_disks import _read_assignments
 
     files = WindowsFiles()
     with public_file(vmx), files.opened(vmx.parent, directory=True) as (_, directory, _):
         if (_native_id(list(directory)) != original["directory_identity"]
-                or files.mutable_file_identity(vmx) != vmx_identity):
+                or (configuration_digest is None and files.mutable_file_identity(vmx) != vmx_identity)):
             raise Refusal("ova_original_identity_changed")
         with vmx.open("rb") as stream:
             values = _read_assignments(stream.read(1048577))
+        if configuration_digest is not None and _stable_vmx_digest(values) != configuration_digest:
+            raise Refusal("ova_restart_configuration_changed")
         for name, identity in _expected_backings(values, original).items():
             if files.mutable_file_identity(vmx.parent / name) != identity:
                 raise Refusal("ova_original_disk_changed")
@@ -643,7 +667,95 @@ def write_ova_private_lan(
             _publish_ova_transition(completion_path, (json.dumps(completion, sort_keys=True) + "\n").encode("utf-8"))
 
 
-def _transition_stopped_ova(plan: dict, repository: Path, *, vmrun_sha256: str) -> None:
+def _stable_vmx_digest(values: dict[str, str]) -> str:
+    """Digest every VMX assignment except validated VMware power bookkeeping.
+
+    Args:
+        values: Strictly parsed, duplicate-free VMX assignments.
+    """
+    configuration = dict(values)
+    for key in ("cleanshutdown", "softpoweroff"):
+        if key in configuration and configuration.pop(key).casefold() not in {"true", "false"}:
+            raise Refusal("ova_power_bookkeeping_invalid")
+    return hashlib.sha256(json.dumps(configuration, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _shutdown_path(proof: _OvaImportProof) -> Path:
+    """Derive the unique shutdown intent path from the admitted import.
+
+    Args:
+        proof: Immutable original import and boot identity.
+    """
+    intent, _ = ova_private_lan_receipt_paths(proof.original_path, proof.invocation)
+    return intent.with_name(f"atlaso-test-vm-ova-lan-shutdown-{proof.invocation}.json")
+
+
+def _shutdown_binding(binding: dict, source_commit: str) -> dict:
+    """Bind the shutdown to the same import, boot, segment, and source as the edit.
+
+    Args:
+        binding: Original private LAN transition selectors.
+        source_commit: Exact source of the owning shutdown operation.
+    """
+    return {**binding, "schema": 1, "phase": "ova-lan-shutdown-intent", "source_commit": source_commit}
+
+
+def _stop_ova_for_transition(
+    vmx: Path, vmrun: Path, proof: _OvaImportProof, binding: dict, source_commit: str,
+) -> tuple[dict, str]:
+    """Claim one soft stop after recording the running original VMX.
+
+    Args:
+        vmx: Exact original running appliance.
+        vmrun: Admitted, pinned VMware executable.
+        proof: Original import and boot identity.
+        binding: Independently verified private LAN selectors.
+        source_commit: Exact reviewed source of the controller.
+    """
+    from scripts.interop.certificate_trusted_host import _normalized_path, _run_vmrun
+    from scripts.virtualization.inspect_workstation_ova_disks import _read_assignments
+
+    running, _ = _run_vmrun(vmrun)
+    if _normalized_path(vmx) not in {_normalized_path(path) for path in running}:
+        raise Refusal("ova_shutdown_appliance_not_running")
+    path = _shutdown_path(proof)
+    claim_paths = (path, *ova_private_lan_receipt_paths(proof.original_path, proof.invocation))
+    if any(os.path.lexists(candidate) or os.path.lexists(candidate.with_name(f".{candidate.name}.pending"))
+           for candidate in claim_paths):
+        raise Refusal("ova_private_lan_attempt_already_claimed")
+    files = WindowsFiles()
+    with public_file(vmx), files.opened(vmx.parent, directory=True) as (_, directory, _):
+        if (files.mutable_file_identity(vmx) != proof.vmx_identity
+                or _native_id(list(directory)) != proof.original["directory_identity"]):
+            raise Refusal("ova_original_identity_changed")
+        with vmx.open("rb") as stream:
+            before = stream.read(1048577)
+        values = _read_assignments(before)
+        _verify_network(values, binding["mac"], proof.vmnet, None)
+        if values.get("checkpoint.vmstate") or not re.fullmatch(
+            r"(?:[0-9a-fA-F]{2} ){7}[0-9a-fA-F]{2}-(?:[0-9a-fA-F]{2} ){7}[0-9a-fA-F]{2}",
+            values.get("uuid.bios", ""),
+        ):
+            raise Refusal("ova_shutdown_stable_identity_invalid")
+        for name, expected in _expected_backings(values, proof.original).items():
+            if files.mutable_file_identity(vmx.parent / name) != expected:
+                raise Refusal("ova_original_disk_changed")
+        record = {**_shutdown_binding(binding, source_commit),
+                  "before_sha256": hashlib.sha256(before).hexdigest(),
+                  "configuration_sha256": _stable_vmx_digest(values)}
+        data = (json.dumps(record, sort_keys=True) + "\n").encode()
+        _publish_ova_transition(path, data)
+    try:
+        result = subprocess.run([str(vmrun), "-T", "ws", "stop", str(vmx), "soft"],
+                                capture_output=True, timeout=60, check=False)
+    except (OSError, subprocess.SubprocessError):
+        raise Refusal("ova_shutdown_outcome_unknown") from None
+    if result.returncode:
+        raise Refusal("ova_shutdown_outcome_unknown")
+    return record, hashlib.sha256(data).hexdigest()
+
+
+def _transition_stopped_ova(plan: dict, repository: Path, *, vmrun_sha256: str, stop_running: bool = False) -> None:
     """Move the management NIC of the original stopped appliance under held pins.
 
     The owning controller must first admit its current source, host scope and
@@ -653,6 +765,7 @@ def _transition_stopped_ova(plan: dict, repository: Path, *, vmrun_sha256: str) 
         plan: Digest-admitted trusted-host plan and original receipt selectors.
         repository: Exact admitted checkout.
         vmrun_sha256: Independently admitted digest of the local VMware executable.
+        stop_running: Allow the owner to record and gracefully stop the original VM.
     """
     from scripts.interop.certificate_trusted_host import (
         _ordinary_file,
@@ -723,23 +836,39 @@ def _transition_stopped_ova(plan: dict, repository: Path, *, vmrun_sha256: str) 
             if hashlib.file_digest(stream, "sha256").hexdigest() != vmrun_sha256:
                 raise Refusal("ova_private_lan_vmrun_digest_mismatch")
 
+        binding = _private_lan_binding(plan, vmx, mac, segment, proof)
+        shutdown = None
+        if stop_running:
+            shutdown, shutdown_sha256 = _stop_ova_for_transition(vmx, vmrun, proof, binding, plan["source_commit"])
+        elif os.path.lexists(_shutdown_path(proof)) or os.path.lexists(
+            _shutdown_path(proof).with_name(f".{_shutdown_path(proof).name}.pending")
+        ):
+            raise Refusal("ova_private_lan_attempt_already_claimed")
         with public_file(vmx):
-            if files.mutable_file_identity(vmx) != proof.vmx_identity:
+            identity = files.mutable_file_identity(vmx)
+            if shutdown is None and identity != proof.vmx_identity:
                 raise Refusal("ova_original_identity_changed")
             with vmx.open("rb") as stream:
                 before = stream.read(1048577)
-            _verify_network(_read_assignments(before), mac, proof.vmnet, None)
+            values = _read_assignments(before)
+            _verify_network(values, mac, proof.vmnet, None)
+            if shutdown is not None:
+                if _stable_vmx_digest(values) != shutdown["configuration_sha256"]:
+                    raise Refusal("ova_shutdown_configuration_changed")
+                after = render_ova_private_lan(before, mac=mac, vmnet=proof.vmnet, segment_id=segment)
+                binding.update(boot_vmx_identity=proof.vmx_identity, before_vmx_identity=identity,
+                               shutdown_sha256=shutdown_sha256,
+                               after_configuration_sha256=_stable_vmx_digest(_read_assignments(after)))
             pins.enter_context(pin_stopped_ova_backings(vmx, before, proof.original))
             assert_ova_stopped(vmx, before, vmrun)
 
         def admit_write() -> str:
             """Recheck the stopped state after opening the identity-bound writer."""
             assert_ova_stopped(vmx, before, vmrun)
-            return proof.vmx_identity
+            return identity
 
         write_ova_private_lan(
-            lambda: open_ova_vmx_writer(vmx, proof.vmx_identity), before,
-            _private_lan_binding(plan, vmx, mac, segment, proof),
+            lambda: open_ova_vmx_writer(vmx, identity), before, binding,
             source_commit=plan["source_commit"], vmnet=proof.vmnet,
             original_import=proof.original_path, invocation=proof.invocation, admit_write=admit_write,
         )
@@ -748,6 +877,7 @@ def _transition_stopped_ova(plan: dict, repository: Path, *, vmrun_sha256: str) 
 def _run_owned_ova_transition(
     plan_path: Path, plan_sha256: str, repository: Path, vmx: Path, task_id: str, pr: int,
     source_commit: str, evidence_directory: Path, evidence_identity: str, vmrun_sha256: str,
+    *, stop_running: bool = False,
 ) -> None:
     """Check the owning wrapper's selectors before entering the stopped transition.
 
@@ -762,6 +892,7 @@ def _run_owned_ova_transition(
         evidence_directory: Original ownership evidence directory.
         evidence_identity: Windows identity from the ownership context.
         vmrun_sha256: Independently verified digest of the VMware executable.
+        stop_running: Capture and gracefully stop the original appliance before editing.
     """
     if not plan_path.is_relative_to(repository / "test-results"):
         raise Refusal("ova_private_lan_plan_outside_worktree")
@@ -778,7 +909,7 @@ def _run_owned_ova_transition(
         with WindowsFiles().opened(evidence_directory, directory=True, allow_child_publication=True) as (_, native, _):
             if _native_id(list(native)) != evidence_identity:
                 raise Refusal("ova_private_lan_ownership_directory_mismatch")
-            _transition_stopped_ova(plan, repository, vmrun_sha256=vmrun_sha256)
+            _transition_stopped_ova(plan, repository, vmrun_sha256=vmrun_sha256, stop_running=stop_running)
 
 
 def admit_ova_runtime(plan: dict) -> dict:
