@@ -441,8 +441,12 @@ exact original value; the factory never discovers or relabels another task's rec
 ```
 
 The three private addresses are the admitted DHCP, static baseline and static candidate. Select an existing separate
-management VMnet; no host network is created or changed. The existing selected public key must be available in the SSH
-agent before creation. No private key or password enters the plan, seed or factory process arguments.
+management VMnet; no host network is created or changed. The peer management VMnet must reach the Alpine package
+repositories during first boot and its configured upstream
+time sources for Chrony. A host-only VMnet without a router cannot provide this access. For an OVA, the peer management
+VMnet can differ from the appliance VMnet recorded in the original isolation receipt. The appliance joins the private
+LAN only after peer admission. The selected public key must be available in the SSH agent before creation.
+No private key or password enters the plan, seed or factory process arguments.
 
 From the clean reviewed task checkout, first inspect without creating resources:
 

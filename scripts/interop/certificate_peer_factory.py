@@ -115,7 +115,9 @@ def inspect_inputs(spec: dict, repository: Path) -> dict:
     if spec.get("appliance_media") == "ova":
         from scripts.interop.certificate_ova_identity import admit_ova
 
-        directory_identity = admit_ova(spec, vmx, repository, mac=spec["appliance_mac"])["directory_identity"]
+        # The peer management network is independent of the original OVA isolation network.
+        ova_plan = {field: value for field, value in spec.items() if field != "management_vmnet"}
+        directory_identity = admit_ova(ova_plan, vmx, repository, mac=spec["appliance_mac"])["directory_identity"]
     else:
         directory_identity = _inspect_iso(spec, vmx, repository)
     preparation = bound_json(spec["peer_source_preparation"])
