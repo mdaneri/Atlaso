@@ -1022,7 +1022,11 @@ The command writes `atlaso-test-vm-ova-private-lan-intent-<invocation>.json` and
 paths and SHA-256 digests as `appliance_ova_private_lan_intent` and `appliance_ova_private_lan` in the baseline
 plan. An existing intent consumes the attempt even if completion is missing. Preserve that state for diagnosis.
 After successful readback, start the appliance through the normal lifecycle and recheck the private topology
-before collecting the DHCP baseline.
+before collecting the DHCP baseline. The restart check allows VMware's decimal
+`vm.lastPowerRequestTimestamp` to change. If an older completion digest includes the timestamp, supply
+`appliance_ova_previous_power_request_timestamp` as the exact decimal string from retained provider evidence.
+The verifier restores that value in memory and checks the complete original digest. Keep the original VMX and
+receipts intact.
 
 ## Failure handling and limits
 

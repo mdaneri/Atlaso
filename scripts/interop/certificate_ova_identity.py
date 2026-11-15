@@ -77,7 +77,8 @@ def admit_ova(
     if private_lan is not None:
         expected_vmx_id, configuration_digest = _admit_private_lan(plan, repository, vmx, mac, private_lan, proof)
     _verify_backings(vmx, proof.original, expected_vmx_id, mac, proof.vmnet, private_lan,
-                     configuration_digest=configuration_digest)
+                     configuration_digest=configuration_digest,
+                     previous_power_request=plan.get("appliance_ova_previous_power_request_timestamp"))
     return proof.original
 
 
@@ -332,7 +333,7 @@ def _verify_private_lan_receipts(
 
 
 def _verify_backings(vmx: Path, original: dict, vmx_identity: str, mac: str, vmnet: str, private_lan: str | None,
-                     *, configuration_digest: str | None = None) -> None:
+                     *, configuration_digest: str | None = None, previous_power_request: str | None = None) -> None:
     """Verify the live appliance against the admitted original backing identities.
 
     Args:
@@ -343,6 +344,7 @@ def _verify_backings(vmx: Path, original: dict, vmx_identity: str, mac: str, vmn
         vmnet: Original host-only network.
         private_lan: Admitted private LAN when the appliance has moved to it.
         configuration_digest: Preserved post-edit digest for a controlled shutdown and restart.
+        previous_power_request: Original power-request timestamp for a legacy completion digest.
     """
     from scripts.virtualization.inspect_workstation_ova_disks import _read_assignments
 
@@ -353,7 +355,8 @@ def _verify_backings(vmx: Path, original: dict, vmx_identity: str, mac: str, vmn
             raise Refusal("ova_original_identity_changed")
         with vmx.open("rb") as stream:
             values = _read_assignments(stream.read(1048577))
-        if configuration_digest is not None and _stable_vmx_digest(values) != configuration_digest:
+        if configuration_digest is not None and not _matches_restart_vmx(values, configuration_digest,
+                                                                         previous_power_request):
             raise Refusal("ova_restart_configuration_changed")
         for name, identity in _expected_backings(values, original).items():
             if files.mutable_file_identity(vmx.parent / name) != identity:
@@ -680,6 +683,50 @@ def _stable_vmx_digest(values: dict[str, str]) -> str:
     return hashlib.sha256(json.dumps(configuration, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+_POWER_REQUEST_TIMESTAMP = "vm.lastpowerrequesttimestamp"
+
+
+def _checked_power_request(value: str) -> str:
+    """Validate a VMware power-request timestamp before comparing restart configurations.
+
+    Args:
+        value: Timestamp from the live VMX or the original provider observation.
+    """
+    if not isinstance(value, str) or not re.fullmatch(r"0|[1-9][0-9]{0,19}", value):
+        raise Refusal("ova_power_bookkeeping_invalid")
+    return value
+
+
+def _restart_vmx_digest(values: dict[str, str]) -> str:
+    """Digest the saved configuration across a controlled private-LAN restart.
+
+    Args:
+        values: Strictly parsed, duplicate-free VMX assignments.
+    """
+    configuration = dict(values)
+    if _POWER_REQUEST_TIMESTAMP in configuration:
+        _checked_power_request(configuration.pop(_POWER_REQUEST_TIMESTAMP))
+    return _stable_vmx_digest(configuration)
+
+
+def _matches_restart_vmx(values: dict[str, str], digest: str, previous_power_request: str | None) -> bool:
+    """Compare the live VMX with a current or legacy stopped-completion digest.
+
+    Args:
+        values: Strictly parsed, duplicate-free live VMX assignments.
+        digest: Configuration digest from the original stopped completion.
+        previous_power_request: Original timestamp to reconstruct a legacy digest.
+    """
+    if _restart_vmx_digest(values) == digest or _stable_vmx_digest(values) == digest:
+        return True
+    return (
+        previous_power_request is not None
+        and _POWER_REQUEST_TIMESTAMP in values
+        and _stable_vmx_digest({**values, _POWER_REQUEST_TIMESTAMP: _checked_power_request(previous_power_request)})
+        == digest
+    )
+
+
 def _shutdown_path(proof: _OvaImportProof) -> Path:
     """Derive the unique shutdown intent path from the admitted import.
 
@@ -858,7 +905,7 @@ def _transition_stopped_ova(plan: dict, repository: Path, *, vmrun_sha256: str, 
                 after = render_ova_private_lan(before, mac=mac, vmnet=proof.vmnet, segment_id=segment)
                 binding.update(boot_vmx_identity=proof.vmx_identity, before_vmx_identity=identity,
                                shutdown_sha256=shutdown_sha256,
-                               after_configuration_sha256=_stable_vmx_digest(_read_assignments(after)))
+                               after_configuration_sha256=_restart_vmx_digest(_read_assignments(after)))
             pins.enter_context(pin_stopped_ova_backings(vmx, before, proof.original))
             assert_ova_stopped(vmx, before, vmrun)
 

@@ -276,6 +276,23 @@ def test_ova_stopped_transition_pins_all_original_disks(tmp_path: Path) -> None:
             pytest.fail("Replacement VMDK unexpectedly admitted")
 
 
+def test_legacy_restart_digest_requires_original_timestamp() -> None:
+    """Reconstruct the original digest only with the original decimal timestamp."""
+    original = {"uuid.bios": "original", "vm.lastpowerrequesttimestamp": "123"}
+    digest = certificate_ova_identity._stable_vmx_digest(original)
+    restarted = {**original, "vm.lastpowerrequesttimestamp": "456"}
+    matches = certificate_ova_identity._matches_restart_vmx
+    assert matches(original, digest, None)
+    assert not matches(restarted, digest, None)
+    assert not matches(restarted, digest, "124")
+    assert matches(restarted, digest, "123")
+    assert not matches({**restarted, "uuid.bios": "changed"}, digest, "123")
+    with pytest.raises(Refusal, match="ova_power_bookkeeping_invalid"):
+        matches({**restarted, "vm.lastpowerrequesttimestamp": "invalid"}, digest, "123")
+    with pytest.raises(Refusal, match="ova_power_bookkeeping_invalid"):
+        matches(restarted, digest, "01")
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Workstation receipt pins require Windows")
 @pytest.mark.parametrize("state", [
     "stopped", "starts_running", "other_catalog", "changed_plan",
@@ -295,6 +312,7 @@ def test_stopped_ova_transition_owner(tmp_path: Path, monkeypatch: pytest.Monkey
     before = _VMX.replace(b'scsi0:0.fileName = "disk.vmdk"\n', b'')
     before += b'scsi0.present = "TRUE"\nscsi0.virtualDev = "pvscsi"\n'
     before += b'uuid.bios = "56 4d 00 01 02 03 04 05-06 07 08 09 0a 0b 0c 0d"\n'
+    before += b'vm.lastPowerRequestTimestamp = "1794767765938000"\n'
     disks = []
     files = WindowsFiles()
     for slot, (role, size) in enumerate((("photon_os", 40), ("atlaso_system", 20),
@@ -472,7 +490,8 @@ def test_stopped_ova_transition_owner(tmp_path: Path, monkeypatch: pytest.Monkey
             "path": str(complete), "sha256": hashlib.sha256(complete.read_bytes()).hexdigest(),
         }
         replacement = vmx.with_suffix(".tmp")
-        replacement.write_bytes(vmx.read_bytes().replace(b'cleanShutdown = "TRUE"', b'cleanShutdown = "FALSE"'))
+        restarted = vmx.read_bytes().replace(b'cleanShutdown = "TRUE"', b'cleanShutdown = "FALSE"')
+        replacement.write_bytes(restarted.replace(b"1794767765938000", b"1794769564305000"))
         replacement.replace(vmx)
         assert certificate_ova_identity.admit_ova(plan, vmx, tmp_path, mac=_MAC, private_lan=_SEGMENT) == original
         vmx.write_bytes(vmx.read_bytes().replace(b"56 4d 00", b"56 4d 01"))
