@@ -119,6 +119,85 @@ def test_verified_setup_projects_terminal_preview_and_api(setup_publication, mon
         assert json.loads(response.config_preview)["web_terminal_addresses"] == ["169.254.20.10"]
 
 
+def test_dual_stack_settings_matches_completed_apipa_handoff(setup_publication, monkeypatch):
+    """Keep the completed Network projection and ordinary Settings snapshot identical.
+
+    Args:
+        setup_publication: Verified publication for the selected management NIC.
+        monkeypatch: Isolate the observed DHCP DNS read from the test host.
+    """
+    from datetime import datetime, timezone
+
+    from atlaso.app import appliance_console, ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, PhysicalInterface
+    from atlaso.app.services import appliance_settings
+
+    apipa = "169.254.20.10"
+    ipv6 = "2001:db8::10"
+    ipv6_cidr = ipv6 + "/64"
+    job_id = "job_dual_stack_ipv4ll"
+    monkeypatch.setattr(appliance_settings, "observed_management_dhcp_dns_servers", lambda _name: [])
+    setup_publication.update(addresses=[ipv6], apipa_addresses=[])
+    with SessionLocal() as db:
+        interface = db.query(PhysicalInterface).filter_by(name="eth0").one()
+        interface.ipv6_enabled = True
+        interface.ipv6_cidr = interface.host_ipv6_cidr = ipv6_cidr
+        interface.host_ipv6_cidrs = [ipv6_cidr]
+        db.flush()
+        captured, network_preview = appliance_console._captured_management_settings_unit(db)
+        assert json.loads(captured["raw_config_preview"])["management_ip"] == ipv6
+
+        observation = {
+            "observed_at": datetime.now(timezone.utc).isoformat(),
+            "complete": True,
+            "links": [{
+                "name": interface.name, "mac": interface.mac_address, "configured": True,
+                "ethernet": True, "up": True, "carrier": True, "address_inventory_complete": True,
+                "addresses": [
+                    {"address": apipa, "cidr": apipa + "/16", "state": "assigned", "source": "IPv4LL", "scope": "link"},
+                    {"address": ipv6, "cidr": ipv6_cidr, "state": "assigned", "source": "static", "scope": "global"},
+                ],
+            }],
+        }
+        db.add(Job(
+            id=job_id, type="appliance-apply", status=JobStatus.SUCCEEDED.value, created_by="test",
+            result=json.dumps({"units": [{"unit_id": "network", "management_handoff": {
+                "candidate_addresses": [apipa, ipv6], "management_address_observation": observation,
+            }}]}),
+        ))
+        db.commit()
+
+    setup_publication.update(addresses=[ipv6, apipa], apipa_addresses=[apipa])
+    with SessionLocal() as db:
+        actual, _network = appliance_console._captured_management_settings_unit(db)
+        preview = json.loads(actual["raw_config_preview"])
+        assert preview["management_ip"] == apipa
+        assert preview["management_ip_cidr"] == apipa + "/16"
+        assert preview["web_terminal_addresses"] == [apipa, ipv6]
+        rows = db.query(PhysicalInterface).all()
+        ordinary, _dns = ui.management_dhcp_dns_context(rows, [])
+        assert ordinary["addresses"] == [ipv6]
+
+    native = {
+        "network_job_id": job_id,
+        "physical_interfaces": [{"name": "eth0", "ipv6_cidrs": [ipv6_cidr]}],
+    }
+    expected = appliance_console._post_handoff_settings_snapshot(
+        job_id, captured, network_preview, captured["snapshot_hash"], native_observation=native,
+    )
+    assert expected == actual["snapshot_hash"]
+
+    with SessionLocal() as db:
+        interface = db.query(PhysicalInterface).filter_by(name="eth0").one()
+        interface.host_ip_cidr = "192.0.2.20/24"
+        db.flush()
+        leased, _network = appliance_console._captured_management_settings_unit(db)
+        preview = json.loads(leased["raw_config_preview"])
+        assert preview["management_ip"] == "192.0.2.20"
+        assert preview["web_terminal_addresses"] == ["192.0.2.20", ipv6]
+
+
 def test_unrelated_settings_save_keeps_setup_terminal_valid(client, setup_publication):
     """The ordinary reviewed Settings form can save with Web Terminal already enabled.
 

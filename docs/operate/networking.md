@@ -110,7 +110,9 @@ When moving from an APIPA-only setup address to static IPv4, Apply captures the 
 native interface/MAC ownership before preparing the handoff. Unpublished, stale or unready link-local addresses
 cannot become that previous path; IPv6 link-local addresses remain excluded.
 Settings-only Apply uses the same verified APIPA management context while keeping that address out of ordinary
-DHCP, DNS and service-listener inventory.
+DHCP, DNS and service-listener inventory. When the management NIC also has usable IPv6, Settings selects the verified
+APIPA address for its DHCPv4 management projection and retains the IPv6 Web Terminal address. Console recovery
+preserves that IPv6 address when the fresh observation for the completed Network task confirms it on the same NIC.
 Protected handoff completion uses the helper's fresh final native readback and the captured management MAC and fallback
 policy. A newly acquired APIPA address does not need a prior observer publication while the handoff is still active.
 After a console Network Apply, tty1 can continue recovery with APIPA when the completed task and a fresh native

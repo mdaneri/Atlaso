@@ -201,6 +201,8 @@ def settings_management_context(
     )
 
     context = management_ui_context(interfaces, vlans)
+    if context.get("ip") and context.get("ipv4_cidr"):
+        return context
     published = read_publication(db)
     selected = next((row for row in interfaces if row.name == context.get("name")), None)
     # Applied publication remains valid while desired state changes. It must not
@@ -212,7 +214,12 @@ def settings_management_context(
             or normalize_ipv4_method(selected.ipv4_method) != "dhcp"
             or selected.admin_state != "up" or selected.oper_state == "missing"):
         return context
-    address = published["addresses"][0]
-    cidr = f"{address}/16" if address in published["apipa_addresses"] else ""
-    return {"name": selected.name, "ip": address, "ip_cidr": cidr, "ipv4_cidr": cidr,
-            "ipv6_cidr": "", "addresses": published["addresses"], "ipv4_method": "dhcp"}
+    apipa_addresses = published["apipa_addresses"]
+    if context.get("ip") and not apipa_addresses:
+        return context
+    address = (apipa_addresses or published["addresses"])[0]
+    cidr = f"{address}/16" if apipa_addresses else ""
+    # Keep the verified DHCPv4 projection aligned with handoff and preserve ordinary IPv6.
+    addresses = context["addresses"] if context.get("ip") else published["addresses"]
+    return {**context, "ip": address, "ip_cidr": cidr, "ipv4_cidr": cidr,
+            "addresses": [address, *(item for item in addresses if item != address)]}

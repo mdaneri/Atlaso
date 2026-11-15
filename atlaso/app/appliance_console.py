@@ -1340,10 +1340,20 @@ def _post_handoff_settings_snapshot(
                 and old_management_ip in option.get("addresses", [])
                 for option in options if isinstance(option, dict)
             )
+            retained_management_ipv6 = (
+                native_observation is not None
+                and native_observation.get("network_job_id") == network_job_id
+                and any(
+                    old_management_ip == str(ip_interface(cidr).ip)
+                    for row in native_observation.get("physical_interfaces", [])
+                    if row.get("name") == current.get("management_interface")
+                    for cidr in row.get("ipv6_cidrs", [])
+                )
+            )
             addresses = current.get("web_terminal_addresses") or []
             current["web_terminal_addresses"] = [
                 value for value in addresses
-                if value != old_management_ip or old_address_still_selected
+                if value != old_management_ip or old_address_still_selected or retained_management_ipv6
             ]
             rendered = json.dumps(current, indent=2, sort_keys=True) + "\n"
             refreshed = make_appliance_apply_unit(
