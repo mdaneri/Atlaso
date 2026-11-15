@@ -138,7 +138,7 @@ def guest_python_command(program: str) -> str:
 
 
 def guest_identity(session, plan: dict, password: str) -> dict:
-    """Measure routing absence and the actual admitted ISO payload without changing it.
+    """Measure routing absence and the admitted appliance payload without changing it.
 
     Args:
         session: Authenticated pinned appliance SSH session.
@@ -161,6 +161,23 @@ def guest_identity(session, plan: dict, password: str) -> dict:
     expected = reviewed_helper_identity(plan)
     if helper != expected["helper_sha256"]:
         raise Refusal("bootstrap_reviewed_helper_mismatch")
+    if plan.get("appliance_media") == "ova":
+        from scripts.interop.certificate_ova_identity import admit_ova_runtime
+
+        runtime = admit_ova_runtime(plan)
+        inspector = Path(__file__).with_name("routing_deployment_inspection.py").read_text(encoding="utf-8")
+        inspector = inspector.split("if __name__ == '__main__':", 1)[0]
+        address = str(ipaddress.IPv4Address(session.private_ip))
+        measurement = json.loads(sudo_read(session, guest_python_command(
+            inspector + "\nprint(json.dumps(deployment_evidence("
+            + "Path(" + repr(plan["appliance_ova_remote_wheel"]) + "), " + repr(address) + ")))\n"
+        ), password))
+        if (any(measurement.get(key) != runtime[key] for key in (
+            "schema", "wheel_sha256", "helper_sha256", "wheel_payload_sha256",
+            "installed_payload_sha256", "verified_payload_files", "mac", "interface",
+        )) or measurement.get("address") != address):
+            raise Refusal("bootstrap_ova_payload_changed")
+        return {"route_snapshot": routing, "app_service": states, **expected, "wheel_sha256": runtime["wheel_sha256"]}
     installed = bound_json(plan["installed_inspection"])
     if (installed.get("host_key_sha256") != plan["appliance_ssh_host_key"]
             or installed.get("installed_payload_sha256") != installed.get("wheel_payload_sha256")):
@@ -311,8 +328,14 @@ def setup(plan: dict, output: Path, password: str, *, execute: bool) -> dict:
     if (plan.get("vmx_path") != fixture["appliance_vmx"]
             or plan.get("mac", "").replace("-", ":").lower() != fixture["appliance_mac"].lower()):
         raise Refusal("bootstrap_appliance_binding_mismatch")
-    if bound_json(plan["appliance_ownership"]).get("phase") != "original-installation-vm-created":
-        raise Refusal("bootstrap_requires_original_iso")
+    ova = plan.get("appliance_media") == "ova"
+    if ova and mode != "dhcp":
+        raise Refusal("bootstrap_ova_requires_dhcp_baseline")
+    phase = "ova-dhcp-baseline-observed" if ova else "iso-dhcp-baseline-observed"
+    if bound_json(plan["appliance_ownership"]).get("phase") != (
+        "ova-import-original" if ova else "original-installation-vm-created"
+    ):
+        raise Refusal("bootstrap_requires_original_appliance")
     current = str(ipaddress.IPv4Address(plan["current_address"]))
     baseline = str(ipaddress.IPv4Address(plan["baseline_address"]))
     candidate = str(ipaddress.IPv4Address(plan["static_candidate_address"]))
@@ -352,7 +375,7 @@ def setup(plan: dict, output: Path, password: str, *, execute: bool) -> dict:
                       "source_commit": bound_json(plan["appliance_ownership"])["source_commit"],
                       "deployed_commit": plan["deployed_commit"], "routing_intent_state": "proven-absent",
                       "routing_intent": None, "app_service": facts["app_service"], "route_snapshot": facts["route_snapshot"]}
-            runtime = {"schema": 1, "phase": ("iso-dhcp-baseline-observed" if mode == "dhcp"
+            runtime = {"schema": 1, "phase": (phase if mode == "dhcp"
                                                 else "iso-before-static-baseline"), "vmx_path": plan["vmx_path"],
                        "vm_ownership_sha256": plan["appliance_ownership"]["sha256"],
                        "deployed_commit": plan["deployed_commit"], "helper_sha256": facts["helper_sha256"],
@@ -386,7 +409,7 @@ def setup(plan: dict, output: Path, password: str, *, execute: bool) -> dict:
             if mode == "dhcp":
                 observation = {
                     "schema": 1, "kind": "certificate-dhcp-baseline-observation",
-                    "phase": "iso-dhcp-baseline-observed", "task_id": plan["task_id"],
+                    "phase": phase, "task_id": plan["task_id"],
                     "repository": "mdaneri/Atlaso", "pr": plan["pr"],
                     "source_commit": plan["source_commit"], "deployed_commit": plan["deployed_commit"],
                     "vmx_path": plan["vmx_path"], "vm_ownership_sha256": plan["appliance_ownership"]["sha256"],

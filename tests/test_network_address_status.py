@@ -93,6 +93,7 @@ def test_prepare_observation_persists_logging_without_network_restart(tmp_path, 
 
     helper = load_helper_module()
     destination = tmp_path / "systemd-networkd.service.d" / "atlaso-address-observation.conf"
+    monkeypatch.setattr(helper, "_install_dynamic_management_service", lambda: None)
     monkeypatch.setattr(helper, "NETWORK_OBSERVATION_LOGGING_PATH", destination)
     monkeypatch.setattr(helper, "_fsync_directory", lambda _path: None)
     calls = []

@@ -102,7 +102,9 @@ def applied_management_bindings(db: Session) -> list[dict[str, str]] | None:
     """
     baseline = _network_baseline(db)
     if baseline is None:
-        return None
+        from atlaso.app.services.dynamic_management import publication_bindings
+
+        return publication_bindings(db) or None
     rows = _network_rows(str(baseline["config_preview"]))
     raw_aliases = baseline.get("physical_interface_aliases")
     aliases = (
@@ -162,6 +164,15 @@ def applied_management_bindings(db: Session) -> list[dict[str, str]] | None:
                     "management_ui": "true",
                 }
             )
+    from atlaso.app.services.dynamic_management import publication_bindings
+
+    published = publication_bindings(db)
+    if published:
+        # The root publication is authoritative for this dynamic interface;
+        # inventory lag must not keep its previous DHCP address admitted.
+        names = {item["interface"] for item in published}
+        bindings = [item for item in bindings if item["interface"] not in names]
+        bindings.extend(published)
     return bindings
 
 

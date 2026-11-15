@@ -74,7 +74,10 @@ function Get-VmwareGuestIPv4Address {
         [Parameter(Mandatory = $true)][string]$VmxPath,
         [Parameter(Mandatory = $true)][datetime]$Deadline
     )
-    $arguments = @('-T', 'ws', 'getGuestIPAddress', $VmxPath)
+    # Tools can publish an address to the native waiting query while its
+    # non-waiting lookup still reports unavailable. The shared process deadline
+    # below bounds -wait; it does not relax complete-inventory or MAC admission.
+    $arguments = @('-T', 'ws', 'getGuestIPAddress', $VmxPath, '-wait')
     $result = Invoke-AtlasoWorkstationVmrunBounded `
         -VmrunPath $VmrunPath -Arguments $arguments -Deadline $Deadline
     $reported = @($result.StdOut -split '\r?\n' | Where-Object { $_ }) | Select-Object -First 1
@@ -318,11 +321,13 @@ do {
                     $lastReadinessError -notlike '*Windows neighbor evidence is <none>*')) { throw }
         }
     }
-    # A final partial interval must not extend the provider's shared deadline.
+    # A final partial interval cannot reach the next scheduled observation.
+    # Keep the last complete diagnostic if the sleep returns just before the deadline.
     $remainingMilliseconds = [Math]::Floor(($deadline - (Get-Date)).TotalMilliseconds)
-    if ($remainingMilliseconds -gt 0) {
-        Start-Sleep -Milliseconds ([int][Math]::Min($remainingMilliseconds, $PollSeconds * 1000.0))
-    }
+    if ($remainingMilliseconds -le 0) { break }
+    $pollMilliseconds = $PollSeconds * 1000.0
+    Start-Sleep -Milliseconds ([int][Math]::Min($remainingMilliseconds, $pollMilliseconds))
+    if ($remainingMilliseconds -le $pollMilliseconds) { break }
 } while ((Get-Date) -lt $deadline)
 
 $normalizedExpectedHostname = $ExpectedHostname.Trim().TrimEnd('.').ToLowerInvariant()

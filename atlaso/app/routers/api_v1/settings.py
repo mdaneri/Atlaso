@@ -176,6 +176,9 @@ def build_router(dependencies: SettingsApiDependencies) -> SettingsApiRouter:
         if "root_ssh_enabled" in supplied_fields:
             assert payload.root_ssh_enabled is not None
             desired.root_ssh_enabled = payload.root_ssh_enabled
+        if "ipv4_link_local_fallback_enabled" in supplied_fields:
+            assert payload.ipv4_link_local_fallback_enabled is not None
+            desired.ipv4_link_local_fallback_enabled = payload.ipv4_link_local_fallback_enabled
         if "browser_session_idle_timeout_minutes" in payload.model_fields_set:
             assert payload.browser_session_idle_timeout_minutes is not None
             desired.browser_session_idle_timeout_minutes = (

@@ -19,9 +19,12 @@ def reviewed_helper_identity(plan: dict) -> dict:
     """
     commit = plan["deployed_commit"]
     expected = None
+    ova_selected = plan.get("appliance_media") == "ova"
+    if ova_selected and plan.get("trust_model") != "trusted-host":
+        raise ValueError("original OVA requires trusted-host identity")
     if plan.get("trust_model") == "trusted-host":
         ownership = bound_json(plan["appliance_ownership"])
-        if ownership.get("phase") == "original-installation-vm-created":
+        if not ova_selected and ownership.get("phase") == "original-installation-vm-created":
             from scripts.installation.inspection import helper_inputs
 
             media = ownership["installation_iso"]
@@ -36,11 +39,25 @@ def reviewed_helper_identity(plan: dict) -> dict:
                 raise ValueError("original ISO software identity differs")
             commit = expected["installer_source_commit"]
     environment = {key: value for key, value in os.environ.items() if not key.startswith("ATLASO_NATIVE_")}
+    repository = Path(__file__).resolve().parents[2]
+    if ova_selected:
+        from scripts.interop.certificate_ova_identity import admit_ova_runtime
+        from scripts.interop.certificate_peer_factory import require_ancestor
+
+        if ownership.get("phase") != "ova-import-original":
+            raise ValueError("original OVA ownership receipt required")
+        repository = Path(ownership["worktree"])
+        require_ancestor(repository, commit, plan["source_commit"])
+        ova = admit_ova_runtime(plan)
+    else:
+        ova = None
     raw = subprocess.run(
-        ["git", "-C", str(Path(__file__).resolve().parents[2]), "show", commit + ":scripts/appliance/atlaso-helper"],
+        ["git", "--no-replace-objects", "-C", str(repository), "show", commit + ":scripts/appliance/atlaso-helper"],
         capture_output=True, check=True, env=environment, timeout=15,
     ).stdout
     checksum = hashlib.sha256(raw.replace(b"\r\n", b"\n") if expected else raw).hexdigest()
+    if ova is not None and checksum != ova["helper_sha256"]:
+        raise ValueError("original OVA helper differs from exact deployed source")
     if expected and checksum != expected["helper_sha256"]:
         raise ValueError("original ISO helper differs from exact installer source")
     return {"helper_source_commit": commit, "helper_sha256": checksum}

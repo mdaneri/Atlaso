@@ -1285,10 +1285,10 @@ def test_title_response_rechecks_absence(cleanup: Cleanup, monkeypatch: pytest.M
         return result
 
     monkeypatch.setattr(cleanup.controller, "call", changed)
-    with pytest.raises(Refusal):
+    with pytest.raises(Refusal) as refused:
         cleanup.run()
     assert "task_title_done" not in cleanup.gates
-    assert "task_title_readback_verified" in cleanup.gates
+    assert "task_title_readback_verified" in cleanup.gates, f"Cleanup refused before title readback: {refused.value}"
     if reappeared == "remote":
         assert cleanup.git("ls-remote", "--refs", "origin", f"refs/heads/{cleanup.branch}")
     elif reappeared == "local":

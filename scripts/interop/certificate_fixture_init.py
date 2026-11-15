@@ -368,7 +368,7 @@ def admit_initialization(plan: dict, output: Path) -> tuple[dict, str]:
     """Admit original resource bindings and the fixed scope before credentials.
 
     Args:
-        plan: Receipt-bound original ISO plan.
+        plan: Receipt-bound original appliance plan.
         output: Existing task-owned evidence directory.
     """
     admit_output(plan, output / "source.json", output / "bootstrap-runtime.json")
@@ -377,10 +377,11 @@ def admit_initialization(plan: dict, output: Path) -> tuple[dict, str]:
     network = ipaddress.ip_interface(fixture["peer_cidr"])
     peer_address = str(network.ip)
     requested = plan.get("fixture_initialization")
+    phase = "ova-import-original" if plan.get("appliance_media") == "ova" else "original-installation-vm-created"
     if (plan.get("trust_model") != "trusted-host" or plan.get("interface") != "eth0"
             or plan.get("vmx_path") != fixture["appliance_vmx"]
             or plan.get("mac", "").replace("-", ":").lower() != fixture["appliance_mac"].lower()
-            or bound_json(plan["appliance_ownership"]).get("phase") != "original-installation-vm-created"
+            or bound_json(plan["appliance_ownership"]).get("phase") != phase
             or not isinstance(requested, dict)
             or set(requested) not in (
                 {"peer_time_address", "resolver_address", "disable_dns_server", "disable_ntp_server"},
