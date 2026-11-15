@@ -3010,6 +3010,34 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#dual-stack-contract-preparation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Dual-stack contract preparation
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Dual-stack contract preparation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#console-driver-components" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Console driver components
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#trusted-host-and-admission" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3152,6 +3180,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Hand off lab resources for cleanup
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#use-an-original-ova-for-the-ordinary-dhcp-baseline" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Use an original OVA for the ordinary DHCP baseline
       </span>
     </span>
   </a>
@@ -4325,6 +4364,34 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#dual-stack-contract-preparation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Dual-stack contract preparation
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Dual-stack contract preparation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#console-driver-components" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Console driver components
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#trusted-host-and-admission" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4474,6 +4541,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#use-an-original-ova-for-the-ordinary-dhcp-baseline" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Use an original OVA for the ordinary DHCP baseline
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#failure-handling-and-limits" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4603,7 +4681,8 @@
 
 
 <h1 id="certificate-handoff-address-control-procedure">Certificate handoff address-control procedure<a class="headerlink" href="#certificate-handoff-address-control-procedure" title="Permanent link">&para;</a></h1>
-<p>This procedure defines a trusted-host acceptance path for certificate address handoff on an ISO-installed appliance.
+<p>This procedure defines a trusted-host acceptance path for certificate address handoff on an ISO-installed or originally
+imported OVA appliance.
 It uses one task-owned Workstation appliance and one task-owned Linux peer attached to the same dedicated private LAN
 segment. The maintainer trusts the Windows Workstation host administrator to account for that host's VMs and to avoid
 changing the test topology during acceptance. The evidence supports a controlled lab result; it is not proof against
@@ -4616,6 +4695,209 @@ reservation invalidates the run.</p>
 <p>The acceptance cases below cover the existing fixture: one dedicated IPv4 management interface, <code>eth0</code>, with IPv6
 disabled and an explicitly configured static baseline. They do not establish Access-management acceptance for #852 or
 support for other interface roles or address families.</p>
+<h2 id="dual-stack-contract-preparation">Dual-stack contract preparation<a class="headerlink" href="#dual-stack-contract-preparation" title="Permanent link">&para;</a></h2>
+<p>The pure <code>scripts/interop/certificate_dual_stack_contract.py</code> helpers describe expected reciprocal IPv4/IPv6 static
+transitions and validate normalized fixture inputs. They reject duplicate or out-of-prefix addresses, uncertain
+interface/MAC ownership, unusable links, tentative or DAD-failed IPv6 state, and unusable address lifetimes. The inputs
+are not raw native observations: a <code>source=static</code> field does not authenticate its producer or establish provenance.
+Numeric TLS endpoint planning keeps IPv6 URI brackets separate from the IP-SAN verification name. Bounded listener
+endpoint parsing preserves wildcard, mapped-IPv4, and link-local scope facts; it does not establish native absence,
+TCP nonacceptance, TLS verification, or complete inventory coverage.</p>
+<p>These helpers perform no transport, Apply, restoration, or VM operation and emit no execution or acceptance receipt.
+They do not extend the admitted IPv4 procedure below. A dual-stack native procedure still needs original source/boot
+and resource bindings, authenticated native producers, both-family certificate and retirement evidence, supported
+external enforcement, and its own reviewed execution admission. For that future procedure, unknown Apply outcomes or
+lost topology/control prohibit automatic restore submissions; reconcile read-only and re-admit restoration from known
+state first.</p>
+<h3 id="console-driver-components">Console driver components<a class="headerlink" href="#console-driver-components" title="Permanent link">&para;</a></h3>
+<p>The separate <code>certificate_dual_stack_guest.py</code>, <code>certificate_dual_stack_ui.py</code>,
+<code>certificate_dual_stack_channel.py</code>, and <code>certificate_dual_stack_inventory.py</code> modules prepare a console-only,
+test-only driver. They do not provide an admitted end-to-end native command or extend the IPv4 acceptance fixture.</p>
+<ul>
+<li>Native readback retains complete link and address inventories, both families' routes from every table, both
+  rule inventories, and numeric TCP listeners. A failed producer, malformed row, changed boot, duplicate target
+  address, or uncertain address flag refuses interpretation. Normalized static consistency is distinct from
+  assignment provenance; preserve the complete original observations alongside it.</li>
+<li>Numeric TLS connections verify the original CA, numeric IP SAN and independently observed console leaf, with no
+  DNS, proxy, redirect or insecure fallback. A peer TCP refusal remains an observation requiring separate complete
+  native absence and positive-path evidence; a timeout is unknown.</li>
+<li>Desired interface Save and the full server-expanded protected Apply use the existing normal UI endpoints.
+  The review retains the five protected roots and the complete Traffic Publishing row when the server selects it
+  as a required dependency. Traffic Publishing stays outside the explicit root list. The controller reviews the
+  expanded scope and acknowledges the durable public intent before the single POST. The original returned job receipt
+  requires its own durable acknowledgement before any separate status read. The read derives the canonical
+  management Tasks path from the validated original job ID; the server-returned URL remains unchanged in the original
+  receipt and status evidence. Redirects remain refusals. Unknown outcomes never trigger resubmission, cancellation
+  or automatic restoration.</li>
+<li>Public observations use immutable run/stage keys, bounded ASCII JSON chunks and a manifest written last. The
+  host must read matching manifests before and after all chunks, verify exact source/resource/boot bindings and
+  complete action schemas, and sync the original before acknowledging. Native <code>runtimeConfig</code> quoting and
+  absent-key behavior still require a public canary on the admitted VM before use.</li>
+</ul>
+<p>The separate pure <code>certificate_dual_stack_retirement.py</code> helper checks exact retired-host references across every
+supported row of the complete seven-producer payload, including both families and every route table. It handles native
+route <code>from</code> and <code>src</code> forms, independent rule prefix lengths, mapped IPv4, explicit cross-family <code>via</code> objects and
+bounded nested nexthops. Unknown fields, indirect nexthop IDs, encapsulation, NAT, inverted rules and unsupported
+address peers/tunnels refuse interpretation. A wildcard management listener remains unknown. Generic default routes
+and broad connected or policy prefixes are not treated as address ownership merely because they cover the target.
+The detailed link and address producers retain and validate ordinary scalar link metadata, including queue counts,
+MTU limits, offload sizes, hardware identifiers and known IPv6 address generation modes. Unknown topology still
+refuses interpretation; these fields do not establish link readiness or address ownership.</p>
+<p>Its <code>payload_sha256</code> covers canonical <code>public_bytes(payload)</code>, not original command-output bytes; preserve those original
+bytes separately. The summary carries no public-action schema or execution authority. It requires separately admitted
+producer authenticity, owned handoff-route absence, terminal Apply and positive peer-path/TCP nonacceptance evidence.
+No parser result supplies native retirement acceptance or continuous LAN/address enforcement. The existing IPv4
+procedure, public channel and disabled credential adapter are unchanged. The supported forms follow the upstream
+<a href="https://github.com/iproute2/iproute2/blob/main/ip/iproute.c">iproute2 route printer</a> and
+<a href="https://github.com/iproute2/iproute2/blob/main/ip/iprule.c">rule printer</a>; these references do not admit a guest runtime.</p>
+<p>The read-only restoration baseline helper uses the existing Physical Interfaces, DNS Settings, and default Apply
+review pages. It reads those three pages twice, checks that the desired projections agree, and passes a separate
+copy to the caller's synchronous checkpoint. Three final reads check for drift after acknowledgement. The caller
+owns durable storage and the separate admission required for any restoration. The capture uses at most nine GETs.</p>
+<p>The baseline distinguishes nullable values in the original interface row from the empty fields used in the browser
+form. It retains the ordered DNS listen-interface settings and excludes private controls, derived addresses, and the
+server-managed SOA serial from its projections and digests. The digests bind canonical parsed values. Repeated reads
+can detect observed changes between reads. The baseline carries data for the restoration journal and leaves
+runtime readiness, DNS zone and record verification, and write admission to their respective gates.</p>
+<p>The Windows restoration checkpoint journal separates capture intent, durable checkpoint, and successful capture.
+It publishes an exclusive intent before capture and uses the same creation handle for nonreplacing publication.
+After the writer closes, it verifies the final file identity and exact bytes through a retained read pin, then
+synchronizes directory metadata before acknowledgement. The same live controller requires the completed capture
+to return matching baseline data after the final reads. Uncertain attempts retain their files and block replay
+under that receiver. This path has synthetic coverage for the controller and Windows file operations. The
+production entry point refuses until a live controller, receiver, and capture transport are admitted.</p>
+<p>An opt-in synthetic capture can read the intent digest before checkpointing and the checkpoint digest after
+durable publication. Each read is available once on the original controller thread. The journal rechecks the
+retained file identity, exact bytes, current admission and original deadline before returning the digest.
+The callbacks expire when capture returns and are limited to the synthetic journal fixture.</p>
+<p>The private clock fixture freezes one boot-bound performance-counter deadline and one UTC deadline when the
+scope opens. The original intent records both bounds. Every journal check uses the smaller remaining budget
+and permanently refuses that capture if either clock regresses, expires, or fails validation.</p>
+<p>The in-memory Windows encoder is checked byte for byte against the Python GO and ACK frames. This fixture
+qualifies the fixed fields, byte order, and bounds before they are used in a live exchange.</p>
+<p>The in-memory Windows DATA reader checks the CHECKPOINT or COMPLETE header before requesting its body.
+It checks the original budget around every fragment and stops at the declared body length. Its output is
+opaque candidate bytes for a separate canonical DATA check.</p>
+<p>A separate in-memory Windows fixture checks exact JSON spelling, including member order, integer
+tokens, and escapes. Synthetic tests compare it with the Python capture oracle and the existing
+Stage2 checks for field types, original interface binding, and projection digests.
+Stage2 compares exact field names, fixed values, and digests ordinally, so extra characters
+cannot compare equal to an expected value.</p>
+<p>The in-memory public-pattern check first requires canonical JSON, then decodes each property name
+and string value independently. Synthetic fixtures compare its private-key marker and URL userinfo
+checks with the Python capture oracle. The fixture has no session markers or live capture authority.</p>
+<p>A private Stage2 fixture reads a preloaded CHECKPOINT and COMPLETE transcript under the original shared
+clock. The existing journal validates and retains the exact CHECKPOINT before the fixture constructs ACK
+from the original receipt digests. ACK bytes are available to the test after matching COMPLETE,
+end-of-buffer, and final journal checks succeed. The transcript exercises journal ordering and ACK encoding.
+Live peer authentication, delivery, and native EOF require separate proof.</p>
+<p>The fixture can also observe the GO bytes using explicit synthetic launch and process digests.
+It encodes the original clock cap and a fresh validated sample and refuses a wire budget
+that rounds down to zero nanoseconds. The test receives the bytes after the journal succeeds.</p>
+<p>The source-only capture framing sends GO, CHECKPOINT, ACK, and COMPLETE in that order, followed by EOF.
+The endpoints check the original run, nonce, and receipt digests against the expected binding.
+They use the smaller remaining budget from the original raw counter and UTC deadlines. CHECKPOINT carries
+canonical baseline bytes, ACK binds the verified checkpoint receipt digest, and COMPLETE must return the exact
+checkpoint bytes. After EOF those bytes are provisional data. A separate Windows transport must verify the
+original process and both pipe peers, enforce the deadline, and prove natural exit of the entire owned job before
+the controller can accept capture completion.</p>
+<p>The private Windows pipe primitives reserve a single local byte-stream instance, verify the endpoint ACL and
+read the kernel-reported peer PID on each handle. Each overlapped operation retains its buffer and event until
+the operating system reports completion, including after a cancellation request. Closure requires a native
+broken-pipe result after the final byte. The pipe fixture uses both endpoints in one process.</p>
+<p>The private Windows job primitives assign the original child to a job at suspended creation. A separate
+watchdog starts before the controller publishes the suspended child receipt. It can terminate the original job
+while the controller is blocked, although it cannot interrupt that controller call. Natural completion requires
+a successful root exit, an empty original job, and time left on the original counter and UTC deadlines.
+The local synthetic child fixtures exercise this lifecycle. A cross-process fixture exchanges fixed bytes with the
+original job child after suspended ownership publication and verifies both kernel pipe peers. A mismatched peer
+refuses before transfer. This fixture does not use the restoration frame protocol or the checkpoint bridge.</p>
+<p>The credential terminal adapter deliberately refuses until the controller can prove the bounded SDK child has
+stopped before restoring terminal settings. A guest input deadline alone cannot provide that guarantee: remaining
+SDK keystrokes could reach a restored shell. The byte-reader tests exercise synthetic sentinel input only.</p>
+<p>The Windows bounded-process runner has an opt-in quiescence callback for the future controller. It requires a
+named job, original suspended-child ownership publication, and an absolute deadline. The callback runs once after
+whole-job emptiness is proven and handles are disposed. A nonzero exit, timeout, publication interruption, or forced
+descendant termination produces a failed outcome; unproven termination produces no callback. A failed callback is
+never retried. This process observation alone is not a guest stop acknowledgement or permission to restore terminal echo.</p>
+<p>The normal console credential consumer has an opt-in transaction journal using original public plan and concealed-receiver
+receipt digests. Source, runtime, frame, original VM, provider, boot, run and receiver bindings precede its original intent.
+The suspended child's PID, managed start time, native start FILETIME, distinct CIM creation time and named job are durable
+before resume. The child rechecks its original controller and job membership before SDK access. Only the outer job's
+quiescence callback can publish a stop receipt; changed or expired admission produces a failed outcome. Existing receiver
+namespaces and failed or uncertain publications are preserved without replay. Records use the existing atomic durable
+publisher and remain outside the VM removal root.</p>
+<p>These interfaces are source components, not an admitted credential command. The reviewed public receiver producer,
+actually viewed console admission, separate stop acknowledgement and concealed guardian remain required before use.
+No acknowledgement is sent by the journal. The guest terminal adapter still refuses before I/O.</p>
+<p>The separate v2 stop-acknowledgement verifier accepts a bounded canonical ASCII envelope signed with Ed25519.
+Its public key and fingerprint must be admitted independently before credential entry; keys supplied by the channel
+are never adopted. The signature binds the source, original resource and receipt digests, boots, run, receiver,
+exclusive ACK intent, transport key, deadline and whole-job outcome. A signed failed outcome remains a failure.
+This pure verifier has synthetic coverage only: no production signer, one-shot host writer, receiver admission or
+guardian is provided. Existing v1 receipts do not admit this protocol. A valid signature authenticates the host's
+statement; the future signer must separately verify the original journal and actual quiescence. It supplies neither
+terminal-input drainage nor continuous LAN/address enforcement, and cannot release a partially entered credential.</p>
+<p>The host journal module has an explicit v2 admission definition for that future protocol. It requires separate v2
+plan and receiver schemas, the independently pinned raw public key and matching SHA-256, the fixed Ed25519 algorithm,
+and the exact run/receiver transport key. Default v1 admission never upgrades or adopts a v2 record. The consumer CLI
+still uses v1; this module definition enables no signing, ACK transport or credential execution. The journal retains
+the original publisher-returned intent selectors and controller clocks with its process/stop selectors. Closing the
+transaction ends its live authority; surviving records cannot reopen it.</p>
+<p>The module can verify the complete original stop chain only for the same still-open v2 transaction and live controller.
+Admission selectors and source-pin identity are frozen when it opens; only the original outer callback can register
+completion. Copied or reopened transaction objects cannot adopt that completion. Verification reopens the pinned plan,
+receiver and three journal phases, checks original clock and parent/job relationships without querying the exited root,
+and rechecks current source/runtime/frame/VM admission. This is host bookkeeping, not protection from arbitrary code
+executing inside the trusted controller or authenticated guest-producer evidence.</p>
+<p>ACK preparation publishes one exclusive original intent without its own digest. The returned digest enters an unsigned
+statement marked <code>prepared_unsigned_no_ack</code>; no signature or transport write occurs. Failed outcomes stay failed.
+An uncertain publication or later admission loss preserves the original state and blocks retry, including after a run
+identifier changes. A reviewed signer/writer, receiver/guardian and native public-channel qualification remain required.</p>
+<p>Successful preparation now retains the original ACK-intent path/digest, canonical unsigned ASCII text/digest and admitted
+public key privately on that same live transaction. Returned objects are independent projections. Canonical encoding
+sorts keys ordinally, preserves exact integers and booleans, rejects unsupported values and reserves space for the future
+signature within the 3,000-byte wire limit. It does not sign the statement.</p>
+<p><code>New-AtlasoConsoleStopSigningRequest -Transaction</code> accepts only that original open reference. It rechecks the complete
+stop chain and original ACK intent, consumes one request attempt and durably publishes a separate signing intent with
+the exact unsigned text, original controller, receipt chain, key pin and unchanged deadline. Publication uncertainty or
+later drift preserves the original attempt and forbids retry. Its result is <code>prepared_signing_request_no_backend</code>:
+it contains no signature and selects no signing-key provider or transport.</p>
+<p><code>Invoke-AtlasoConsoleStopSigner -Transaction</code> consumes only the same live reference after the request's final checks
+succeed. A published request digest alone cannot authorize it after a failed post-publication check. The method derives
+the committed refusing child and current PowerShell executable internally. Before resuming a fresh suspended root in a
+distinct named job, it durably publishes the original request, controller/root clocks, script/executable hashes and
+unchanged deadline. The child reopens the original plan, receiver, credential stop chain, ACK and signing intents,
+checks its actual process, live parent and distinct job, then refuses the unavailable backend. Its dedicated exit 78
+means admission reached that refusal; exit 77 means admission failed. Neither result is signing success. Only the
+outer whole-job-empty callback after disposal publishes its original signer-stop receipt; unknown results are retained
+without retry. Reading a coherent chain returns data and retained read pins, never the parent's live authority.</p>
+<p>This interface has no SDK access, key selector, signing backend or VM write. Synthetic fixtures exercise real Windows
+jobs and process clocks with explicitly mocked source/VM/provider endpoints; they do not admit the native consumer.
+A separately reviewed runtime and explicit production key admission remain required before backend implementation.</p>
+<p>The separate <code>Atlaso.ConsoleStopSignerAdmission.ps1</code> prepares a host-protocol-3 scope without upgrading those v1/v2
+consumers or the wire-v2 verifier. <code>New-AtlasoConsoleSignerScope</code> binds the original normal-VM context, evidence-directory
+identity and live controller before generating a fresh receiver nonce. Keep that original reference; copied,
+serialized, closed or reconstructed records cannot reopen it. Do not forward its nonce to a legacy consumer.</p>
+<p><code>Read-AtlasoConsoleSignerDescriptor</code> reads bounded public data and retained read pins. Its exact acyclic schema commits
+to original source/resource/controller, runtime and protected-provider evidence, plus an independently admitted public
+key. It contains no plan digest, receiver digest, self digest, private selector or credential. A future receiver3 must
+bind the descriptor digest before a plan3 binds both; neither producer is implemented here.</p>
+<p><code>Open-AtlasoConsoleSignerAdmission</code> verifies that descriptor against the same original scope before atomically claiming
+the nonce. The claim filename depends only on that nonce; run and protocol identities belong inside it. A deterministic
+pending file also consumes an uncertain attempt. Existing claims, publication uncertainty and later refusal preserve
+all files and block retry or replacement, including after close. This serializes cooperating v3 attempts only: v1/v2
+writers do not honor the marker, and exact legacy-path checks cannot lock them. Actual overlap on the same receiver or
+nonce refuses; it requires no unrelated-owner or host-wide pause.</p>
+<p>Production runtime/provider admission always refuses before SDK or secret access. Public descriptor metadata cannot
+supply that missing verifier, codec, production key selector or runtime provenance. Synthetic internal test seams can
+exercise reference lifetime and real file publication but cannot establish native or SDK admission. Closing revokes
+private authority before releasing read pins and preserves the nonce claim. No production SDK-capable object,
+credential dispatch, signer backend or transport is enabled by this stage.</p>
+<p>Remaining execution work includes that controller and credential-stop boundary, original runtime/console admission,
+family-aware route/rule retirement interpretation, peer DNS setup and restoration through the normal UI, and a
+reviewed transaction/restoration journal. No component or synthetic test supplies continuous LAN/address enforcement,
+native completion, or permission to merge while the task's formal gates remain open.</p>
 <h2 id="trusted-host-and-admission">Trusted host and admission<a class="headerlink" href="#trusted-host-and-admission" title="Permanent link">&para;</a></h2>
 <p>The trusted-host boundary is the human maintainer with authority over the Workstation host, its VM inventory, VMX
 files, LAN segment registration, and test task. That maintainer can authorize the test, observe the host state, and
@@ -4768,8 +5050,12 @@ exact original value; the factory never discovers or relabels another task's rec
 </span><span id="__span-1-23"><a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a><span class="p">}</span>
 </span></code></pre></div>
 <p>The three private addresses are the admitted DHCP, static baseline and static candidate. Select an existing separate
-management VMnet; no host network is created or changed. The existing selected public key must be available in the SSH
-agent before creation. No private key or password enters the plan, seed or factory process arguments.</p>
+management VMnet; no host network is created or changed. The peer management VMnet must reach the Alpine package
+repositories during first boot and its configured upstream
+time sources for Chrony. A host-only VMnet without a router cannot provide this access. For an OVA, the peer management
+VMnet can differ from the appliance VMnet recorded in the original isolation receipt. The appliance joins the private
+LAN only after peer admission. The selected public key must be available in the SSH agent before creation.
+No private key or password enters the plan, seed or factory process arguments.</p>
 <p>From the clean reviewed task checkout, first inspect without creating resources:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p">&amp;</span> <span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">create-certificate-peer</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-Mode</span> <span class="n">Plan</span> <span class="n">-Plan</span> <span class="nv">$peerPlan</span> <span class="n">-PythonPath</span> <span class="nv">$nativePython</span>
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="c"># After checking the projection, source and capacity, close the Workstation UI normally.</span>
@@ -5071,7 +5357,7 @@ This case does not establish DHCP-address acceptance.</p>
 <p>Run inspection before execution. Keep the original ISO, appliance, peer, LAN,
 installed source/helper, address evidence, public CA and SSH trust receipts.
 The runner records original public certificate and configuration evidence before
-using <strong>Certificate requests → Revoke certificate → Replace</strong> for this disposable
+using <strong>Certificate requests â†’ Revoke certificate â†’ Replace</strong> for this disposable
 appliance's <code>appliance:https</code> certificate. It then reviews only CA changes and
 requires unchanged Appliance Settings and Public Services to replay after CA.
 Unrelated pending edits or missing dependencies refuse submission.
@@ -5239,6 +5525,39 @@ shared 1Password items, other keys, or unreceipted host credentials as part of l
 the blocking condition. Do not substitute broad provider cleanup or recursive deletion, and do not mark the lab
 cleanup complete while retention or release gates remain unresolved. Branch/worktree completion separately follows
 the <a href="../../contribute/completed-task-cleanup/">completed-task cleanup policy</a>.</p>
+<h2 id="use-an-original-ova-for-the-ordinary-dhcp-baseline">Use an original OVA for the ordinary DHCP baseline<a class="headerlink" href="#use-an-original-ova-for-the-ordinary-dhcp-baseline" title="Permanent link">&para;</a></h2>
+<p>The standalone peer factory accepts <code>"appliance_media": "ova"</code> for the original task-owned OVA import. Supply the
+original <code>appliance_intent</code> and <code>appliance_ownership</code> references, plus <code>appliance_ova_import_readback</code>,
+<code>appliance_ova_isolation</code>, and <code>appliance_ova_boot</code>. Keep the original import phase files in their original ownership
+directory and preserve each related evidence file's basename. The factory checks the original VMware directory,
+all four disk identities, the first-boot VMX identity, the management MAC, and isolation before admitting the peer.
+The selected Ed25519 public key and its SSH-agent counterpart are still required for peer creation and use.</p>
+<p>For the ordinary CA DHCP baseline, carry forward those selectors and add <code>appliance_ova_runtime</code>,
+<code>appliance_ova_deploy_admission</code>, and <code>appliance_ova_remote_wheel</code>. The last field is the absolute guest path of the
+retained wheel from the original deployment. Keep the import, deployed software, and reviewed source commits
+distinct. The baseline rechecks the installed payload and helper through pinned SSH on the admitted private address.</p>
+<p>After the peer factory creates the peer and registers its private LAN, prepare the trusted-host plan with the
+original peer and LAN receipts and confirm fresh host admission. Run
+<code>scripts/windows/vmware/move-ova-to-certificate-lan.ps1</code> from the reviewed checkout. Pass the plan and its SHA-256,
+the checkout commit and branch, the owning PR and imported VM name, the admitted <code>vmrun.exe</code> SHA-256, and the prepared
+Python interpreter.</p>
+<p>For a running OVA, pass <code>-StopRunning</code> so the command records the original VMX before requesting graceful shutdown.
+VMware can replace that file during shutdown. The edit requires every parsed assignment to match the pre-shutdown
+configuration, apart from the Boolean <code>cleanShutdown</code> and <code>softPowerOff</code> fields. The original directory, four disk
+identities and network must match, and the owner pins the stopped VMX by its observed file identity before editing.
+The completion receipt binds the resulting configuration for the first private-LAN boot. With an already stopped
+OVA, the command requires the exact VMX file identity from first boot. A failed or interrupted shutdown claim
+requires reconciliation. The services NIC stays disconnected, and the command leaves the appliance stopped.</p>
+<p>The command writes <code>atlaso-test-vm-ova-private-lan-intent-&lt;invocation&gt;.json</code> and
+<code>atlaso-test-vm-ova-private-lan-complete-&lt;invocation&gt;.json</code> beside the original import receipt. Use their original
+paths and SHA-256 digests as <code>appliance_ova_private_lan_intent</code> and <code>appliance_ova_private_lan</code> in the baseline
+plan. An existing intent consumes the attempt even if completion is missing. Preserve that state for diagnosis.
+After successful readback, start the appliance through the normal lifecycle and recheck the private topology
+before collecting the DHCP baseline. The restart check allows VMware's decimal
+<code>vm.lastPowerRequestTimestamp</code> to change. If an older completion digest includes the timestamp, supply
+<code>appliance_ova_previous_power_request_timestamp</code> as the exact decimal string from retained provider evidence.
+The verifier restores that value in memory and checks the complete original digest. Keep the original VMX and
+receipts intact.</p>
 <h2 id="failure-handling-and-limits">Failure handling and limits<a class="headerlink" href="#failure-handling-and-limits" title="Permanent link">&para;</a></h2>
 <p>If any admission fact is missing, stale, or ambiguous, make no appliance change and preserve the VM, peer, LAN,
 receipts, and evidence for maintainer review. If an Apply result or rollback is uncertain, do not resubmit the
@@ -5256,7 +5575,7 @@ gates pass. Do not restart Apply just to make an abandoned lab eligible for tear
 a supported cleanup capability, or another release gate remains uncertain, record the exact blocked resource, owner,
 reason, and retry condition and preserve it; uncertainty is neither cleanup authorization nor indefinite unrecorded
 retention. A terminal failed run does not waive any branch/worktree completion gate.</p>
-<p>The trusted-host bootstrap and proof wrappers admit the original ISO and peer receipt kinds for the current task and
+<p>The trusted-host bootstrap and proof wrappers admit the original appliance and peer receipt kinds for the current task and
 PR, then repeat inventory, reservation, identity, and trust checks before obtaining guest credentials. The standalone
 peer fixture binds the LAN receipt at its original path under the configured Codex worktree root's <code>lan-segments</code>
 directory. Keep the plan, public CA, and byte-identical copies of its direct receipt inputs under <code>test-results</code>.

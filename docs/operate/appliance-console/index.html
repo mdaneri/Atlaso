@@ -4549,6 +4549,11 @@ run <code>cat /sys/class/graphics/fb0/virtual_size</code> and <code>stty -F /dev
 <p>During the first 30 seconds after startup, a missing interface inventory is shown as
 <strong>Initializing appliance networking...</strong>. If the interface remains missing after that period, the console reports the
 normal actionable error.</p>
+<p>IPv4 acquisition status distinguishes <strong>No carrier</strong>, <strong>Waiting for DHCP</strong>, <strong>APIPA fallback</strong>, and <strong>DHCP lease
+acquired</strong>. A link-local address alone does not prove a usable management listener. The console displays an APIPA setup
+URL only after the applied identity, TLS publication and listener readiness have been verified; expired or withdrawn
+publication receipts do not supply a URL. See <a href="../networking/#set-up-an-appliance-without-dhcp">setup without DHCP</a> for
+peer addressing, the global opt-out and recovery steps.</p>
 <p>A raw VMware VM with no OVF envelope confirms that state through 30 consecutive successful empty VMware Tools reads.
 Atlaso then records non-OVF first-boot completion, logs <strong>No OVF deployment properties supplied; using image
 defaults.</strong>, clears the initialization lock and any stale network-review handshake, and opens the ordinary console.

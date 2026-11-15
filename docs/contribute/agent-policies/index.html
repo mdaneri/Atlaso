@@ -5249,6 +5249,14 @@ preserved with their affected subsystem below. Keep new requirements at their to
 <ul>
 <li>Follow <a href="../agent-workflow/#resource-scoped-vmware-coordination">resource-scoped VMware coordination</a> for shared-resource
   conflicts; use the <a href="../../reference/vmware-workstation-lifecycle-testing/#resource-scoped-coordination">lifecycle examples and guard limitations</a>.</li>
+<li>Reuse the <a href="../../reference/certificate-address-control/#trusted-host-and-admission">trusted-host certificate test procedure</a>
+  for functional Workstation testing within its supported scenario. <a href="https://github.com/mdaneri/Atlaso/pull/1085">PR #1085</a>
+  exercised static IPv4 handoff, DHCP rejection, and restoration with that procedure. Bind the task-owned appliance,
+  peer, and private LAN to their original creation receipts. Verify the VMX adapter assignments, MACs, membership,
+  and address plan before and after each Apply. Preserve evidence and stop on drift.
+  If the task requires independent enforcement, verify a separate control that continuously restricts attachments
+  and address use. The private segment, inventory checks, and address reservations establish bounded observations.
+  Keep the independent-enforcement evidence and merge authority separate from trusted-host test results.</li>
 <li>Canonical image builds and live appliance testing use VMware Workstation. VMware Workstation is installed by default at
   <code>C:\Program Files\VMware\VMware Workstation</code>; use <code>vmrun.exe</code> there with the helpers under <code>scripts/windows/vmware/</code>.</li>
 <li>The Photon OS 5.0 canonical template lives under <code>image/vmware-workstation/</code>. Hyper-V, KVM, and Proxmox VE are
@@ -5986,6 +5994,15 @@ preserved with their affected subsystem below. Keep new requirements at their to
   OVF export requires an explicit proven source VMX; exported product identity, deployed-appliance names, and immutable
   release asset names remain canonical and never inherit a transient pull-request number.</li>
 <li>Validate live appliance readiness through <code>/openapi.json</code>, not VMware Tools IP discovery or service color alone.</li>
+<li>DHCPv4 IPv4LL fallback defaults on through one persisted global setting. Native networkd owns allocation, mandatory
+  conflict checking, retry and withdrawal; never inject addresses or enable no-carrier assignment. Dedicated-management
+  setup admits only complete native assigned-address evidence pinned to the applied MAC and fallback policy. Keep APIPA
+  outside generic service/DNS inventory, restrict its nginx paths and client sources, and retain a link-local forward
+  drop even with the ordinary firewall disabled. A root observer may refresh only the applied management leaf/listeners
+  after CA-root, writer-lock and active-Apply checks, then acknowledge only the verified publication. Preserve applied
+  hostname, ports, destinations, unrelated CA leaves and pending desired intent. Unknown observations age out the public
+  receipt without authorizing retirement; known carrier loss or withdrawal retires only the owned dynamic listener.
+  Native no-DHCP acceptance still requires the VM lifecycle and independent certificate address-control gates.</li>
 <li>The tty1 console service enables privileged systemd helper execution, matching the worker and preserving its
   root-private PowerShell environment for Appliance Settings.</li>
 <li>A successful tty1 management-network correction must explicitly apply Network and Firewall from the corrected state,
