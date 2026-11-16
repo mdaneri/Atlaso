@@ -995,7 +995,7 @@ def test_network_apply_retires_vlan_but_keeps_terminal_source_guard(helper, monk
 
 @pytest.mark.parametrize("protected_finalization", [False, True])
 def test_ordinary_first_upgrade_seeds_and_reconfigures_management_before_exact_guard(
-    helper, monkeypatch, tmp_path, protected_finalization,
+    helper, monkeypatch, tmp_path, capsys, protected_finalization,
 ):
     """Marker-free Management needs table-100 routes before source rules.
 
@@ -1003,12 +1003,13 @@ def test_ordinary_first_upgrade_seeds_and_reconfigures_management_before_exact_g
         helper: Loaded appliance helper module under test.
         monkeypatch: Pytest fixture for replacing helper operations.
         tmp_path: Pytest fixture for the temporary network configuration.
+        capsys: Captures the successful Network helper result.
         protected_finalization: Whether an enclosing handoff retires seeds later.
     """
     config = tmp_path / "network.conf"
     config.write_text("[network]\n", encoding="utf-8")
     events = []
-    state = {"transition_seed_routes": [{"name": "eth0", "table": 100}]}
+    state = {"job_id": "job_ordinary", "phase": "awaiting-commit", "transition_seed_routes": [{"name": "eth0", "table": 100}]}
     monkeypatch.setattr(helper, "_validate_network_config_path", lambda _path: config)
     monkeypatch.setattr(helper, "_network_config_errors", lambda _path: [])
     monkeypatch.setattr(helper, "_network_detection_preflight", lambda _path: None)
@@ -1030,7 +1031,8 @@ def test_ordinary_first_upgrade_seeds_and_reconfigures_management_before_exact_g
                         events.append("reconfigure" if command == ["networkctl", "reconfigure", "eth0"] else "other")
                         or subprocess.CompletedProcess(command, 0, "", ""))
     monkeypatch.setattr(helper, "_apply_vlan_interfaces", lambda *_args, **_kwargs: 0)
-    monkeypatch.setattr(helper, "_wait_network_addresses", lambda *_args, **_kwargs: None)
+    observation = {"complete": True, "links": [{"addresses": [{"source": "IPv4LL", "state": "assigned"}]}]}
+    monkeypatch.setattr(helper, "_wait_network_addresses", lambda *_args, **_kwargs: observation)
     monkeypatch.setattr(helper, "_install_route_domain_intent", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_apply_route_domain_ingress", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_reconcile_route_domains", lambda: None)
@@ -1041,6 +1043,11 @@ def test_ordinary_first_upgrade_seeds_and_reconfigures_management_before_exact_g
     ) == 0
     assert events == (["source-guard", "install"] if protected_finalization else
                       ["seed", "source-guard", "install", "reconfigure", "retire"])
+    result = json.loads(capsys.readouterr().out.splitlines()[-1])
+    if protected_finalization:
+        assert "network_address_evidence" not in result
+    else:
+        assert result["network_address_evidence"] == {"job_id": "job_ordinary", "observation": observation}
 
 
 def test_incomplete_ordinary_network_rollback_keeps_seed_journal(helper, monkeypatch, tmp_path):

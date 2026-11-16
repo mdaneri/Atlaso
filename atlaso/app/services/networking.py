@@ -1344,12 +1344,14 @@ def render_network_config(
     *,
     interfaces: list[PhysicalInterface],
     vlans: list[VlanInterface],
+    ipv4_link_local_fallback_enabled: bool = True,
 ) -> str:
     """Render network config.
 
     Args:
         interfaces: Interfaces consumed by render network config.
         vlans: Vlans consumed by render network config.
+        ipv4_link_local_fallback_enabled: Global fallback choice captured by Network Apply.
 
 
     Returns:
@@ -1379,6 +1381,7 @@ def render_network_config(
                 f"  mode={mode}",
                 f"  access_management_ui_enabled={'true' if interface.access_management_ui_enabled else 'false'}",
                 f"  ipv4_method={normalize_ipv4_method(interface.ipv4_method)}",
+                f"  ipv4_link_local_fallback_enabled={'true' if ipv4_link_local_fallback_enabled else 'false'}",
                 f"  ip_cidr={interface.ip_cidr or ''}",
                 f"  gateway={interface.gateway or ''}",
                 f"  ipv6_enabled={'true' if interface.ipv6_enabled else 'false'}",

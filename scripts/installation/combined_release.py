@@ -16,7 +16,7 @@ from scripts.prepare_virtualization_source import prepare
 from scripts.publish_release import run
 from scripts.verify_installation_iso import verify_release
 
-FIRST_INSTALLATION_VERSION = (0, 9, 501)
+FIRST_INSTALLATION_VERSION = (0, 9, 506)
 VERSION = re.compile(r"v([0-9]+)\.([0-9]+)\.([0-9]+)")
 COMMIT = re.compile(r"[0-9a-f]{40}")
 SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -27,7 +27,11 @@ TRUST_KEY = (
 
 
 def version_key(tag: str) -> tuple[int, ...]:
-    """Read a canonical software release version for numeric comparisons."""
+    """Read a canonical software release version for numeric comparisons.
+
+    Args:
+        tag: Exact software release tag.
+    """
     match = VERSION.fullmatch(tag)
     if not match:
         raise ValueError("expected a software release tag vX.Y.Z")
@@ -35,7 +39,11 @@ def version_key(tag: str) -> tuple[int, ...]:
 
 
 def software_names(tag: str) -> set[str]:
-    """Return the signed software bundle and its three companion assets."""
+    """Return the signed software bundle and its three companion assets.
+
+    Args:
+        tag: Exact software release tag.
+    """
     version = tag[1:]
     return {
         f"atlaso-appliance-{version}.tar.gz",
@@ -54,7 +62,16 @@ def release_assets(
     legacy: bool = False,
     selected_wheel: Path | None = None,
 ) -> str | None:
-    """Authenticate the complete release and return the checksum of the exact ISO."""
+    """Authenticate the complete release and return the checksum of the exact ISO.
+
+    Args:
+        directory: Directory containing the complete asset set.
+        scratch: Private scratch directory for extraction and verification.
+        tag: Exact software release tag.
+        commit: Full SHA of the admitted release commit.
+        legacy: Whether to verify a historical software-only release.
+        selected_wheel: Optional admitted application wheel to compare against the signed bundle.
+    """
     version = tag[1:]
     names = {path.name for path in directory.iterdir()}
     expected = software_names(tag)
@@ -105,7 +122,12 @@ def release_assets(
 
 
 def get_release(repo: str, tag: str) -> dict | None:
-    """Find an exact draft or public release without treating API errors as absence."""
+    """Find an exact draft or public release without treating API errors as absence.
+
+    Args:
+        repo: GitHub repository in owner/name form.
+        tag: Exact software release tag.
+    """
     owner, name = repo.split("/")
     query = """query($owner:String!,$name:String!,$tag:String!){
       repository(owner:$owner,name:$name){release(tagName:$tag){databaseId}}
@@ -141,7 +163,12 @@ def get_release(repo: str, tag: str) -> dict | None:
 
 
 def asset_records(release: dict, tag: str) -> dict:
-    """Admit safe, unique GitHub asset names and their uploaded digests."""
+    """Admit safe, unique GitHub asset names and their uploaded digests.
+
+    Args:
+        release: GitHub's metadata for the selected release.
+        tag: Exact software release tag.
+    """
     allowed = software_names(tag) | {INDEX, INDEX + ".sig", "verify-installation.pyz"}
     iso_pattern = re.compile(
         rf"atlaso-installation-{re.escape(tag[1:])}-x86_64\.iso(?:\.part[0-9]{{4}})?"
@@ -162,7 +189,13 @@ def asset_records(release: dict, tag: str) -> dict:
 
 
 def require_tag(tag: str, commit: str, *, create: bool = False) -> None:
-    """Require an exact tag target and create an annotated tag only for a new draft."""
+    """Require an exact tag target and create an annotated tag only for a new draft.
+
+    Args:
+        tag: Exact software release tag.
+        commit: Full SHA of the admitted release commit.
+        create: Whether an absent release tag may be created.
+    """
     ref = f"refs/tags/{tag}"
     remote = run(["git", "ls-remote", "--tags", "origin", ref, ref + "^{}"]).stdout
     refs = dict(reversed(line.split()) for line in remote.splitlines())
@@ -198,7 +231,17 @@ def download_and_verify(
     scratch: Path,
     wheel: Path | None,
 ) -> tuple[dict, str | None]:
-    """Download one exact asset set and verify both the installer and software."""
+    """Download one exact asset set and verify both the installer and software.
+
+    Args:
+        repo: GitHub repository in owner/name form.
+        tag: Exact software release tag.
+        commit: Full SHA of the admitted release commit.
+        release: GitHub's metadata for the selected release.
+        directory: Absent destination for downloaded release assets.
+        scratch: Absent destination for temporary verification data.
+        wheel: Optional admitted application wheel to compare against the signed bundle.
+    """
     require_tag(tag, commit)
     records = asset_records(release, tag)
     legacy = (
@@ -226,7 +269,12 @@ def download_and_verify(
 
 
 def require_remote_bytes(records: dict, directory: Path) -> None:
-    """Compare the GitHub asset digest and size to every downloaded or staged file."""
+    """Compare the GitHub asset digest and size to every downloaded or staged file.
+
+    Args:
+        records: Expected GitHub asset IDs, sizes, and digests by filename.
+        directory: Directory containing the complete asset set.
+    """
     if set(records) != {path.name for path in directory.iterdir()}:
         raise ValueError("release asset inventory differs")
     for name, (_, size, checksum) in records.items():
@@ -236,7 +284,15 @@ def require_remote_bytes(records: dict, directory: Path) -> None:
 
 
 def stage(repo: str, tag: str, commit: str, directory: Path, scratch: Path) -> str:
-    """Create a single complete hidden draft and verify the uploaded asset set."""
+    """Create a single complete hidden draft and verify the uploaded asset set.
+
+    Args:
+        repo: GitHub repository in owner/name form.
+        tag: Exact software release tag.
+        commit: Full SHA of the admitted release commit.
+        directory: Directory containing the complete asset set.
+        scratch: Absent destination for temporary verification data.
+    """
     if get_release(repo, tag) is not None:
         raise ValueError("release already exists; preserve it and retry verification")
     scratch.mkdir()
@@ -280,7 +336,11 @@ def stage(repo: str, tag: str, commit: str, directory: Path, scratch: Path) -> s
 
 
 def latest_version(repo: str) -> tuple[int, ...]:
-    """Read the highest published software version across all release pages."""
+    """Read the highest published software version across all release pages.
+
+    Args:
+        repo: GitHub repository in owner/name form.
+    """
     tags = run(
         [
             "gh",
@@ -297,7 +357,13 @@ def latest_version(repo: str) -> tuple[int, ...]:
 
 
 def verify_acceptance(repo: str, evidence: str, iso: str) -> None:
-    """Require a same-repository acceptance record that names the approved digest."""
+    """Require a same-repository acceptance record that names the approved digest.
+
+    Args:
+        repo: GitHub repository in owner/name form.
+        evidence: GitHub issue, pull request, or comment URL recording media acceptance.
+        iso: Verified SHA-256 of the complete installer ISO.
+    """
     match = re.fullmatch(
         rf"https://github\.com/{re.escape(repo)}/(issues|pull)/([1-9][0-9]*)(?:#issuecomment-([1-9][0-9]*))?",
         evidence,
@@ -335,7 +401,18 @@ def publish(
     approved: str,
     evidence: str,
 ) -> None:
-    """Publish an approved draft once and verify that GitHub serves the same assets."""
+    """Publish an approved draft once and verify that GitHub serves the same assets.
+
+    Args:
+        repo: GitHub repository in owner/name form.
+        tag: Exact software release tag.
+        commit: Full SHA of the admitted release commit.
+        release: GitHub's metadata for the selected release.
+        records: Expected GitHub asset IDs, sizes, and digests by filename.
+        iso: Verified SHA-256 of the complete installer ISO.
+        approved: ISO SHA-256 supplied by the maintainer.
+        evidence: GitHub issue, pull request, or comment URL recording media acceptance.
+    """
     if approved:
         if iso != approved or not SHA256.fullmatch(approved):
             raise ValueError(
@@ -388,7 +465,13 @@ def publish(
 
 
 def channel_decision(directory: Path, tag: str, commit: str) -> str:
-    """Authenticate the current development pointer and compare exact identities."""
+    """Authenticate the current development pointer and compare exact identities.
+
+    Args:
+        directory: Directory containing the signed development pointer.
+        tag: Exact software release tag.
+        commit: Full SHA of the admitted release commit.
+    """
     manifest = directory / "manifest.json"
     signature = directory / "manifest.json.sig"
     if not manifest.exists() and not signature.exists():

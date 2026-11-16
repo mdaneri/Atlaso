@@ -704,6 +704,7 @@ class ApplianceSettings(Base):
         web_terminal_enabled: Whether web terminal is enabled.
         web_terminal_interfaces_json: Serialized JSON representation of web terminal interfaces.
         root_ssh_enabled: Whether root ssh is enabled.
+        ipv4_link_local_fallback_enabled: Global DHCPv4 link-local fallback opt-out.
         vmware_ceip_enabled: Whether vmware ceip is enabled.
         service_dns_target_naming: Persisted service dns target naming for the appliancesettings
             resource.
@@ -721,6 +722,7 @@ class ApplianceSettings(Base):
     web_terminal_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     web_terminal_interfaces_json: Mapped[str] = mapped_column(Text, default="[]")
     root_ssh_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    ipv4_link_local_fallback_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     vmware_ceip_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     service_dns_target_naming: Mapped[str] = mapped_column(String(20), default="ip")
     browser_session_idle_timeout_minutes: Mapped[int] = mapped_column(Integer, default=30)
@@ -2321,6 +2323,7 @@ class ManagedPackage(Base):
         source_id: Identifier of the associated source.
         policy: Persisted policy for the managedpackage resource.
         target_version: Persisted target version for the managedpackage resource.
+        atlaso_default_version: Last release pin applied by Atlaso, or empty for operator-managed versions.
         enabled: Whether the resource is enabled.
         created_at: UTC timestamp when the resource was created.
         updated_at: UTC timestamp when the resource was last updated.
@@ -2335,6 +2338,7 @@ class ManagedPackage(Base):
     source_id: Mapped[int | None] = mapped_column(ForeignKey("update_sources.id"), nullable=True, index=True)
     policy: Mapped[str] = mapped_column(String(40), default="pinned")
     target_version: Mapped[str] = mapped_column(String(120), default="")
+    atlaso_default_version: Mapped[str] = mapped_column(String(120), default="", server_default="")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

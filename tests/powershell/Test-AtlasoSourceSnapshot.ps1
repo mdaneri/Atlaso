@@ -435,7 +435,10 @@ $inspectorFiles = @(
     'scripts/interop/create_photon_kickstart_iso.py',
     'scripts/installation/vnc_console.py', 'scripts/installation/vnc_frame.py',
     'scripts/interop/certificate_fixture_init.py', 'scripts/interop/certificate_peer_time.py',
-    'scripts/interop/time_source_guest.py'
+    'scripts/interop/time_source_guest.py', 'scripts/interop/certificate_ova_identity.py',
+    'scripts/interop/certificate_peer_factory.py', 'scripts/interop/certificate_peer_factory_config.py',
+    'scripts/interop/routing_deployment_inspection.py', 'scripts/virtualization/inspect_workstation_ova_disks.py',
+    'scripts/virtualization/validate_ova.py'
 )
 foreach ($relative in $inspectorFiles) {
     $path = Join-Path $inspectorRepository $relative

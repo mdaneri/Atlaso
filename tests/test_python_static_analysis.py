@@ -120,7 +120,7 @@ def test_static_analysis_configuration_is_pinned_and_scoped() -> None:
         .splitlines()
     )
 
-    assert analyzer_requirements == {"ruff==0.17.3", "mypy==2.4.1"}
+    assert analyzer_requirements == {"ruff==0.17.4", "mypy==2.4.1"}
     assert project["tool"]["ruff"] == {
         "target-version": "py314",
         "per-file-target-version": {"atlaso/app/services/vcf_lab_remote.py": "py310"},
@@ -157,6 +157,15 @@ def test_static_analysis_configuration_is_pinned_and_scoped() -> None:
             "atlaso/app/services/dhcp_pool_verification.py",
             "scripts/interop/dedicated_host_contract.py",
             "scripts/interop/dedicated_host_proof.py",
+            "scripts/interop/certificate_dual_stack_contract.py",
+            "scripts/interop/certificate_dual_stack_guest.py",
+            "scripts/interop/certificate_dual_stack_ui.py",
+            "scripts/interop/certificate_dual_stack_channel.py",
+            "scripts/interop/certificate_dual_stack_inventory.py",
+            "scripts/interop/certificate_dual_stack_retirement.py",
+            "scripts/interop/certificate_dual_stack_restore.py",
+            "scripts/interop/certificate_dual_stack_capture_frames.py",
+            "scripts/interop/certificate_dual_stack_stop.py",
             "scripts/interop/certificate_ca_baseline.py",
             "scripts/interop/certificate_iso_deployment.py",
             "scripts/interop/certificate_iso_transport.py",
@@ -220,6 +229,8 @@ def test_static_analysis_configuration_is_pinned_and_scoped() -> None:
             "atlaso/app/services/interface_updates.py",
             "atlaso/app/services/management_bindings.py",
             "atlaso/app/services/network_address_status.py",
+            "atlaso/app/services/dynamic_management.py",
+            "atlaso/dynamic_management.py",
             "atlaso/app/services/physical_interfaces.py",
             "atlaso/app/services/port_forwarding.py",
             "atlaso/app/services/service_dns_defaults.py",

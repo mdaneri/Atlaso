@@ -57,12 +57,12 @@ def _wheel_bytes(version: str, requirements: tuple[str, ...] = _REQUIREMENTS) ->
     return stream.getvalue()
 
 
-def _write_mini_iso(path: Path, requirements: tuple[str, ...] = _REQUIREMENTS) -> tuple[str, str, dict[str, str]]:
+def _write_mini_iso(path: Path, original_wheel: bytes) -> tuple[str, str, dict[str, str]]:
     """Create a real Rock Ridge ISO carrying the original manifest and wheelhouse.
 
     Args:
         path: Pytest-owned destination for the small ISO fixture.
-        requirements: Dependency declarations bound into the original application wheel.
+        original_wheel: Exact signed application wheel bytes embedded in the ISO.
 
     Returns:
         The ISO digest, release-manifest digest, and signed wheelhouse inventory.
@@ -74,7 +74,6 @@ def _write_mini_iso(path: Path, requirements: tuple[str, ...] = _REQUIREMENTS) -
     manifest = json.dumps({
         "content_hashes": {f"wheelhouse/cp314/{dependency_name}": dependency_digest},
     }, sort_keys=True, separators=(",", ":")).encode()
-    original_wheel = _wheel_bytes("1.2.3", requirements)
     source = json.dumps({"application_wheel": "atlaso-1.2.3.whl"}, sort_keys=True).encode()
 
     source_root = path.parent / "iso-source"
@@ -138,7 +137,8 @@ def _producer_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *,
     backup = tmp_path / "original-vmx-backup.bin"
     backup.write_bytes(b"exact original backed-up VMX bytes")
     iso_path = tmp_path / "original.iso"
-    iso_sha256, release_sha256, inventory = _write_mini_iso(iso_path, original_requirements)
+    original_wheel = _wheel_bytes("1.2.3", original_requirements)
+    iso_sha256, release_sha256, inventory = _write_mini_iso(iso_path, original_wheel)
 
     # The existing fixture's public validator result is closure-bound; update it in place.
     deployment_inputs = deployment.deployment_inputs
@@ -146,7 +146,7 @@ def _producer_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *,
     original_expected.update({
         "iso_sha256": iso_sha256,
         "release_manifest_sha256": release_sha256,
-        "wheel_sha256": hashlib.sha256(_wheel_bytes("1.2.3", original_requirements)).hexdigest(),
+        "wheel_sha256": hashlib.sha256(original_wheel).hexdigest(),
     })
     original_assets["iso_sha256"] = iso_sha256
     monkeypatch.setattr(deployment, "deployment_inputs", lambda _path, _sha: (original_expected, original_assets))

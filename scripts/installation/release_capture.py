@@ -34,11 +34,26 @@ class NoRedirect(HTTPRedirectHandler):
     """Keep the read-only credential scoped to the configured storage endpoint."""
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
+        """Refuse redirects before forwarding the capture credential.
+
+        Args:
+            req: Original HTTPS request.
+            fp: Response body stream.
+            code: Redirect HTTP status code.
+            msg: Redirect response message.
+            headers: Redirect response headers.
+            newurl: Redirect destination refused by this handler.
+        """
         raise URLError("capture storage redirects are disabled")
 
 
 def pack(state: Path, archive: Path) -> None:
-    """Export the original completed capture, without its private paths or other state."""
+    """Export the original completed capture, without its private paths or other state.
+
+    Args:
+        state: Directory containing the original native capture plan and receipts.
+        archive: Absent path for the capture archive to create.
+    """
     plan = read(state / "plan.json")
     check_capture(plan, state)
     receipt = state / "capture-inputs.json"
@@ -80,7 +95,14 @@ def pack(state: Path, archive: Path) -> None:
 
 
 def fetch(archive: Path, expected: str, url: str, token: str) -> None:
-    """Download an explicitly pinned capture without logging the URL or credential."""
+    """Download an explicitly pinned capture without logging the URL or credential.
+
+    Args:
+        archive: Absent path for the downloaded capture archive.
+        expected: Pinned SHA-256 of the capture archive.
+        url: Direct HTTPS URL for the private capture.
+        token: Read-only bearer token for the capture endpoint.
+    """
     try:
         parsed = urlsplit(url)
     except ValueError:
@@ -120,7 +142,14 @@ def fetch(archive: Path, expected: str, url: str, token: str) -> None:
 
 
 def admit(archive: Path, output: Path, target: Path, repo_name: str) -> None:
-    """Check the capture origin and source compatibility before bounded extraction."""
+    """Check the capture origin and source compatibility before bounded extraction.
+
+    Args:
+        archive: Path to the capture archive whose SHA-256 has been checked.
+        output: Absent destination for extracted capture files.
+        target: Exact Atlaso source checkout that will consume the capture.
+        repo_name: Repository that produced the admitted capture.
+    """
     with tarfile.open(archive, "r:gz") as source:
         member = source.next()
         if (
@@ -157,7 +186,13 @@ def admit(archive: Path, output: Path, target: Path, repo_name: str) -> None:
 
 
 def check_capacity(inputs: Path, source_iso: Path, *, prepared: bool) -> None:
-    """Admit the pinned boot media and the disk needed before exposing signing material."""
+    """Admit the pinned boot media and the disk needed before exposing signing material.
+
+    Args:
+        inputs: Capture or prepared payload directory to size.
+        source_iso: Path to the downloaded Photon boot media.
+        prepared: Whether inputs already include the prepared installer payload.
+    """
     with source_iso.open("rb") as stream:
         if hashlib.file_digest(stream, "sha512").hexdigest() != SOURCE_ISO_SHA512:
             raise ValueError("Photon source ISO differs from its pinned SHA-512")

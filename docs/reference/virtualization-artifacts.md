@@ -383,11 +383,30 @@ Every helper runs `validate_ova.py` before changing hypervisor state. Validation
 version, payload hashes and roles, fixed capacities, and complete machine topology to agree. An unexpected archive
 member, symbolic link, unsafe path, missing provenance record, or changed payload blocks the import.
 
+For task-owned VMware fixtures, the Windows local-development validator accepts the exact archive size and SHA-256
+from the admitted export receipt. It pins the archive while checking the member layout, manifest, machine topology,
+and provenance. The caller supplies an existing empty task-owned extraction directory. The resulting
+`atlaso-validated-local-ova` record identifies the development archive for a later import admission. The publication
+validator applies the GitHub asset size limit to the archive and its members.
+
 ## Deploy on VMware
 
 Import the OVA directly in VMware Workstation or another compatible VMware OVF deployment environment. Map the first
 NIC to the management network and the second NIC to the services network. Do not change the disk controller, slots, or
 capacities.
+
+For a task-owned local import, the controller can inspect the powered-off VMX using
+`python -m scripts.virtualization.inspect_workstation_ova_disks <absolute-vmx-path>`.
+The inspector checks the four SCSI slots, virtual capacities and distinct local sparse VMDKs
+before first boot. The controller retains the original import and directory receipts and
+verifies network isolation separately.
+
+For an acceptance lab, `scripts/windows/vmware/import-local-atlaso-ova.ps1` takes the original
+local OVA validation receipt and its SHA-256. It pins the archive and writes the intent, process,
+directory, and terminal records outside the VM directory. It then checks the powered-off VMX and
+its four disk backings before recording the original import. A failed import preserves the
+records and any materialized files. Network isolation and first-boot preparation require their
+own verified operations.
 
 VMware deployment continues through OVF-property customization. The first-boot selector retains `open-vm-tools`,
 discards the unused offline QEMU and Hyper-V RPM payloads, and records success before Atlaso services start.

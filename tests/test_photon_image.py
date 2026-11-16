@@ -1148,23 +1148,30 @@ def test_photon_provisioning_management_network_matches_eth0_only():
     assert 'install -d -o atlaso -g atlaso -m 0700 "$ATLASO_STATE/vcfDownloadTool/active-tool/secrets"' in script
 
 
-@pytest.mark.skipif(os.name == "nt", reason="executes the image's POSIX shell renderer")
 @pytest.mark.parametrize("dhcp", ["true", "false"])
-def test_photon_management_lease_retention(dhcp: str) -> None:
+@pytest.mark.parametrize("fallback", ["true", "false"])
+def test_photon_management_lease_retention(dhcp: str, fallback: str) -> None:
     """Execute the image renderer and keep DHCP options out of static networking.
 
     Args:
         dhcp: Whether the image uses dynamic management addressing.
+        fallback: Persisted global IPv4LL fallback policy.
     """
+    shell = shutil.which("sh")
+    if os.name == "nt":
+        shell = str(Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Git/bin/bash.exe")
+    if not shell or not Path(shell).is_file():
+        pytest.skip("A POSIX shell is required for provisioning validation")
     script = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
     renderer = script.split('log_step "configuring final appliance management network"\n', 1)[1]
     renderer = renderer.split(">/etc/systemd/network/00-atlaso-mgmt.network", 1)[0]
     result = subprocess.run(
-        ["sh", "-eu", "-c", renderer],
+        [shell, "-eu", "-c", renderer],
         env={
             **os.environ,
             "ATLASO_MGMT_INTERFACE": "eth0",
             "ATLASO_MGMT_USES_DHCP": dhcp,
+            "ATLASO_IPV4_LINK_LOCAL_FALLBACK_ENABLED": fallback,
             "ATLASO_MGMT_ADDRESS": "192.0.2.10/24",
             "ATLASO_MGMT_GATEWAY": "192.0.2.1",
             "ATLASO_MGMT_DNS": "192.0.2.53",
@@ -1172,17 +1179,37 @@ def test_photon_management_lease_retention(dhcp: str) -> None:
         capture_output=True,
         text=True,
         check=True,
+        timeout=10,
+    )
+    # Networkd permits repeated Route sections; keep both for strict INI parsing.
+    route_blocks = re.split(r"(?m)(?=^\[Route\]$)", result.stdout)
+    unique_routes = "".join(
+        block.replace("[Route]", f"[Route{index}]", 1)
+        for index, block in enumerate(route_blocks[1:])
     )
     parsed = configparser.ConfigParser()
-    parsed.read_string(result.stdout)
+    parsed.read_string(route_blocks[0] + unique_routes)
+    routes = [dict(parsed[section]) for section in parsed.sections() if section.startswith("Route")]
     assert parsed["Match"]["Name"] == "eth0"
     if dhcp == "true":
         assert parsed["Network"]["DHCP"] == "ipv4"
         assert parsed["DHCPv4"].getboolean("SendRelease") is False
         assert parsed["DHCPv4"].getboolean("SendDecline") is True
+        assert parsed["DHCPv4"]["MaxAttempts"] == "infinity"
+        # No applied route-domain watcher exists in the first-boot image. Both
+        # the connected subnet and the default must be usable without RPDB rules.
+        assert parsed["DHCPv4"]["RouteTable"] == "main"
+        assert parsed["IPv6AcceptRA"]["RouteTable"] == "main"
+        assert routes == [
+            {"destination": "0.0.0.0/0", "gateway": "_dhcp4", "gatewayonlink": "yes", "table": "main"},
+            {"destination": "::/0", "gateway": "_ipv6ra", "table": "main"},
+        ]
+        assert parsed["Network"]["LinkLocalAddressing"] == ("yes" if fallback == "true" else "ipv6")
         assert "Address" not in parsed["Network"]
     else:
         assert "DHCPv4" not in parsed
+        assert "IPv6AcceptRA" not in parsed
+        assert routes == []
         assert parsed["Address"]["Address"] == "192.0.2.10/24"
         assert parsed["Address"]["DuplicateAddressDetection"] == "ipv4"
         assert parsed["Network"]["Gateway"] == "192.0.2.1"

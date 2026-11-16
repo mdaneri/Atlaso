@@ -12,13 +12,18 @@ from scripts.installation import assets, combined_release, release_capture
 from scripts.installation.manifest import digest, inventory
 
 REPO = "mdaneri/Atlaso"
-TAG = "v0.9.501"
+TAG = "v0.9.506"
 COMMIT = "a" * 40
 EVIDENCE = f"https://github.com/{REPO}/issues/542#issuecomment-123"
 
 
 def write_software(directory, tag):
-    """Stage the four named software files and the signed notice digest fixture."""
+    """Stage the four named software files and the signed notice digest fixture.
+
+    Args:
+        directory: Directory to populate with fixture software assets.
+        tag: Exact software release tag.
+    """
     version = tag[1:]
     notice = directory / f"atlaso-third-party-notices-{version}.md"
     notice.write_bytes(b"notices")
@@ -35,13 +40,20 @@ def write_software(directory, tag):
 def test_combined_release_verifies_the_exact_iso_and_software(
     tmp_path, monkeypatch, split
 ):
+    """Combined release verifies the exact iso and software.
+
+    Args:
+        tmp_path: Pytest fixture providing an isolated directory.
+        monkeypatch: Pytest fixture for substituting external dependencies.
+        split: Whether the fixture ISO spans multiple numbered parts.
+    """
     directory = tmp_path / "release"
     directory.mkdir()
     scratch = tmp_path / "scratch"
     scratch.mkdir()
     manifest = write_software(directory, TAG)
     monkeypatch.setattr(combined_release, "prepare", lambda **kwargs: {})
-    iso = tmp_path / "atlaso-installation-0.9.501-x86_64.iso"
+    iso = tmp_path / "atlaso-installation-0.9.506-x86_64.iso"
     iso.write_bytes(b"exact installer")
     if split:
         monkeypatch.setattr(assets, "GITHUB_ASSET_LIMIT", 8)
@@ -75,11 +87,17 @@ def test_combined_release_verifies_the_exact_iso_and_software(
 
 
 def test_published_software_only_is_eligible_before_the_cutover(tmp_path, monkeypatch):
+    """Published software only is eligible before the cutover.
+
+    Args:
+        tmp_path: Pytest fixture providing an isolated directory.
+        monkeypatch: Pytest fixture for substituting external dependencies.
+    """
     monkeypatch.setattr(combined_release, "prepare", lambda **kwargs: {})
-    write_software(tmp_path, "v0.9.500")
+    write_software(tmp_path, "v0.9.505")
     assert (
         combined_release.release_assets(
-            tmp_path, tmp_path, "v0.9.500", COMMIT, legacy=True
+            tmp_path, tmp_path, "v0.9.505", COMMIT, legacy=True
         )
         is None
     )
@@ -93,6 +111,12 @@ def test_published_software_only_is_eligible_before_the_cutover(tmp_path, monkey
 def test_partial_draft_stops_before_downloading_or_replacing_assets(
     tmp_path, monkeypatch
 ):
+    """Partial draft stops before downloading or replacing assets.
+
+    Args:
+        tmp_path: Pytest fixture providing an isolated directory.
+        monkeypatch: Pytest fixture for substituting external dependencies.
+    """
     monkeypatch.setattr(combined_release, "require_tag", lambda *args: None)
     monkeypatch.setattr(
         combined_release,
@@ -113,11 +137,18 @@ def test_partial_draft_stops_before_downloading_or_replacing_assets(
 
 
 @pytest.mark.parametrize(
-    ("highest", "latest"), [((0, 9, 500), "true"), ((0, 9, 502), "false")]
+    ("highest", "latest"), [((0, 9, 505), "true"), ((0, 9, 507), "false")]
 )
 def test_publish_checks_exact_approval_and_order_and_is_idempotent(
     monkeypatch, highest, latest
 ):
+    """Publish checks exact approval and order and is idempotent.
+
+    Args:
+        monkeypatch: Pytest fixture for substituting external dependencies.
+        highest: Highest software version already published.
+        latest: Expected make_latest value in the GitHub publication request.
+    """
     iso = "b" * 64
     state = {
         "id": 42,
@@ -129,6 +160,12 @@ def test_publish_checks_exact_approval_and_order_and_is_idempotent(
     requests = []
 
     def gh(command, **kwargs):
+        """Return GitHub responses and record the publication request.
+
+        Args:
+            command: GitHub CLI arguments issued by the publication helper.
+            **kwargs: Optional subprocess inputs, including the publication request body.
+        """
         if command[-1].endswith("/issues/comments/123"):
             record = {
                 "issue_url": f"https://api.github.com/repos/{REPO}/issues/542",
@@ -166,6 +203,12 @@ def test_publish_checks_exact_approval_and_order_and_is_idempotent(
 def test_development_pointer_never_goes_backward_or_switches_commit(
     tmp_path, monkeypatch
 ):
+    """Development pointer never goes backward or switches commit.
+
+    Args:
+        tmp_path: Pytest fixture providing an isolated directory.
+        monkeypatch: Pytest fixture for substituting external dependencies.
+    """
     assert combined_release.channel_decision(tmp_path, TAG, COMMIT) == "advance"
     (tmp_path / "manifest.json").touch()
     (tmp_path / "manifest.json.sig").touch()
@@ -174,12 +217,12 @@ def test_development_pointer_never_goes_backward_or_switches_commit(
         "signature_document",
         lambda data: {"key_id": combined_release.TRUST_KEY.stem},
     )
-    current = {"channel": "development", "version": "0.9.502", "git_commit": COMMIT}
+    current = {"channel": "development", "version": "0.9.507", "git_commit": COMMIT}
     monkeypatch.setattr(
         combined_release, "verify_signed_json", lambda *args, **kwargs: current
     )
     assert combined_release.channel_decision(tmp_path, TAG, COMMIT) == "skip"
-    current["version"] = "0.9.501"
+    current["version"] = "0.9.506"
     assert combined_release.channel_decision(tmp_path, TAG, COMMIT) == "verify"
     with pytest.raises(ValueError, match="conflicting commit"):
         combined_release.channel_decision(tmp_path, TAG, "b" * 40)
@@ -189,6 +232,13 @@ def test_development_pointer_never_goes_backward_or_switches_commit(
 def test_admit_capture_rejects_incompatible_source_before_extraction(
     tmp_path, monkeypatch, compatibility
 ):
+    """Admit capture rejects incompatible source before extraction.
+
+    Args:
+        tmp_path: Pytest fixture providing an isolated directory.
+        monkeypatch: Pytest fixture for substituting external dependencies.
+        compatibility: Whether the capture fingerprint matches the target source.
+    """
     capture = tmp_path / "original"
     capture.mkdir()
     for name in ("rpms", "powercli"):
@@ -228,6 +278,11 @@ def test_admit_capture_rejects_incompatible_source_before_extraction(
 
 
 def test_evidence_must_bind_the_approved_digest_and_comment_parent(monkeypatch):
+    """Evidence must bind the approved digest and comment parent.
+
+    Args:
+        monkeypatch: Pytest fixture for substituting external dependencies.
+    """
     record = {
         "issue_url": f"https://api.github.com/repos/{REPO}/issues/543",
         "body": "",
@@ -247,6 +302,12 @@ def test_evidence_must_bind_the_approved_digest_and_comment_parent(monkeypatch):
 def test_portable_capture_fingerprint_preserves_existing_native_receipt_contract(
     tmp_path, monkeypatch
 ):
+    """Portable capture fingerprint preserves existing native receipt contract.
+
+    Args:
+        tmp_path: Pytest fixture providing an isolated directory.
+        monkeypatch: Pytest fixture for substituting external dependencies.
+    """
     from scripts.installation import build, refresh
 
     fingerprint_paths = [

@@ -1453,6 +1453,14 @@ def restore_settings_archive(db: Session, archive: dict[str, Any]) -> dict[str, 
             if isinstance(rows, list) and all(isinstance(row, dict) for row in rows):
                 prepared_data[key] = _canonical_network_role_rows(rows)
     _validate_archive(prepared_archive)
+    # Older archives predate the global choice. They must not silently undo an
+    # administrator's explicit opt-out on the appliance receiving the restore.
+    appliance_rows = prepared_archive["data"]["appliance_settings"]
+    current_appliance = db.scalar(select(ApplianceSettings))
+    if "ipv4_link_local_fallback_enabled" not in appliance_rows[0]:
+        appliance_rows[0]["ipv4_link_local_fallback_enabled"] = (
+            current_appliance.ipv4_link_local_fallback_enabled is not False if current_appliance else True
+        )
     _validate_archive_database_relationships(db, prepared_archive["data"])
     from atlaso.app.services.network_boot import lock_esxi_host_reference_lifecycle
     lock_esxi_host_reference_lifecycle(db)
@@ -4714,6 +4722,8 @@ def _restore_managed_packages(db: Session, rows: list[dict[str, Any]]) -> int:
     }
     for row in rows:
         payload = _model_kwargs(ManagedPackage, row, exclude={"source_id"})
+        # Older archives do not record which pins came from Atlaso.
+        payload["atlaso_default_version"] = payload.get("atlaso_default_version") or ""
         payload["source_id"] = sources.get((str(row.get("source_kind") or ""), str(row.get("source_name") or "")))
         db.add(ManagedPackage(**payload))
     db.flush()

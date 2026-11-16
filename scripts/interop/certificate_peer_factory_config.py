@@ -18,12 +18,8 @@ _MAC = re.compile(r"(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}\Z")
 _SEGMENT_ID = re.compile(r"52(?: [0-9a-f]{2}){7}-[0-9a-f]{2}(?: [0-9a-f]{2}){7}\Z")
 _MANAGEMENT_VMNET = re.compile(r"vmnet[1-9][0-9]*\Z")
 
-_REFERENCE_KEYS = (
-    "appliance_intent",
-    "appliance_ownership",
-    "appliance_installed_boot",
-    "peer_source_preparation",
-)
+_REFERENCE_KEYS = ("appliance_intent", "appliance_ownership", "peer_source_preparation")
+OVA_BOOT_REFERENCES = ("appliance_ova_import_readback", "appliance_ova_isolation", "appliance_ova_boot")
 _SPEC_KEYS = frozenset(
     {
         "schema",
@@ -122,8 +118,13 @@ def validate_spec(spec: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("The peer factory specification must be an object.")
     if any(not isinstance(key, str) for key in spec):
         raise ValueError("Specification field names must be strings.")
-    unexpected = set(spec) - _SPEC_KEYS
-    missing = _SPEC_KEYS - {"collision_suffix"} - set(spec)
+    media = spec.get("appliance_media", "iso")
+    if media not in ("iso", "ova"):
+        raise ValueError("appliance_media must be iso or ova.")
+    references = (*_REFERENCE_KEYS, *(OVA_BOOT_REFERENCES if media == "ova" else ("appliance_installed_boot",)))
+    allowed = _SPEC_KEYS | set(references) | {"appliance_media"}
+    unexpected = set(spec) - allowed
+    missing = allowed - {"collision_suffix", "appliance_media"} - set(spec)
     if unexpected:
         raise ValueError(f"Unexpected specification fields: {', '.join(sorted(unexpected))}.")
     if missing:
@@ -201,7 +202,7 @@ def validate_spec(spec: dict[str, Any]) -> dict[str, Any]:
     ):
         raise ValueError("collision_suffix has an invalid shape.")
 
-    for field in _REFERENCE_KEYS:
+    for field in references:
         reference = result[field]
         if not isinstance(reference, dict) or set(reference) != {"path", "sha256"}:
             raise ValueError(f"{field} must contain exactly path and sha256.")
