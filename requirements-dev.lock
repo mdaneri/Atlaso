@@ -4,7 +4,7 @@
 #
 #    pip-compile --allow-unsafe --build-deps-for=editable --extra=dev --generate-hashes --index-url=https://pypi.org/simple --no-emit-index-url --output-file=requirements-dev.lock --strip-extras --uploaded-prior-to=P7D pyproject.toml
 #
-# atlaso-declarations-sha256: 68e767a4454600f1ef2a41c5631ecae241dabc6b1930d3e0b7b26a372b57081d
+# atlaso-declarations-sha256: a04135e2e25aded78c52e69233914ceb94832c5b2ee84000447d115ceacf0cf6
 annotated-doc==0.0.5 \
     --hash=sha256:117bac03a25ede5df5440e855b32d556049ca169ead221505badf432fed4b101 \
     --hash=sha256:c7e58ce09192557605d8bbd92836d7e1d520ac9580096042c0bfd197efacf1bb
@@ -68,9 +68,9 @@ argon2-cffi-bindings==26.1.0 \
     --hash=sha256:f9c4420a7a864fe1b86ce35befc95b8e39fb852493b81cf798671ddc265de638 \
     --hash=sha256:ffff613aaa9ce6236766e2fc6dc560bb5abde7a2e2416e3db1f9ae395a2b4dd4
     # via argon2-cffi
-authlib==1.9.2 \
-    --hash=sha256:4a39f59fa7b94160859cc447514caf199e133b7ca64a351fb4065bf5006d5a40 \
-    --hash=sha256:83271024b7d3b9992f0d928abd87c5f6e89cfb5aaada294972b860aa807ddafc
+authlib==1.9.5 \
+    --hash=sha256:3f031d5e9b6486089e91e8f7f1b68f36275f3151c66460d650fc90d420545fd7 \
+    --hash=sha256:e32a63e3d869196b61816b2602231862179a2ffc29358c009d1f022c8b86a8b2
     # via atlaso (pyproject.toml)
 bcrypt==5.0.0 \
     --hash=sha256:046ad6db88edb3c5ece4369af997938fb1c19d6a699b9c1b27b0db432faae4c4 \
@@ -701,9 +701,9 @@ joserfc==1.7.4 \
     # via
     #   atlaso (pyproject.toml)
     #   authlib
-markdown==3.11.2 \
-    --hash=sha256:87bf5d90f2d2882e2c02fcda182c2800456b985bff38913867c49706481514b0 \
-    --hash=sha256:f80390747a2a0ff2ba54da074ce4f862f72a6685f608cd2637b646a6d83993f5
+markdown==3.11.3 \
+    --hash=sha256:81eb91631dc97ad1efbc76019ef0f80fe90ca49ddf81546752d79989c3bfff3e \
+    --hash=sha256:e1a31a112232504d753e5c01bb8c2de90d3f0ba986b063e10770cf7695b09e73
     # via
     #   atlaso (pyproject.toml)
     #   pymdown-extensions
@@ -986,9 +986,9 @@ pyjwt==2.13.0 \
     --hash=sha256:41571c89ca91598c79e8ef18a2d07367d4810fbbd6f637794879baf1b7703423 \
     --hash=sha256:66adcc2aff09b3f1bbd95fc1e1577df8ac8723c978552fd43304c8a290ac5728
     # via atlaso (pyproject.toml)
-pymdown-extensions==12.3 \
-    --hash=sha256:345493a8e3497e24382902903a1c43a28e34a52f2b7571a1c9641429b820ca74 \
-    --hash=sha256:a7f2a4e0bc60c6e6babfa7922cfb3b01cd640eb00fb208f3c582e12bae00ea67
+pymdown-extensions==13.0 \
+    --hash=sha256:092524bea4fb3e62891204495de9e56b98603912df167ddd90d4f91bf2cd0414 \
+    --hash=sha256:c68f6e69b14604fb55227735bd0c4c4d3d1d9299a2d1314352190c48aa0d1040
     # via atlaso (pyproject.toml)
 pynacl==1.6.2 \
     --hash=sha256:018494d6d696ae03c7e656e5e74cdfd8ea1326962cc401bcf018f1ed8436811c \
