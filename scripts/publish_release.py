@@ -22,12 +22,13 @@ OVF_NAMESPACE = "http://schemas.dmtf.org/ovf/envelope/1"
 RASD_NAMESPACE = "http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_ResourceAllocationSettingData"
 
 
-def run(command: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
+def run(command: list[str], *, check: bool = True, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
     """Run operation.
 
     Args:
         command: Command and arguments to execute.
         check: Whether a nonzero command status raises an exception.
+        input_text: Optional standard input for the command.
 
 
     Returns:
@@ -36,7 +37,7 @@ def run(command: list[str], *, check: bool = True) -> subprocess.CompletedProces
     Raises:
         SystemExit: If the operation encounters an invalid state.
     """
-    result = subprocess.run(command, cwd=ROOT, check=False, capture_output=True, text=True)
+    result = subprocess.run(command, cwd=ROOT, check=False, capture_output=True, text=True, input=input_text)
     if check and result.returncode != 0:
         raise SystemExit(result.stderr.strip() or result.stdout.strip() or f"{command[0]} failed")
     return result

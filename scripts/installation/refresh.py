@@ -190,11 +190,12 @@ def history(state: Path, plan_sha256: str) -> tuple[dict, dict]:
     return results, starts
 
 
-def source_input_sha256(repository: Path = ROOT) -> str:
+def source_input_sha256(repository: Path = ROOT, *, portable: bool = False) -> str:
     """Fingerprint capture requirements without conflating them with installer source.
 
     Args:
         repository: Trusted Atlaso checkout containing the admitted source files.
+        portable: Normalize text line endings for transfer between Windows and Linux.
     """
     from scripts.installation.build import package_selection
     from scripts.installation.manifest import SOURCE_ISO_SHA512
@@ -204,7 +205,12 @@ def source_input_sha256(repository: Path = ROOT) -> str:
              "image/common/guest-agents/atlaso-qemu-guest-agent.spec", "image/common/guest-agents/qemu-guest-agent.service",
              "scripts/installation/guest_tools.py", "image/vmware-workstation/atlaso-photon.pkr.hcl"]
     paths += sorted(p.relative_to(repository).as_posix() for p in (repository / "image/common/photon-rpm-gpg").iterdir())
-    value = {"files": {p: digest(repository / p) for p in paths},
+    files = {
+        p: hashlib.sha256((repository / p).read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+        if portable else digest(repository / p)
+        for p in paths
+    }
+    value = {"files": files,
              "packages": package_selection(repository), "photon_iso_sha512": SOURCE_ISO_SHA512}
     # Unrelated installer/UI/source edits do not invalidate unchanged captures.
     # New source still re-admits every signature, current identity and complete

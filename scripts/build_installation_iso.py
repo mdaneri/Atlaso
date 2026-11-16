@@ -88,6 +88,7 @@ def main() -> int:
     finalize.add_argument("--source-iso", type=Path, required=True)
     finalize.add_argument("--output", type=Path, required=True, help="Caller-owned empty output directory.")
     finalize.add_argument("--scratch", type=Path, required=True, help="Caller-owned empty validation directory.")
+    finalize.add_argument("--bind-software", action="store_true")
     finalize.add_argument("--signing-key", type=Path, required=True)
     args = parser.parse_args()
     if args.operation == "packages":
@@ -139,6 +140,8 @@ def main() -> int:
             archive.writestr(name, (ROOT / name).read_bytes())
         archive.writestr("__main__.py", (ROOT / "scripts/verify_installation_iso.py").read_bytes())
     index = {"schema": 1, "kind": "atlaso-installation", "architecture": "x86_64", "version": args.version, "source_commit": args.commit, "signing_key_id": KEY_ID, "asset_manifest": assets, "verifier": {"name": verifier.name, "size": verifier.stat().st_size, "sha256": digest(verifier)}, "physical_hardware_acceptance": "pending"}
+    if args.bind_software:
+        index["software_release_manifest_sha256"] = validated["software"]["release_manifest_sha256"]
     write_signed(args.output / "installation-artifact-index.json", index, key)
     print(json.dumps({"version": args.version, "assets": len(assets["assets"]), "physical_hardware_acceptance": "pending"}))
     return 0

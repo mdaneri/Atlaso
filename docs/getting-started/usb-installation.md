@@ -14,8 +14,8 @@ Remove the USB after installation; Atlaso then runs from the internal disk.
 
 USB acceptance is tracked in [#1069](https://github.com/mdaneri/Atlaso/issues/1069). This procedure is being validated;
 it does not yet establish a generally supported hardware installation path. Existing optical-only test images
-must be rebuilt with the USB disk layout. A software release alone is not an installation ISO release. Use only an
-installation release whose notes explicitly identify a USB-capable image and its verification/acceptance results.
+must be rebuilt with the USB disk layout. Use the installation assets on a GitHub Release whose notes record acceptance
+for USB installation on the exact image.
 
 ## What you need
 
