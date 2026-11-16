@@ -4358,17 +4358,20 @@ inputs of an already published signed bundle.</p>
 The workflow requires the retained matching artifact, validates its GitHub run identities and
 embedded build metadata, fails closed on collisions, and records that identity inside the signed appliance bundle. It
 does not rebuild or substitute the application wheel. It retains the exact CPython 3.14 wheelhouse, signing,
-immutable-tag/Release, Pages serialization, automatic <code>development</code> advancement, and live-verification gates. Manual
+immutable-tag/Release, Pages serialization, and live-verification gates. Starting with <code>v0.9.506</code>, each software
+release automatically stages its signed installation ISO and software bundle in one hidden GitHub Release draft.
+The protected maintainer approval dispatch validates the exact ISO digest and acceptance evidence before making the
+release public and advancing <code>development</code>. See the
+<a href="../../reference/installation-iso/#stage-and-publish-a-standard-release">ISO release procedure</a>. Manual
 dispatch with the exact full SHA of a successful <code>main</code> push CI run remains available for idempotent recovery. After
 the 90-day retention window, manually dispatch <strong>Replay Python wheel</strong> from <code>main</code> with the exact commit plus its
 successful source CI run ID
 and attempt. That admission workflow revalidates the evidence and current-<code>main</code> reachability without checking out or
 executing the target, then emits only a one-day canonical replay request. Its completed <code>workflow_run</code> causes the
 read-only <strong>Publish Python wheel</strong> workflow to revalidate the request and publish the replacement handoff. Replay does
-not implicitly advance an older release; use the exact-SHA software-release dispatch for recovery. If the immutable
-software Release already exists, that workflow verifies and reuses its signed
-assets only after the replay wheel matches the bundled wheel byte for byte, preserving the original signed provenance
-for channel recovery. Never rebuild or rename a wheel locally.</p>
+not implicitly advance an older release; use the exact-SHA software-release dispatch for recovery. When a draft or
+public release already exists, the workflow verifies and reuses its signed assets only after the replay wheel matches
+the bundled wheel byte for byte, preserving the original signed provenance for channel recovery.</p>
 <p>Release notice generation identifies each wheel from its top-level <code>.dist-info/METADATA</code> file. Nested metadata for
 vendored distributions, such as Packaging bundled inside setuptools, cannot establish the wheel's identity even when
 the vendored version also appears in the release lock. Missing or ambiguous top-level locked metadata, missing locked
