@@ -1,12 +1,12 @@
 [project]
 name = "atlaso"
-version = "0.9.504"
+version = "0.9.505"
 description = "Atlaso supports POC, lab, and test environments by simplifying deployment, maintenance, and validation."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.14,<3.15"
 dependencies = [
-  "Authlib==1.9.2",
+  "Authlib==1.9.5",
   "argon2-cffi>=23.1.0",
   "cryptography>=42.0.0",
   "fastapi>=0.115.0",
@@ -35,11 +35,11 @@ atlaso-diagnostics = "atlaso.diagnostics:main"
 dev = [
   "httpx>=0.27.2",
   "httpx2>=2.5.0",
-  "markdown==3.11.2",
+  "markdown==3.11.3",
   "markdown-it-py==4.2.0",
   "pre-commit>=4.2.0",
   "pyyaml==6.0.3",
-  "pymdown-extensions==12.3",
+  "pymdown-extensions==13.0",
   "pytest>=8.3.3",
   "pytest-asyncio>=0.24.0",
   "setuptools>=84.1.0",
