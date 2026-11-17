@@ -345,7 +345,6 @@ task with CSRF, live plan revalidation and the existing Tasks history. Existing 
 boundaries remain intact. Focused browser-adapter tests cover review text and unknown-state gating; deployed desktop,
 narrow, keyboard and native provider acceptance remain pending for #1078 and #1080.
 
-
 ## Settings time
 
 `partials/settings_time.html` uses the existing Settings tabs and the DNS non-grid settings and validation pattern.

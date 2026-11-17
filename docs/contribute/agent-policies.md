@@ -1604,8 +1604,8 @@ preserved with their affected subsystem below. Keep new requirements at their to
   upstream choices guarantee local NTS support.
 - General Appliance Settings and Web Terminal autosave own no NTP/NTS fields. Settings Time uses a separate
   revision-bound editor for the canonical NTP row, rejects edits in server mode, and refuses changes during a
-  captured NTP Apply. Enabling or editing Web Terminal must not change upstream NTS flags, NTS server state, `ntp:nts` certificate ownership, rendered NTP configuration, or NTP apply
-  selection.
+  captured NTP Apply. Enabling or editing Web Terminal must not change upstream NTS flags, NTS server state,
+  `ntp:nts` certificate ownership, rendered NTP configuration, or NTP apply selection.
 - The Logs page fixed source set is Atlaso App, KMS, NTPsec, Nginx, DNS, DHCP, TFTP, and Audit Events. DNS, DHCP, and
   TFTP must remain classified views of one allowlisted `dnsmasq.service` journal read, with `dnsmasq-dhcp` and
   `dnsmasq-tftp` lines routed to their protocol tabs and base/service lines routed to DNS. Keep logs read-only and
