@@ -297,16 +297,35 @@ test("NTP health details include effective mode, controller, conflicts, and sync
 });
 
 
-test("rapid Time edits wait for the previous autosave revision", async () => {
+test("queued Time edits retain their revision and controls until the latest save settles", async () => {
   const form = new FakeForm({});
   form.dataset.autosaveSerialize = "";
-  form.revision = "initial";
+  const revision = new FakeElement();
+  revision.value = "initial";
   form.selectedSource = "manual";
   form.getAttribute = () => "/settings/time";
   form.querySelectorAll = () => [];
   form.dispatchEvent = (event) => form.emit(event.type, event);
-  form.addEventListener("atlaso:autosave-success", (event) => { form.revision = event.detail.revision; });
+  const fields = Object.fromEntries([
+    "refresh", "controls", "upstreams", "manual", "owner", "stale", "manual-help",
+    "now", "selected", "mode", "sync", "pending", "detail", "validation",
+  ].map((name) => ["[data-settings-time-" + name + "]", new FakeElement()]));
+  const refresh = fields["[data-settings-time-refresh]"];
+  const controls = fields["[data-settings-time-controls]"];
+  const stale = fields["[data-settings-time-stale]"];
+  refresh.dataset.statusUrl = "/settings/time/status";
+  stale.querySelector = () => new FakeElement();
+  fields["[data-settings-time-validation]"].replaceChildren = () => {};
+  fields["[data-settings-time-edit]"] = form;
+  fields["#settings-time-autosave-status"] = new FakeElement();
+  const panel = {
+    querySelector: (selector) => fields[selector] || null,
+    querySelectorAll: () => [revision],
+  };
+  const tab = new FakeElement();
+  tab.getAttribute = () => "false";
   const writes = [];
+  const reads = [];
   const root = { querySelectorAll: () => [form] };
   const browser = {
     root,
@@ -316,25 +335,36 @@ test("rapid Time edits wait for the previous autosave revision", async () => {
     AbortController,
     URL,
     window: { clearTimeout, setTimeout, location: { href: "https://atlaso.example/" } },
-    document: { getElementById: () => null },
+    document: { getElementById: (id) => ({ "settings-time": panel, "settings-time-tab": tab })[id] || null },
     setAutosaveStatus: () => {},
     updateDerivedListenAddressSummary: () => {},
     FormData: class {
       constructor(submitted) {
-        this.revision = submitted.revision;
-        this.selectedSource = submitted.selectedSource;
+        this.revision = revision.value;
+        this.selectedSource = controls.disabled ? undefined : submitted.selectedSource;
       }
     },
     fetch: (_url, options) => new Promise((respond) => {
+      if (!options.body) {
+        reads.push((value) => respond({ ok: true, json: async () => ({
+          revision: value, server_enabled: false, manual_ready: false, validation_errors: [],
+        }) }));
+        return;
+      }
       writes.push({
         revision: options.body.revision,
         source: options.body.selectedSource,
         signal: options.signal,
-        succeed: (revision) => respond({ ok: true, json: async () => ({ revision }) }),
+        succeed: (value) => respond({ ok: true, json: async () => ({ revision: value }) }),
       });
     }),
   };
-  vm.runInNewContext(functionSource("initializeAutosaveForms") + "\ninitializeAutosaveForms(root);", browser);
+  vm.runInNewContext([
+    functionSource("initializeAutosaveForms"),
+    functionSource("initializeSettingsTime"),
+    "initializeAutosaveForms(root); initializeSettingsTime();",
+  ].join("\n"), browser);
+  refresh.emit("click");
   const first = form.atlasoSaveNow();
   await new Promise(setImmediate);
   form.selectedSource = "ntp_client";
@@ -345,11 +375,29 @@ test("rapid Time edits wait for the previous autosave revision", async () => {
   writes[0].succeed("first");
   assert.equal((await first).valid, true);
   await new Promise(setImmediate);
+  form.selectedSource = "vmware_tools";
+  const third = form.atlasoSaveNow();
+  refresh.emit("click");
+  assert.equal(reads.length, 1);
+  reads[0]("second"); // Already committed on the server, with its POST response still in flight.
+  await new Promise(setImmediate);
+  assert.equal(controls.disabled, false);
+  writes[1].succeed("second");
+  assert.equal((await second).valid, true);
+  await new Promise(setImmediate);
   assert.deepEqual(writes.map(({ revision, source }) => ({ revision, source })), [
     { revision: "initial", source: "manual" },
     { revision: "first", source: "ntp_client" },
+    { revision: "second", source: "vmware_tools" },
   ]);
-  writes[1].succeed("second");
-  assert.equal((await second).valid, true);
-  assert.equal(form.revision, "second");
+  assert.equal(reads.length, 1);
+  writes[2].succeed("third");
+  assert.equal((await third).valid, true);
+  await new Promise(setImmediate);
+  assert.equal(revision.value, "third");
+  assert.equal(reads.length, 2);
+  reads[1]("external-change");
+  await new Promise(setImmediate);
+  assert.equal(controls.disabled, true);
+  assert.equal(stale.hidden, false);
 });

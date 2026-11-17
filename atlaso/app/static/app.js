@@ -8527,6 +8527,8 @@ function initializeSettingsTime() {
   };
   let request;
   const refresh = async () => {
+    // A queued POST can commit before its response advances the form revision.
+    if (form.atlasoAutosavePending?.()) return;
     request?.abort();
     const current = new AbortController();
     request = current;
@@ -8535,7 +8537,7 @@ function initializeSettingsTime() {
       const response = await fetch(refreshButton.dataset.statusUrl, { cache: "no-store", signal: current.signal });
       if (!response.ok) throw new Error("Appliance clock status is unavailable.");
       const status = await response.json();
-      if (request !== current) return;
+      if (request !== current || form.atlasoAutosavePending?.()) return;
       const changed = revisions[0].value !== status.revision;
       const locked = !canEdit || status.server_enabled || changed;
       controls.disabled = locked;
@@ -8561,7 +8563,7 @@ function initializeSettingsTime() {
         return item;
       }));
     } catch (error) {
-      if (error.name === "AbortError" || request !== current) return;
+      if (error.name === "AbortError" || request !== current || form.atlasoAutosavePending?.()) return;
       manual.disabled = true;
       manualHelp.hidden = false;
       set("mode", "Unavailable");
@@ -8574,8 +8576,8 @@ function initializeSettingsTime() {
   };
   form.addEventListener("atlaso:autosave-success", ({ detail }) => {
     revisions.forEach((input) => { input.value = detail.revision; });
-    refresh();
   });
+  form.addEventListener("atlaso:autosave-idle", refresh);
   stale.querySelector("a").addEventListener("click", (event) => {
     event.preventDefault();
     window.location.reload();
@@ -14349,7 +14351,7 @@ function initializeAutosaveForms(root = document) {
     const statusElement = document.getElementById(form.dataset.autosaveStatusId || "");
     const inputAutosave = form.dataset.autosaveTrigger !== "change";
     const serializeSaves = form.dataset.autosaveSerialize !== undefined;
-    let queuedSave = Promise.resolve();
+    let queuedSave = null;
     let timer = 0;
     let inFlightRequest = null;
 
@@ -14504,10 +14506,17 @@ function initializeAutosaveForms(root = document) {
       window.clearTimeout(timer);
       if (!serializeSaves) return send();
       // Read form fields after the preceding success listener updates the revision.
-      const result = queuedSave.then(send);
-      queuedSave = result.catch(() => {});
+      const result = (queuedSave ?? Promise.resolve()).then(send);
+      const settled = result.catch(() => {});
+      queuedSave = settled;
+      settled.then(() => {
+        if (queuedSave !== settled) return;
+        queuedSave = null;
+        form.dispatchEvent(new CustomEvent("atlaso:autosave-idle"));
+      });
       return result;
     };
+    if (serializeSaves) form.atlasoAutosavePending = () => queuedSave !== null;
     form.atlasoSaveNow = save;
 
     const scheduleSave = () => {
