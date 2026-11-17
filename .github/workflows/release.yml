@@ -444,14 +444,66 @@ jobs:
         with:
           name: wheelhouse-cp314
           path: wheelhouses/cp314
+      - name: Install pinned ORAS CLI
+        if: steps.state.outputs.state == 'absent'
+        run: |
+          ORAS_ARCHIVE="$RUNNER_TEMP/oras_1.3.6_linux_amd64.tar.gz"
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+            --output "$ORAS_ARCHIVE" \
+            https://github.com/oras-project/oras/releases/download/v1.3.6/oras_1.3.6_linux_amd64.tar.gz
+          printf '%s  %s\n' '66fb0ad7206f3f6fa77ed5b552049d364ccf4b50b1684554f731f76302b52ca0' \
+            "$ORAS_ARCHIVE" | sha256sum --check
+          mkdir "$RUNNER_TEMP/oras-bin"
+          tar -xzf "$ORAS_ARCHIVE" --directory "$RUNNER_TEMP/oras-bin" oras
+          echo "$RUNNER_TEMP/oras-bin" >> "$GITHUB_PATH"
+      - name: Pull the pinned private installation capture
+        if: steps.state.outputs.state == 'absent'
+        env:
+          INSTALLATION_CAPTURE_DIGEST: ${{ vars.INSTALLATION_CAPTURE_DIGEST }}
+          INSTALLATION_CAPTURE_SHA256: ${{ vars.INSTALLATION_CAPTURE_SHA256 }}
+          INSTALLATION_CAPTURE_USERNAME: ${{ vars.INSTALLATION_CAPTURE_USERNAME }}
+          INSTALLATION_CAPTURE_TOKEN: ${{ secrets.INSTALLATION_CAPTURE_TOKEN }}
+        run: |
+          if ! [[ "$INSTALLATION_CAPTURE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ &&
+                  "$INSTALLATION_CAPTURE_SHA256" =~ ^[0-9a-f]{64}$ &&
+                  -n "$INSTALLATION_CAPTURE_TOKEN" && -n "$INSTALLATION_CAPTURE_USERNAME" ]]; then
+            echo 'Protected installation capture configuration is missing or invalid' >&2
+            exit 1
+          fi
+          CAPTURE_REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/atlaso-installation-capture"
+          CAPTURE_BLOB="sha256:$INSTALLATION_CAPTURE_SHA256"
+          CAPTURE_MANIFEST="$RUNNER_TEMP/capture-manifest.json"
+          if ! printf '%s\n' "$INSTALLATION_CAPTURE_TOKEN" |
+            env -u INSTALLATION_CAPTURE_TOKEN oras manifest fetch --password-stdin \
+              --username "$INSTALLATION_CAPTURE_USERNAME" --output "$CAPTURE_MANIFEST" \
+              "$CAPTURE_REPO@$INSTALLATION_CAPTURE_DIGEST" >/dev/null 2>&1; then
+            echo 'Could not download the pinned GHCR capture manifest' >&2
+            exit 1
+          fi
+          printf '%s  %s\n' "${INSTALLATION_CAPTURE_DIGEST#sha256:}" "$CAPTURE_MANIFEST" | sha256sum --check
+          CAPTURE_LIMIT="$(( $(stat -f -c '%a * %S' "$RUNNER_TEMP") - 2 * 1024**3 ))"
+          jq -e --arg blob "$CAPTURE_BLOB" --argjson limit "$CAPTURE_LIMIT" '
+            .schemaVersion == 2 and
+            .mediaType == "application/vnd.oci.image.manifest.v1+json" and
+            .artifactType == "application/vnd.atlaso.installation.capture.v1" and
+            (.layers | length == 1) and
+            (.layers[0] | .digest == $blob and .mediaType == "application/gzip" and
+              (.size | type == "number" and . > 0 and . <= $limit and . <= 17179869184))
+          ' "$CAPTURE_MANIFEST" >/dev/null
+          if ! printf '%s\n' "$INSTALLATION_CAPTURE_TOKEN" |
+            env -u INSTALLATION_CAPTURE_TOKEN oras blob fetch --password-stdin \
+              --username "$INSTALLATION_CAPTURE_USERNAME" --output "$RUNNER_TEMP/capture.tar.gz" \
+              "$CAPTURE_REPO@$CAPTURE_BLOB" >/dev/null 2>&1; then
+            echo 'Could not download the pinned GHCR capture archive' >&2
+            exit 1
+          fi
       - name: Admit protected native inputs and pinned Photon media
         if: steps.state.outputs.state == 'absent'
         env:
-          INSTALLATION_CAPTURE_URL: ${{ vars.INSTALLATION_CAPTURE_URL }}
           INSTALLATION_CAPTURE_SHA256: ${{ vars.INSTALLATION_CAPTURE_SHA256 }}
-          INSTALLATION_CAPTURE_TOKEN: ${{ secrets.INSTALLATION_CAPTURE_TOKEN }}
         run: |
-          python -m scripts.installation.release_capture fetch --archive "$RUNNER_TEMP/capture.tar.gz" \
+          python -m scripts.installation.release_capture admit --archive "$RUNNER_TEMP/capture.tar.gz" \
+            --sha256 "$INSTALLATION_CAPTURE_SHA256" \
             --output "$RUNNER_TEMP/capture" --target target-source
           rm -- "$RUNNER_TEMP/capture.tar.gz"
           curl --fail --location --proto '=https' --tlsv1.2 --output "$RUNNER_TEMP/photon.iso" \

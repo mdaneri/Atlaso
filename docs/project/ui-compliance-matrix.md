@@ -344,3 +344,11 @@ inventories. Guest integration is observed on demand; installation requires an a
 task with CSRF, live plan revalidation and the existing Tasks history. Existing full-form autosave and Apply
 boundaries remain intact. Focused browser-adapter tests cover review text and unknown-state gating; deployed desktop,
 narrow, keyboard and native provider acceptance remain pending for #1078 and #1080.
+
+## Settings time
+
+`partials/settings_time.html` uses the existing Settings tabs and the DNS non-grid settings and validation pattern.
+`partials/ntp_upstreams.html` and `partials/ntp_source_wizard.html` share the established NTP upstream editor
+and wizard. Server-owned controls remain visible in a disabled state with a link to NTP and NTS. Mutations require
+administrator access and CSRF. The manual target is a separate reviewed Appliance Apply change. The status request
+reads the clock without changing its mode or restarting a service.

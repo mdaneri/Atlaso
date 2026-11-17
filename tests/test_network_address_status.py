@@ -555,6 +555,9 @@ def test_postgresql_startup_adds_address_checks_under_schema_lock(monkeypatch, b
             elif table == "vcf_backup_settings":
                 assert sql == "ALTER TABLE vcf_backup_settings ADD COLUMN trusted_backup_sources VARCHAR(1024) NOT NULL DEFAULT ''"
                 columns[table].append({"name": "trusted_backup_sources"})
+            elif table == "ntp_settings":
+                assert sql == "ALTER TABLE ntp_settings ADD COLUMN IF NOT EXISTS manual_time_utc TIMESTAMP WITH TIME ZONE"
+                columns[table].append({"name": "manual_time_utc"})
             else:
                 assert sql.endswith("BOOLEAN NOT NULL DEFAULT TRUE")
                 columns[table].append({"name": sql.split()[5]})
@@ -568,8 +571,9 @@ def test_postgresql_startup_adds_address_checks_under_schema_lock(monkeypatch, b
     monkeypatch.setattr(database, "_reconcile_default_powercli_pin", lambda _connection: None)
     database._create_database_schema(engine)
     database._create_database_schema(engine)
-    assert len([sql for sql in calls if sql.startswith("ALTER TABLE")]) == (7 if backup_probe_column_exists else 8)
+    assert len([sql for sql in calls if sql.startswith("ALTER TABLE")]) == (8 if backup_probe_column_exists else 9)
     assert {column["name"] for column in columns["vcf_backup_settings"]} == {"id", "trusted_backup_sources"}
+    assert {column["name"] for column in columns["ntp_settings"]} == {"id", "time_source", "manual_time_utc"}
     assert {column["name"] for column in columns["dhcp_settings"]} == {"id", "check_ip_availability"}
     assert {column["name"] for column in columns["routing_rules"]} == {"id", "policy", "ip_family"}
     assert {column["name"] for column in columns["physical_interfaces"]} == {

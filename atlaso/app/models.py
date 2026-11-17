@@ -783,6 +783,7 @@ class NtpSettings(Base):
         id: Unique database identifier for the resource.
         enabled: Whether the resource is enabled.
         time_source: Persisted source mode when NTP server mode is disabled.
+        manual_time_utc: One reviewed clock target, excluded from settings archives.
         hostname: Persisted hostname for the ntpsettings resource.
         listen_interface: Persisted listen interface for the ntpsettings resource.
         listen_address: Persisted listen address for the ntpsettings resource.
@@ -805,6 +806,7 @@ class NtpSettings(Base):
     time_source: Mapped[str] = mapped_column(
         String(32), nullable=False, default="ntp_client", server_default="ntp_client"
     )
+    manual_time_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     hostname: Mapped[str] = mapped_column(String(180), default="ntp.atlaso.internal")
     listen_interface: Mapped[str] = mapped_column(String(240), default="")
     listen_address: Mapped[str] = mapped_column(String(240), default="")

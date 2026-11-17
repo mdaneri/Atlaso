@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import UTC, datetime
 from ipaddress import ip_address, ip_network
 from pathlib import PurePosixPath
 
@@ -94,7 +95,26 @@ NTP_NTS_COOKIE_PATH = "/var/lib/ntp/nts-keys"
 NTP_TIME_SOURCE_NTP_CLIENT = "ntp_client"
 NTP_TIME_SOURCE_VMWARE_TOOLS = "vmware_tools"
 NTP_TIME_MODE_NTP_SERVER = "ntp_server"
-NTP_TIME_SOURCES = frozenset({NTP_TIME_SOURCE_NTP_CLIENT, NTP_TIME_SOURCE_VMWARE_TOOLS})
+NTP_TIME_SOURCE_MANUAL = "manual"
+NTPSEC_CLOCK_MODES = frozenset({NTP_TIME_SOURCE_NTP_CLIENT, NTP_TIME_MODE_NTP_SERVER})
+NTP_TIME_SOURCES = frozenset({NTP_TIME_SOURCE_NTP_CLIENT, NTP_TIME_SOURCE_VMWARE_TOOLS, NTP_TIME_SOURCE_MANUAL})
+
+
+def parse_manual_time_utc(value: str) -> datetime:
+    """Parse the UTC wall-clock target used by the Settings time form.
+
+    Args:
+        value: Date and time from a datetime-local field interpreted as UTC.
+    """
+    if len(value) == 16:
+        value += ":00"
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=UTC)
+    except ValueError as exc:
+        raise ValueError("Enter a UTC date and time with seconds.") from exc
+    if value != parsed.strftime("%Y-%m-%dT%H:%M:%S") or not 2020 <= parsed.year <= 2099:
+        raise ValueError("Enter a UTC date between 2020 and 2099 with seconds.")
+    return parsed
 
 HOSTNAME_PATTERN = re.compile(r"^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 BRACKETED_SOURCE_PATTERN = re.compile(r"^\[([^\]]+)\](?::(\d+))?$")
@@ -375,7 +395,7 @@ def validate_ntp_state(settings: NtpSettings, available_interfaces: set[str]) ->
     errors: list[str] = []
     selected_source = getattr(settings, "time_source", None) or NTP_TIME_SOURCE_NTP_CLIENT
     if selected_source not in NTP_TIME_SOURCES:
-        errors.append("Time source must be ntp_client or vmware_tools.")
+        errors.append("Time source must be ntp_client, vmware_tools, or manual.")
     time_mode = ntp_time_mode(settings)
     hostname = normalize_hostname(settings.hostname)
     if not hostname or not HOSTNAME_PATTERN.fullmatch(hostname):
@@ -463,7 +483,7 @@ def render_ntp_config(settings: NtpSettings) -> str:
         The rendered ntp config.
     """
     time_mode = ntp_time_mode(settings)
-    sources = enabled_ntp_sources(settings) if time_mode != NTP_TIME_SOURCE_VMWARE_TOOLS else []
+    sources = enabled_ntp_sources(settings) if time_mode in NTPSEC_CLOCK_MODES else []
     listen_addresses = split_addresses(settings.listen_address) if time_mode == NTP_TIME_MODE_NTP_SERVER else []
     allow_entries = split_allow_clients(settings.allow_clients) or ["any"]
     lines = [
@@ -476,6 +496,10 @@ def render_ntp_config(settings: NtpSettings) -> str:
         f"# Atlaso NTP client allow list: {', '.join(allow_entries)}",
         f"driftfile {NTP_DRIFT_PATH}",
     ]
+    if time_mode == NTP_TIME_SOURCE_MANUAL and settings.manual_time_utc is not None:
+        target = settings.manual_time_utc
+        target = target.replace(tzinfo=UTC) if target.tzinfo is None else target.astimezone(UTC)
+        lines.append(f"# Atlaso manual UTC target: {target:%Y-%m-%dT%H:%M:%SZ}")
     if time_mode == NTP_TIME_MODE_NTP_SERVER:
         # NTPsec needs the route-selected local socket to reach upstreams.
         # The helper's packet guard restricts service to selected destinations.

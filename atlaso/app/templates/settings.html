@@ -9,6 +9,7 @@
       <button id="settings-general-tab" class="tab-button active" type="button" role="tab" data-tab-target="settings-general" aria-controls="settings-general" aria-selected="true">General</button>
       <button id="settings-access-tab" class="tab-button" type="button" role="tab" data-tab-target="settings-access" aria-controls="settings-access" aria-selected="false">Access &amp; Security</button>
       <button id="settings-hardware-tab" class="tab-button" type="button" role="tab" data-tab-target="settings-hardware" aria-controls="settings-hardware" aria-selected="false">Hardware</button>
+      <button id="settings-time-tab" class="tab-button" type="button" role="tab" data-tab-target="settings-time" aria-controls="settings-time" aria-selected="false">Time</button>
       <button id="settings-logging-tab" class="tab-button" type="button" role="tab" data-tab-target="settings-logging" aria-controls="settings-logging" aria-selected="false">Logging</button>
     </div>
 
@@ -127,6 +128,7 @@
 
       {% include "partials/settings_hardware.html" %}
 
+      {% include "partials/settings_time.html" %}
       <section id="settings-logging" class="tab-panel" role="tabpanel" aria-labelledby="settings-logging-tab" hidden>
         <div class="panel-head compact"><div><h2>Operational Logging</h2><p class="muted">Configure local operational logs and an optional external syslog destination.</p></div>
           <span class="status-pill {{ 'good' if logging_preferences.syslog_enabled else 'muted' }}">{{ "syslog on" if logging_preferences.syslog_enabled else "local file" }}</span>

@@ -1,0 +1,50 @@
+    <div class="section-block ntp-upstreams-section">
+      <div class="panel-head table-head">
+        <div>
+          <h2>Upstream sources <button class="help-icon" type="button" data-help="{% if ntp_nts_supported %}NTPsec time sources used after global appliance apply. Enable NTS per source when the upstream supports Network Time Security; disabled rows stay in desired state but are not rendered.{% else %}NTPsec time sources used after global appliance apply. NTS controls are disabled because the installed ntpd binary does not include NTS support.{% endif %}">i</button></h2>
+        </div>
+      </div>
+      <div
+        id="ntp-upstreams-table"
+        class="tabulator-shell ntp-upstreams-table"
+        data-ntp-upstreams='{{ ntp_settings_json.upstream_sources | tojson }}'
+        data-ntp-nts-supported="{{ 'true' if ntp_nts_supported else 'false' }}"
+        data-ntp-nts-capability-known="{{ 'true' if ntp_nts_capability_known else 'false' }}"
+        data-fallback-id="ntp-upstreams-fallback"
+      ></div>
+      <table id="ntp-upstreams-fallback" class="data-table compact dns-fallback-table">
+        <thead>
+          <tr><th>Source</th><th>NTS</th><th>Enabled</th><th>Description</th></tr>
+        </thead>
+        <tbody>
+          {% set blank_sources = [] if ntp_form_id == "settings-time-form" else [{"source": "", "enabled": false, "use_nts": false, "description": ""}] %}
+          {% for source in ntp_settings_json.upstream_sources + blank_sources %}
+            {% if ntp_form_id == "settings-time-form" %}
+            <tr>
+              <td>{{ source.source }}</td>
+              <td>{{ "Enabled" if source.use_nts else "Disabled" }}</td>
+              <td>{{ "Yes" if source.enabled else "No" }}</td>
+              <td>{{ source.description }}</td>
+            </tr>
+            {% else %}
+            <tr>
+              <td><input class="table-input" name="upstream_source" value="{{ source.source }}" placeholder="time.example.com[:4460]" form="{{ ntp_form_id }}"></td>
+              <td>
+                <label class="inline-check">
+                  <input type="checkbox" name="upstream_use_nts" value="{{ loop.index0 }}"{% if source.use_nts %} checked{% endif %}{% if not ntp_nts_supported %} disabled{% endif %} form="{{ ntp_form_id }}">
+                  <span>NTS</span>
+                </label>
+              </td>
+              <td>
+                <label class="inline-check">
+                  <input type="checkbox" name="upstream_enabled" value="{{ loop.index0 }}" {{ "checked" if source.enabled else "" }} form="{{ ntp_form_id }}">
+                  <span>enabled</span>
+                </label>
+              </td>
+              <td><input class="table-input" name="upstream_description" value="{{ source.description }}" placeholder="optional note" form="{{ ntp_form_id }}"></td>
+            </tr>
+            {% endif %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>

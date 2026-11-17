@@ -1576,8 +1576,13 @@ preserved with their affected subsystem below. Keep new requirements at their to
   server certificate/key and cookie directory without clearing authenticated client sources. The one-time
   `ntp_nts_restoration_v1` reconciliation re-enables and normalizes only canonical Cloudflare and Netnod default rows,
   records a value-free system audit, leaves custom sources unchanged, and never enables NTS server mode.
-- Appliance time synchronization has exactly one controller: VMware Tools periodic synchronization, NTP client, or
-  managed NTP/NTS server. Enabling the server supersedes but preserves the selected client source. Apply and startup
+- Automatic appliance time synchronization has exactly one controller: VMware Tools periodic synchronization,
+  NTP client, or managed NTP/NTS server. Manual mode disables the automatic controllers. Enabling the server
+  supersedes but preserves the selected source. Manual clock targets are separate administrator-authorized and
+  audited NTP Apply changes. Require verified applied Manual mode, inactive and disabled time daemons, and
+  provider-specific evidence against automatic guest clock changes. Halt duplicate or uncertain clock steps with
+  a durable root-owned attempt record. Boot, update, archive restore, and rollback must never replay a manual target.
+  Manual status must never claim automatic synchronization. Apply and startup
   stop and verify competing daemons before enabling the selected controller; boot and VMware Tools restart guards
   retain the applied mode. Missing, replaced, or legacy configuration without proven ownership stops known controllers
   and requires Apply; never adopt vendor configuration. Guards must refuse an unproven ntpd start without synchronously
@@ -1597,9 +1602,10 @@ preserved with their affected subsystem below. Keep new requirements at their to
   normalize saved NTS state off, reject NTS enable attempts, and keep ordinary NTP behavior available. A temporarily
   unknown probe must preserve desired NTS state while blocking unsafe NTP apply. Do not imply that packaged/default
   upstream choices guarantee local NTS support.
-- Appliance Settings and Web Terminal autosave own no NTP/NTS fields. Enabling or editing Web Terminal must not change
-  upstream NTS flags, NTS server state, `ntp:nts` certificate ownership, rendered NTP configuration, or NTP apply
-  selection.
+- General Appliance Settings and Web Terminal autosave own no NTP/NTS fields. Settings Time uses a separate
+  revision-bound editor for the canonical NTP row, rejects edits in server mode, and refuses changes during a
+  captured NTP Apply. Enabling or editing Web Terminal must not change upstream NTS flags, NTS server state,
+  `ntp:nts` certificate ownership, rendered NTP configuration, or NTP apply selection.
 - The Logs page fixed source set is Atlaso App, KMS, NTPsec, Nginx, DNS, DHCP, TFTP, and Audit Events. DNS, DHCP, and
   TFTP must remain classified views of one allowlisted `dnsmasq.service` journal read, with `dnsmasq-dhcp` and
   `dnsmasq-tftp` lines routed to their protocol tabs and base/service lines routed to DNS. Keep logs read-only and

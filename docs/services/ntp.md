@@ -44,13 +44,17 @@ unrelated NTP or DNS binding change. Ambiguous selected sources are not assigned
 
 ## Appliance clock source
 
-When the NTP service is disabled, **Appliance time source** selects one clock authority:
+When the NTP service is disabled, [**Settings → Time**](../operate/appliance-settings.md#configure-appliance-time)
+selects the clock authority:
 
 - **NTP client** is the default. Atlaso uses its configured upstream NTP/NTS sources to discipline the appliance
   clock and disables VMware Tools periodic guest time synchronization.
 - **VMware Tools** uses the hypervisor's guest time synchronization and disables Atlaso's NTP client service.
   This choice is available only when the appliance confirms VMware Tools support. Appliances without VMware Tools
   use NTP client; a restored VMware Tools choice is normalized before Apply.
+- **Manual** disables automatic clock control. After that mode is applied and the absence of automatic clock
+  adjustment is verified, a separate administrator-only Appliance Apply can set one UTC target. A manual clock is
+  shown as unsynchronized.
 
 These sources are mutually exclusive because both can adjust the same system clock. Enabling the NTP service makes the
 managed **NTP/NTS server** the effective clock mode; NTPsec uses the configured upstream sources and Atlaso disables
@@ -138,7 +142,8 @@ missing replies
 even while those synchronization flags remain set. Firewall Apply and service activation replay
 the client-only ingress guard in the same nftables transaction as the firewall rules.
 
-Appliance Settings does not own time enforcement. DNS/DHCP also does not apply NTP configuration.
+**Settings → Time** edits the canonical NTP source settings when server mode is disabled. The NTP unit in global
+Appliance Apply enforces clock ownership and records the result. DNS/DHCP does not apply NTP configuration.
 The configured NTP hostname serves both NTP and NTS; Atlaso creates one managed CNAME with A and AAAA targets for
 the selected listener addresses. Disable NTP to remove those owned records while preserving operator DNS rows.
 Web Terminal enablement and interface autosave are isolated to Appliance Settings and never change NTP/NTS sources,

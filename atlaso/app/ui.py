@@ -2357,7 +2357,7 @@ def ntp_context(db: Session, *, include_runtime_health: bool = False, reconcile:
         elif not ca_certificate_available(db, "ntp:nts"):
             validation_errors.append("NTPsec NTS server mode requires an issued CA-managed server certificate before apply.")
     nts_requested = (settings.enabled and settings.nts_server_enabled) or (
-        ntp_settings_to_dict(settings)["time_mode"] != "vmware_tools" and any(
+        ntp_settings_to_dict(settings)["time_mode"] in {"ntp_client", "ntp_server"} and any(
             bool(source.get("enabled", True)) and bool(source.get("use_nts"))
             for source in ntp_upstream_sources(settings)
         )
@@ -20176,6 +20176,10 @@ def _submit_appliance_apply(
         units = plan["units"]
         unit_map = plan["unit_map"]
         selected_ids = plan["selected_ids"]
+        if "ntpd" in selected_ids:
+            clock = unit_map["ntpd"]["context"]["ntp_settings"]
+            if not clock.enabled and clock.time_source == "manual":
+                require_admin_identity(identity)
         selected_ordered_units = plan["selected_ordered_units"]
         skipped_changed_units = plan["skipped_changed_units"]
         generated_dns_only = plan["generated_dns_only"]
@@ -20756,6 +20760,8 @@ _ntp_ui = build_ntp_ui_router(
         normalize_dns_hostname=lambda *args, **kwargs: normalize_dns_hostname(*args, **kwargs),
         ntp_context=lambda *args, **kwargs: ntp_context(*args, **kwargs),
         ntp_nts_certificate_paths=lambda *args, **kwargs: ntp_nts_certificate_paths(*args, **kwargs),
+        invalidate_appliance_apply_status_projection=invalidate_appliance_apply_status_projection,
+        require_admin_identity=require_admin_identity,
         ntpd_apply_status=lambda *args, **kwargs: ntpd_apply_status(*args, **kwargs),
         ntpd_capabilities_payload=lambda *args, **kwargs: ntpd_capabilities_payload(*args, **kwargs),
         primary_listen_address=lambda *args, **kwargs: primary_listen_address(*args, **kwargs),
@@ -21315,6 +21321,7 @@ _settings_backup_ui = build_settings_backup_ui_router(
             *args, **kwargs
         ),
         factory_reset_staged_credentials_path=FACTORY_RESET_STAGED_CREDENTIALS_PATH,
+        ntp_context=lambda db, **kwargs: ntp_context(db, **kwargs),
         appliance_settings_context=lambda *args, **kwargs: appliance_settings_context(
             *args, **kwargs
         ),
