@@ -1,6 +1,6 @@
 ---
 title: Appliance settings
-description: Configure appliance identity and access, inspect hardware, manage guest tools, and set operational logging.
+description: Configure appliance identity and access, inspect hardware, manage guest tools, configure time, and set operational logging.
 audience:
   - operator
 status: current
@@ -9,7 +9,7 @@ status: current
 # Appliance settings
 
 Open **Settings** and choose the tab for the information or control you need. The page groups settings into **General**,
-**Access & Security**, **Hardware**, and **Logging**. Existing identity, resolver, access, authentication, product
+**Access & Security**, **Hardware**, **Time**, and **Logging**. Existing identity, resolver, access, authentication, product
 preference, and logging forms keep their current save behavior. Appliance changes that affect host services still wait
 for the global Appliance Apply workflow; immediate application settings and explicit maintenance tasks are labeled at
 the point of action.
@@ -38,6 +38,43 @@ The vendor-listener repair persists across release rollback while existing
 maintenance guards keep the front door closed until recovery completes.
 A failed nginx configuration check blocks startup and restores the configuration
 from before cleanup.
+
+## Configure appliance time
+
+Open **Settings → Time** to read the appliance clock in UTC. **Selected source** records the preferred clock source.
+**Applied mode** and **Synchronization** show what the appliance can verify now. **Pending** indicates a change that
+still needs Appliance Apply or an in-progress clock transition. **Unsynchronized** indicates a known mode without
+current synchronization. **Unavailable** means Atlaso could not verify the corresponding state.
+
+For a client-only appliance, set **Clock source** to **NTP client** and keep at least one usable upstream enabled.
+For example, add your organization’s `time.example.com` through the upstream source wizard. Turn on **Use NTS** only
+if the upstream supports NTS and Atlaso trusts its certificate. Select **Review appliance changes**, review the
+**NTP / NTS** unit, and submit. After Apply succeeds, select **Refresh status** and confirm **NTP client** and
+**Synchronized**. Select **VMware Tools** when you want the verified hypervisor clock and the option is available.
+
+To serve clients, enable NTP in [NTP and NTS](../services/ntp.md) and review the change through Appliance Apply.
+**Settings → Time** continues to show clock status, and the editors explain that the NTP service owns the settings.
+Use the service page to change the upstreams while server mode is enabled. Disabling the server there restores the
+remembered clock choice on the next Apply.
+
+### Set the clock manually
+
+An administrator can set an absolute UTC date and time when automatic controllers are off.
+
+1. On VMware, stop and disable the guest's VMware Tools service before applying Manual mode. Tools events can set
+   time even when periodic sync is disabled. QEMU and Hyper-V require the existing guest clock protections.
+2. Select **Manual**, review the **NTP / NTS** unit, and apply the mode. Select **Refresh status**. Atlaso enables
+   manual date and time entry after proving automatic clock adjustments are off.
+3. Enter **Date and time (UTC)** and select **Stage clock change**. Open **Review appliance changes**, inspect the
+   UTC target in the NTP / NTS configuration difference, and submit.
+4. Verify the new time through **Refresh status** and review the result in **Tasks**. Manual mode reports
+   **Unsynchronized** because no automatic source establishes synchronization.
+
+Clock steps can affect currently valid certificates, sessions, scheduled work, and logs. Apply the target during a
+maintenance window, then check those services. If Apply reports an uncertain clock change, check the displayed time
+before you stage a new target. To return to automatic control, select **NTP client** or **VMware Tools** and review
+that change. Manual mode survives a reboot, and Settings archives retain the selected source and upstreams. Atlaso
+does not replay the previously staged UTC target during startup, update reconciliation, or archive restore.
 
 ## Configure authentication lifetimes
 
@@ -218,5 +255,31 @@ These captures show responsive layouts and useful operational states referenced 
 ![Atlaso Settings validation card explaining that the appliance FQDN is invalid.](../assets/screenshots/settings-validation-error-desktop.webp)
 
 *Figure: Appliance Settings validation error for an invalid FQDN.*
+
+### Settings Time tab
+
+![Settings Time tab with a synchronized NTP client and editable clock source and upstreams.](../assets/screenshots/settings-time-client-desktop.webp)
+
+*Figure: The appliance synchronizes with an upstream NTP source and keeps the client settings editable.*
+
+![Responsive Settings Time tab with the synchronized NTP client and upstream source list.](../assets/screenshots/settings-time-client-responsive.webp)
+
+*Figure: The Time tab keeps clock status and upstream sources together on a narrower display.*
+
+![Settings Time tab showing applied Manual mode and the enabled date and time field.](../assets/screenshots/settings-time-manual-desktop.webp)
+
+*Figure: After Manual Apply, the clock remains unsynchronized and the UTC clock change form is available.*
+
+![Responsive Settings Time tab with Manual mode and the UTC clock change form.](../assets/screenshots/settings-time-manual-responsive.webp)
+
+*Figure: Use the UTC date and time field to stage the next clock target for Appliance Apply.*
+
+![Settings Time tab with applied NTP/NTS server mode, disabled editors, and the NTP and NTS link.](../assets/screenshots/settings-time-server-desktop.webp)
+
+*Figure: Use NTP and NTS to edit clock configuration while the appliance serves time to other systems.*
+
+![Responsive Settings Time tab with the NTP service ownership notice and read-only clock controls.](../assets/screenshots/settings-time-server-responsive.webp)
+
+*Figure: Clock status stays visible while the NTP service owns the settings.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->

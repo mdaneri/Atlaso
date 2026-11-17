@@ -19,6 +19,15 @@ CANONICAL_BROWSER_ROOTS = {
 }
 
 CAPTURE_OVERRIDES = {
+    **{
+        f"settings-time-{state}-{layout}": {
+            "source_commit": "6e59ac015f35a56833d0b91c35528feb9cdef14f",
+            "atlaso_version": "0.9.507",
+            "capture_method": "playwright-chromium",
+        }
+        for state in ("client", "manual", "server")
+        for layout in ("desktop", "responsive")
+    },
     # Captured from the dedicated documentation appliance at exact PR source.
     **{
         stem: {
@@ -445,6 +454,42 @@ SPECIAL = {
         "logging",
         "Logging tab in the dedicated documentation appliance at the responsive viewport.",
         "Atlaso Settings Logging tab in the responsive layout.",
+    ),
+    "settings-time-client-desktop": (
+        "/ui/management/settings#settings-time",
+        "time-client",
+        "The appliance synchronizes with an upstream NTP source and keeps the client settings editable.",
+        "Settings Time tab with a synchronized NTP client and editable clock source and upstreams.",
+    ),
+    "settings-time-client-responsive": (
+        "/ui/management/settings#settings-time",
+        "time-client",
+        "The Time tab keeps clock status and upstream sources together on a narrower display.",
+        "Responsive Settings Time tab with the synchronized NTP client and upstream source list.",
+    ),
+    "settings-time-manual-desktop": (
+        "/ui/management/settings#settings-time",
+        "time-manual",
+        "After Manual Apply, the clock remains unsynchronized and the UTC clock change form is available.",
+        "Settings Time tab showing applied Manual mode and the enabled date and time field.",
+    ),
+    "settings-time-manual-responsive": (
+        "/ui/management/settings#settings-time",
+        "time-manual",
+        "Use the UTC date and time field to stage the next clock target for Appliance Apply.",
+        "Responsive Settings Time tab with Manual mode and the UTC clock change form.",
+    ),
+    "settings-time-server-desktop": (
+        "/ui/management/settings#settings-time",
+        "time-server",
+        "Use NTP and NTS to edit clock configuration while the appliance serves time to other systems.",
+        "Settings Time tab with applied NTP/NTS server mode, disabled editors, and the NTP and NTS link.",
+    ),
+    "settings-time-server-responsive": (
+        "/ui/management/settings#settings-time",
+        "time-server",
+        "Clock status stays visible while the NTP service owns the settings.",
+        "Responsive Settings Time tab with the NTP service ownership notice and read-only clock controls.",
     ),
     "settings-guest-tools-ready-desktop": (
         "/ui/management/settings",

@@ -1,0 +1,76 @@
+<section id="settings-time" class="tab-panel" role="tabpanel" aria-labelledby="settings-time-tab" hidden>
+  {% if settings_time_ntp %}
+    {% set ntp_settings = settings_time_ntp.ntp_settings %}
+    {% set ntp_settings_json = settings_time_ntp.ntp_settings_json %}
+    {% set ntp_nts_supported = settings_time_ntp.ntp_nts_supported %}
+    {% set ntp_nts_capability_known = settings_time_ntp.ntp_nts_capability_known %}
+    {% set ntp_form_id = "settings-time-form" %}
+    {% set ntp_form_action = management_ui_path("/settings/time") %}
+    {% set can_edit = identity.has_role("admin") %}
+    {% set locked = ntp_settings.enabled or not can_edit %}
+    {% set modes = {"ntp_client": "NTP client", "ntp_server": "NTP/NTS server", "vmware_tools": "VMware Tools", "manual": "Manual"} %}
+    <div class="panel-head compact">
+      <h2>Appliance clock</h2>
+      <button type="button" class="button secondary compact-button" data-settings-time-refresh data-status-url="{{ management_ui_path('/settings/time/status') }}">Refresh status</button>
+    </div>
+    <div class="settings-list" aria-live="polite">
+      <div><span>Date and time</span><strong data-settings-time-now>{{ settings_time_utc }}</strong></div>
+      <div><span>Selected source</span><strong data-settings-time-selected>{{ modes.get(ntp_settings.time_source, "Unavailable") }}</strong></div>
+      <div><span>Applied mode</span><strong data-settings-time-mode>Unavailable</strong></div>
+      <div><span>Synchronization</span><strong data-settings-time-sync>Unavailable</strong></div>
+      <div><span>Appliance Apply</span><strong data-settings-time-pending>Unavailable</strong></div>
+    </div>
+    <p class="muted" data-settings-time-detail></p>
+    <p class="alert warning" data-settings-time-owner{% if not ntp_settings.enabled %} hidden{% endif %}>
+      The NTP service owns clock configuration while server mode is enabled.
+      <a href="{{ management_ui_path('/ntp') }}">NTP and NTS</a>
+    </p>
+    <p class="alert warning" data-settings-time-stale hidden>Time settings changed. <a href="{{ management_ui_path('/settings') }}#settings-time">Reload Settings</a> to edit the current values.</p>
+    {% if not can_edit %}<p class="muted">Time settings can be edited by an administrator.</p>{% endif %}
+    <form id="{{ ntp_form_id }}" class="form-stack" action="{{ ntp_form_action }}" method="post"
+          data-autosave-form data-autosave-serialize data-autosave-status-id="settings-time-autosave-status" data-settings-time-edit>
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <input type="hidden" name="revision" value="{{ ntp_settings.updated_at.isoformat() }}" data-settings-time-revision>
+      <input type="hidden" name="upstream_sources_json" value='{{ ntp_settings_json.upstream_sources | tojson }}' data-ntp-upstreams-json>
+      <fieldset data-settings-time-controls{% if locked %} disabled{% endif %}>
+        <label>
+          <span class="field-label"><span>Clock source</span><button class="help-icon" type="button" data-help="Choose the clock source for this appliance. The source changes after reviewed Appliance Apply. Manual leaves automatic clock control off.">i</button></span>
+          <select name="time_source">
+            <option value="ntp_client"{% if ntp_settings.time_source == "ntp_client" %} selected{% endif %}>NTP client</option>
+            <option value="vmware_tools"{% if ntp_settings.time_source == "vmware_tools" %} selected{% endif %}{% if not settings_time_ntp.ntp_vmware_tools_available %} disabled{% endif %}>VMware Tools{% if not settings_time_ntp.ntp_vmware_tools_available %} (unavailable){% endif %}</option>
+            <option value="manual"{% if ntp_settings.time_source == "manual" %} selected{% endif %}>Manual</option>
+          </select>
+        </label>
+      </fieldset>
+      {% if can_edit %}<p id="settings-time-autosave-status" class="autosave-status" aria-live="polite">Changes save automatically.</p>{% endif %}
+    </form>
+    <fieldset data-settings-time-upstreams{% if locked %} disabled inert{% endif %}>
+      {% include "partials/ntp_upstreams.html" %}
+    </fieldset>
+    <form class="form-stack" action="{{ management_ui_path('/settings/time/clock') }}" method="post">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <input type="hidden" name="revision" value="{{ ntp_settings.updated_at.isoformat() }}" data-settings-time-revision>
+      <fieldset data-settings-time-manual disabled>
+        <legend>Manual clock change</legend>
+        <label>
+          <span class="field-label"><span>Date and time (UTC)</span><button class="help-icon" type="button" data-help="Enter the absolute UTC time for the appliance, including seconds if needed. This only stages the target for global Apply review.">i</button></span>
+          <input type="datetime-local" name="target_utc" step="1" min="2020-01-01T00:00" max="2099-12-31T23:59:59" required>
+        </label>
+        <button class="button secondary compact-button" type="submit">Stage clock change</button>
+      </fieldset>
+      <p class="muted" data-settings-time-manual-help>Apply Manual mode and verify automatic clock sources are off before staging a clock change.</p>
+    </form>
+    <section class="section-block">
+      <div class="panel-head compact">
+        <h2>Time validation</h2>
+        <a class="button secondary compact-button" href="{{ management_ui_path('/dashboard') }}#appliance-apply-review" data-appliance-apply-open>Review appliance changes</a>
+      </div>
+      <div class="validation-list" data-settings-time-validation role="status">
+        {% for error in settings_time_ntp.ntp_validation_errors %}<div>{{ error }}</div>{% endfor %}
+      </div>
+    </section>
+    {% if can_edit %}{% include "partials/ntp_source_wizard.html" %}{% endif %}
+  {% else %}
+    <p><a href="{{ management_ui_path('/settings') }}#settings-time">Reload Settings</a> to load appliance time controls.</p>
+  {% endif %}
+</section>
