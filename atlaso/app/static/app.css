@@ -4414,6 +4414,17 @@ input[type="checkbox"] {
   gap: 8px;
 }
 
+#settings-time fieldset {
+  border: 0;
+  margin: 0;
+  min-inline-size: 0;
+  padding: 0;
+}
+
+#settings-time fieldset:disabled {
+  opacity: .55;
+}
+
 .scope-choice-fieldset {
   grid-column: 1 / -1;
   min-width: 0;

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -182,7 +183,7 @@ def test_settings_archive_rejects_unknown_time_source(client) -> None:
         archive = export_settings_archive(db, actor="test")
         archive["data"]["ntp_settings"][0]["time_source"] = "host_clock"
 
-        with pytest.raises(ValueError, match="Time source must be ntp_client or vmware_tools"):
+        with pytest.raises(ValueError, match="Time source must be ntp_client, vmware_tools, or manual"):
             restore_settings_archive(db, archive)
 
         assert db.execute(select(NtpSettings)).scalar_one().time_source == "ntp_client"
@@ -254,3 +255,97 @@ def test_rendered_mode_passes_privileged_helper_validation(mode, tmp_path, monke
     config.write_text(render_ntp_config(settings), encoding="utf-8")
     assert helper._ntpd_time_mode(config) == mode
     assert helper._ntpd_config_errors(config) == []
+
+
+def test_manual_mode_keeps_client_sources_and_omits_one_time_target_from_archive() -> None:
+    """Manual keeps source preferences but archives never replay a clock change."""
+    from atlaso.app.services.settings_archive import _model_kwargs, _row_to_dict
+
+    settings = _settings(time_source="manual", manual_time_utc=datetime(2026, 11, 17, 2, 0, tzinfo=UTC))
+    assert validate_ntp_state(settings, set()) == []
+    config = render_ntp_config(settings)
+    assert "# Atlaso time mode: manual" in config
+    assert "# Atlaso manual UTC target: 2026-11-17T02:00:00Z" in config
+    assert "\nserver " not in config
+    archive = _row_to_dict(settings)
+    assert archive["time_source"] == "manual"
+    assert archive["upstream_sources_json"] == settings.upstream_sources_json
+    assert "manual_time_utc" not in archive
+    restored = NtpSettings(**_model_kwargs(NtpSettings, {**archive, "manual_time_utc": "2026-11-17T02:00:00Z"}))
+    assert restored.manual_time_utc is None
+
+
+def test_manual_lifecycle_reconciliation_never_replays_target(monkeypatch):
+    """Only a reviewed candidate can supply the one-time step to the clock transition."""
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    operations = []
+    monkeypatch.setattr(helper, "_ntpd_stop_service", lambda unit: operations.append(unit))
+    monkeypatch.setattr(helper, "_ntpd_set_vmware_timesync", lambda enabled: operations.append(("vmware", enabled)))
+    monkeypatch.setattr(helper, "_ntpd_client_packet_guard", lambda mode: operations.append(("guard", mode)))
+    monkeypatch.setattr(helper, "_ntpd_set_manual_time_once", lambda target: operations.append(("clock step", target)))
+    monkeypatch.setattr(helper, "_ntpd_manual_provider_protected", lambda: True)
+    monkeypatch.setattr(helper, "_ntpd_checkpoint_verified", lambda: operations.append("verified"))
+    monkeypatch.setattr(helper, "_ntpd_retire_nts_material", lambda: operations.append("cleanup"))
+    helper._ntpd_transition("manual")
+    assert operations == [
+        "ntpd.service", "chronyd.service", "systemd-timesyncd.service",
+        ("vmware", False), ("guard", "manual"), "verified", "cleanup",
+    ]
+    operations.clear()
+    helper._ntpd_transition("manual", manual_target=1794880800)
+    assert operations[-3:] == [("clock step", 1794880800), "verified", "cleanup"]
+
+
+def test_manual_clock_target_cannot_be_smuggled_into_automatic_mode(tmp_path) -> None:
+    """Reject conflicting mode markers before any native transition can run."""
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    config = tmp_path / "ntp.conf"
+    config.write_text(
+        "# Atlaso time mode: ntp_client\n# Atlaso manual UTC target: 2026-11-17T02:00:00Z\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="only in Manual"):
+        helper._ntpd_manual_target(config, "ntp_client")
+    assert helper._ntpd_manual_target(config, "manual") == 1794880800
+
+
+def test_manual_clock_native_attempt_is_durable_and_never_retried(tmp_path, monkeypatch):
+    """Refuse a second step after a failed native response and verify the systemd contract."""
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    config = tmp_path / "ntp.conf"
+    receipt = tmp_path / ".atlaso-manual-clock.json"
+    target = 1794880800
+    calls = []
+    monkeypatch.setattr(helper, "NTP_CONFIG_PATH", config)
+    monkeypatch.setattr(helper, "_ntpd_manual_provider_protected", lambda: True)
+    original_lstat = type(receipt).lstat
+
+    def receipt_lstat(path):
+        info = original_lstat(path)
+        if path == receipt:
+            from types import SimpleNamespace
+
+            return SimpleNamespace(st_mode=info.st_mode, st_uid=0, st_nlink=info.st_nlink, st_size=info.st_size)
+        return info
+
+    monkeypatch.setattr(type(receipt), "lstat", receipt_lstat)
+    monkeypatch.setattr(helper, "_fsync_directory", lambda _path: None)
+
+    def refusal(command, *_args):
+        assert receipt.read_text(encoding="utf-8") == '{"complete": false, "target": 1794880800}'
+        calls.append(command)
+        raise RuntimeError("native result unavailable")
+
+    monkeypatch.setattr(helper, "_ntpd_run_checked", refusal)
+    with pytest.raises(RuntimeError, match="native result unavailable"):
+        helper._ntpd_set_manual_time_once(target)
+    with pytest.raises(RuntimeError, match="may already have run"):
+        helper._ntpd_set_manual_time_once(target)
+    assert len(calls) == 1
+    assert calls[0][-5:] == ["SetTime", "xbb", "1794880800000000", "false", "false"]

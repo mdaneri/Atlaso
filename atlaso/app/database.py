@@ -256,15 +256,15 @@ def _reconcile_ntp_time_source_column(connection: Connection) -> None:
         connection: Serialized startup schema transaction.
     """
     columns = {column["name"] for column in inspect(connection).get_columns("ntp_settings")}
-    if "time_source" in columns:
-        return
-    idempotent_column_clause = "IF NOT EXISTS " if connection.dialect.name == "postgresql" else ""
-    connection.execute(
-        text(
-            "ALTER TABLE ntp_settings ADD COLUMN "
-            f"{idempotent_column_clause}time_source VARCHAR(32) NOT NULL DEFAULT 'ntp_client'"
-        )
-    )
+    postgres = connection.dialect.name == "postgresql"
+    clause = "IF NOT EXISTS " if postgres else ""
+    if "time_source" not in columns:
+        connection.execute(text(
+            f"ALTER TABLE ntp_settings ADD COLUMN {clause}time_source VARCHAR(32) NOT NULL DEFAULT 'ntp_client'"
+        ))
+    if "manual_time_utc" not in columns:
+        column_type = "TIMESTAMP WITH TIME ZONE" if postgres else "DATETIME"
+        connection.execute(text(f"ALTER TABLE ntp_settings ADD COLUMN {clause}manual_time_utc {column_type}"))
 
 
 def _reconcile_routing_permission_columns(connection: Connection) -> None:

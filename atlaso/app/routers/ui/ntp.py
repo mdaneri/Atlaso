@@ -3,15 +3,17 @@
 import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from atlaso.app.audit import record_audit
 from atlaso.app.database import get_db
-from atlaso.app.models import utcnow
+from atlaso.app.models import Job, JobStatus, JobStep, NtpSettings, utcnow
 from atlaso.app.security import Identity, require_session_identity
 from atlaso.app.services.dnsmasq import (
     join_servers,
@@ -19,16 +21,84 @@ from atlaso.app.services.dnsmasq import (
     split_interfaces,
     split_servers,
 )
+from atlaso.app.services.network_objects import acquire_network_objects_write_lock
 from atlaso.app.services.ntp import (
     NTP_STAGED_CONFIG_PATH,
+    NTP_TIME_SOURCES,
     dump_ntp_upstream_sources,
     duplicate_ntp_upstream_source,
     join_allow_clients,
+    normalize_ntp_source,
+    ntp_time_mode,
+    ntp_upstream_sources,
+    parse_manual_time_utc,
+    parse_ntp_source,
     split_allow_clients,
 )
 from atlaso.app.ui_routes import MANAGEMENT_UI_ROOT
 
 Endpoint = Callable[..., Any]
+
+
+def _check_ntp_apply_idle(db: Session) -> None:
+    """Refuse time-state writes while a captured NTP Apply can still run."""
+    active = db.scalar(select(Job.id).join(JobStep).where(
+        Job.type == "appliance-apply",
+        Job.status.in_([JobStatus.PENDING.value, JobStatus.RUNNING.value]),
+        JobStep.component_key == "ntpd",
+    ).limit(1))
+    if active is not None:
+        raise HTTPException(409, "Wait for the active NTP appliance Apply task to finish.")
+
+
+def _clock_status(result: Any) -> dict[str, Any]:
+    """Project the bounded native status object without raw probe output."""
+    if result.returncode != 0 or result.dry_run:
+        return {}
+    try:
+        payload = json.loads(result.stdout)
+    except (TypeError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _settings_sources(raw: str, *, prior: list[dict[str, object]], nts_supported: bool) -> list[dict[str, object]]:
+    """Validate complete wizard rows and preserve NTS flags when editing is unavailable."""
+    try:
+        rows = json.loads(raw)
+        if not isinstance(rows, list):
+            raise ValueError
+        existing = {row["id"]: row for row in prior}
+        sources: list[dict[str, object]] = []
+        seen_ids: set[str] = set()
+        for row in rows:
+            row_id = row["id"]
+            if not isinstance(row_id, str) or not row_id or row_id in seen_ids:
+                raise ValueError
+            seen_ids.add(row_id)
+            host = normalize_ntp_source(row["source"])
+            enabled = row["enabled"]
+            use_nts = row["use_nts"]
+            description = row["description"]
+            if not isinstance(enabled, bool) or not isinstance(use_nts, bool) or not isinstance(description, str):
+                raise ValueError
+            if not nts_supported:
+                previous = existing.get(row_id)
+                preserved = previous is not None and previous["source"] == host and bool(previous["use_nts"])
+                if use_nts and not preserved:
+                    raise HTTPException(422, "NTS capability is unavailable for this source.")
+                if previous and previous["use_nts"] and previous["source"] != host:
+                    raise HTTPException(422, "Wait for NTS capability detection before changing this endpoint.")
+                use_nts = preserved
+            if use_nts and parse_ntp_source(host)[2]:
+                raise HTTPException(422, "NTS sources require a DNS hostname.")
+            sources.append({"id": row_id, "source": host, "enabled": enabled, "use_nts": use_nts,
+                            "description": description.strip()})
+    except (TypeError, KeyError, ValueError) as exc:
+        raise HTTPException(422, "Each upstream must have a unique row ID and a valid NTP endpoint.") from exc
+    if duplicate_ntp_upstream_source(sources):
+        raise HTTPException(422, "NTP upstream source names must be unique.")
+    return sources
 
 
 @dataclass(frozen=True)
@@ -41,12 +111,14 @@ class NtpUiDependencies:
     normalize_dns_hostname: Endpoint
     ntp_context: Endpoint
     ntp_nts_certificate_paths: Endpoint
+    invalidate_appliance_apply_status_projection: Endpoint
     ntpd_apply_status: Endpoint
     ntpd_capabilities_payload: Endpoint
     primary_listen_address: Endpoint
     primary_listen_interface: Endpoint
     remove_ntp_nts_certificate_rows: Endpoint
     render: Endpoint
+    require_admin_identity: Endpoint
     require_management_ui_request: Endpoint
     resolve_service_bind_targets: Endpoint
     system_adapter_factory: Endpoint
@@ -145,6 +217,114 @@ def build_router(dependencies: NtpUiDependencies) -> NtpUiRouter:
             }
         )
 
+    def editable_time_settings(db: Session, revision: str) -> NtpSettings:
+        acquire_network_objects_write_lock(db)
+        settings = dependencies.get_ntp_settings_row(db)
+        # Default row creation may commit.
+        acquire_network_objects_write_lock(db)
+        db.refresh(settings)
+        _check_ntp_apply_idle(db)
+        if settings.enabled:
+            raise HTTPException(409, "NTP and NTS owns clock configuration while server mode is enabled.")
+        if settings.updated_at.isoformat() != revision:
+            raise HTTPException(409, "Time settings changed. Reload Settings and review the current values.")
+        return settings
+
+    @router.get("/settings/time/status", response_model=None)
+    def settings_time_status(
+        identity: Identity = Depends(require_session_identity),
+        db: Session = Depends(get_db),
+    ) -> JSONResponse:
+        """Observe wall-clock time and the applied authority without enforcing desired state."""
+        context = dependencies.ntp_context(db, reconcile=False)
+        settings = context["ntp_settings"]
+        apply = dependencies.ntpd_apply_status(db, context)
+        native = _clock_status(dependencies.system_adapter_factory().read_ntpd_status())
+        desired = ntp_time_mode(settings)
+        effective = native.get("mode")
+        synchronization = native.get("synchronization")
+        synchronization = synchronization if isinstance(synchronization, dict) else {}
+        state = synchronization.get("state")
+        pending = bool(apply["changed"]) or (
+            isinstance(effective, str) and effective in NTP_TIME_SOURCES | {"ntp_server"} and effective != desired
+        )
+        transaction = native.get("transaction")
+        if isinstance(transaction, dict) and transaction.get("pending") is True:
+            pending = True
+        return JSONResponse({
+            "date_time": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC"),
+            "selected_source": settings.time_source,
+            "desired_mode": desired,
+            "effective_mode": effective if isinstance(effective, str) and effective in NTP_TIME_SOURCES | {"ntp_server"} else None,
+            "synchronization": state if state in ("synchronized", "unsynchronized") else "unavailable",
+            "detail": synchronization.get("detail", ""),
+            "pending": pending,
+            "validation_errors": context["ntp_validation_errors"],
+            "server_enabled": settings.enabled,
+            "manual_ready": native.get("manual_ready") is True and effective == desired == "manual",
+            "revision": settings.updated_at.isoformat(),
+        }, headers={"Cache-Control": "no-store"})
+
+    @router.post("/settings/time", response_model=None)
+    def save_time_settings(
+        request: Request,
+        csrf: str = Form(...),
+        revision: str = Form(...),
+        time_source: str = Form(...),
+        upstream_sources_json: str = Form(...),
+        identity: Identity = Depends(require_session_identity),
+        db: Session = Depends(get_db),
+    ) -> JSONResponse:
+        """Stage client source preferences in the canonical NTP settings row."""
+        dependencies.require_admin_identity(identity)
+        dependencies.verify_csrf(request, csrf)
+        settings = editable_time_settings(db, revision)
+        caps = dependencies.ntpd_capabilities_payload(dependencies.system_adapter_factory().read_ntpd_capabilities())
+        if time_source not in NTP_TIME_SOURCES or (time_source == "vmware_tools" and caps.get("vmware_tools") is not True):
+            raise HTTPException(422, "Select an available clock source.")
+        rows = _settings_sources(upstream_sources_json, prior=ntp_upstream_sources(settings), nts_supported=caps.get("nts") is True)
+        if time_source == "ntp_client" and not any(row["enabled"] for row in rows):
+            raise HTTPException(422, "Enable at least one upstream source for NTP client mode.")
+        if settings.time_source != time_source:
+            settings.manual_time_utc = None
+        settings.time_source = time_source
+        settings.upstream_sources_json = dump_ntp_upstream_sources(rows)
+        settings.upstream_servers = join_servers([str(row["source"]) for row in rows if row["enabled"]])
+        settings.updated_at = utcnow()
+        record_audit(db, actor=identity.username, action="update_appliance_time_settings", resource_type="ntpd", resource_id=str(settings.id))
+        db.commit()
+        db.refresh(settings)
+        dependencies.invalidate_appliance_apply_status_projection()
+        return JSONResponse({"status": "saved", "revision": settings.updated_at.isoformat(), "time_source": time_source})
+
+    @router.post("/settings/time/clock", response_model=None)
+    def stage_manual_clock(
+        request: Request,
+        csrf: str = Form(...),
+        revision: str = Form(...),
+        target_utc: str = Form(...),
+        identity: Identity = Depends(require_session_identity),
+        db: Session = Depends(get_db),
+    ) -> RedirectResponse:
+        """Stage an absolute clock target for the separate Appliance Apply review."""
+        dependencies.require_admin_identity(identity)
+        dependencies.verify_csrf(request, csrf)
+        settings = editable_time_settings(db, revision)
+        native = _clock_status(dependencies.system_adapter_factory().read_ntpd_status())
+        if settings.time_source != "manual" or native.get("mode") != "manual" or native.get("manual_ready") is not True:
+            raise HTTPException(409, "Apply Manual mode and verify automatic clock sources are off before staging a clock change.")
+        try:
+            target = parse_manual_time_utc(target_utc)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        settings.manual_time_utc = target
+        settings.updated_at = utcnow()
+        record_audit(db, actor=identity.username, action="stage_manual_clock_change", resource_type="ntpd",
+                     resource_id=str(settings.id), detail=f"UTC target pending Appliance Apply: {target.isoformat()}")
+        db.commit()
+        dependencies.invalidate_appliance_apply_status_projection()
+        return RedirectResponse(f"{MANAGEMENT_UI_ROOT}/settings#settings-time", status_code=303)
+
     @router.post("/ntp/settings", response_model=None)
     def update_ntp_settings_from_ui(
         request: Request,
@@ -208,27 +388,24 @@ def build_router(dependencies: NtpUiDependencies) -> NtpUiRouter:
         Raises:
             HTTPException: If the request cannot be fulfilled.
         """
-        from atlaso.app.services.network_objects import (
-            acquire_network_objects_write_lock,
-        )
         from atlaso.app.services.reverse_proxies import (
             validate_service_listener_sockets,
         )
 
         dependencies.verify_csrf(request, csrf)
         acquire_network_objects_write_lock(db)
-        if time_source is not None and time_source not in {
-            "ntp_client",
-            "vmware_tools",
-        }:
+        if time_source is not None and time_source not in NTP_TIME_SOURCES:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail="Time source must be ntp_client or vmware_tools.",
+                detail="Time source must be ntp_client, vmware_tools, or manual.",
             )
         settings = dependencies.get_ntp_settings_row(db)
         # Default-row readers may commit; reacquire before editing their result.
         acquire_network_objects_write_lock(db)
         db.refresh(settings)
+        _check_ntp_apply_idle(db)
+        if time_source == "manual" and settings.time_source != "manual":
+            raise HTTPException(422, "Select Manual mode from Settings → Time.")
         previous_hostname = settings.hostname
         capability_result = (
             dependencies.system_adapter_factory().read_ntpd_capabilities()
@@ -265,8 +442,12 @@ def build_router(dependencies: NtpUiDependencies) -> NtpUiRouter:
                     f"{availability}; select NTP client before saving this time-source choice."
                 ),
             )
-        if time_source is not None and not preserve_server_remembered_choice:
+        if not requested_server_mode and time_source is not None and not preserve_server_remembered_choice:
+            if settings.time_source != time_source:
+                settings.manual_time_utc = None
             settings.time_source = time_source
+        if requested_server_mode:
+            settings.manual_time_utc = None
         selected_interfaces, selected_addresses = (
             dependencies.resolve_service_bind_targets(
                 db,
@@ -472,6 +653,9 @@ def build_router(dependencies: NtpUiDependencies) -> NtpUiRouter:
         endpoints={
             "ntp_page": ntp_page,
             "ntp_source_health": ntp_source_health,
+            "settings_time_status": settings_time_status,
+            "save_time_settings": save_time_settings,
+            "stage_manual_clock": stage_manual_clock,
             "update_ntp_settings_from_ui": update_ntp_settings_from_ui,
         },
     )

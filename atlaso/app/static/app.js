@@ -8250,7 +8250,9 @@ function initializeNTPsecUpstreamsTable() {
     const grid = window.AtlasoUiPatterns.createGrid({
       element: tableElement,
       fallback: fallback instanceof HTMLElement ? `#${fallback.id}` : undefined,
-      status: "#ntp-settings-autosave-status",
+      status: hiddenInput?.form?.dataset.autosaveStatusId
+        ? "#" + CSS.escape(hiddenInput.form.dataset.autosaveStatusId)
+        : "#ntp-settings-autosave-status",
       pattern: "wizard-backed",
       emptyMessage: "No upstream sources configured.",
       onReady: (readyTable) => syncNTPsecUpstreamsHiddenInput(readyTable),
@@ -8503,6 +8505,86 @@ function initializeNtpSettings(root = document) {
   });
 }
 
+function initializeSettingsTime() {
+  const panel = document.getElementById("settings-time");
+  const tab = document.getElementById("settings-time-tab");
+  const refreshButton = panel?.querySelector("[data-settings-time-refresh]");
+  if (!refreshButton || !tab) return;
+
+  const form = panel.querySelector("[data-settings-time-edit]");
+  const controls = panel.querySelector("[data-settings-time-controls]");
+  const upstreams = panel.querySelector("[data-settings-time-upstreams]");
+  const manual = panel.querySelector("[data-settings-time-manual]");
+  const owner = panel.querySelector("[data-settings-time-owner]");
+  const stale = panel.querySelector("[data-settings-time-stale]");
+  const manualHelp = panel.querySelector("[data-settings-time-manual-help]");
+  const revisions = Array.from(panel.querySelectorAll("[data-settings-time-revision]"));
+  const canEdit = Boolean(panel.querySelector("#settings-time-autosave-status"));
+  const labels = { ntp_client: "NTP client", ntp_server: "NTP/NTS server", vmware_tools: "VMware Tools", manual: "Manual" };
+  const syncLabels = { synchronized: "Synchronized", unsynchronized: "Unsynchronized", unavailable: "Unavailable" };
+  const set = (field, value) => {
+    panel.querySelector('[data-settings-time-' + field + ']').textContent = value;
+  };
+  let request;
+  const refresh = async () => {
+    request?.abort();
+    const current = new AbortController();
+    request = current;
+    refreshButton.disabled = true;
+    try {
+      const response = await fetch(refreshButton.dataset.statusUrl, { cache: "no-store", signal: current.signal });
+      if (!response.ok) throw new Error("Appliance clock status is unavailable.");
+      const status = await response.json();
+      if (request !== current) return;
+      const changed = revisions[0].value !== status.revision;
+      const locked = !canEdit || status.server_enabled || changed;
+      controls.disabled = locked;
+      upstreams.disabled = locked;
+      upstreams.inert = locked;
+      manual.disabled = locked || !status.manual_ready;
+      owner.hidden = !status.server_enabled;
+      stale.hidden = !changed;
+      manualHelp.hidden = status.manual_ready || status.server_enabled || !canEdit;
+      manualHelp.textContent = status.effective_mode === "manual"
+        ? "Atlaso could not verify that all automatic clock sources are off. Check guest clock protection."
+        : "Apply Manual mode and verify automatic clock sources are off before staging a clock change.";
+      set("now", status.date_time);
+      set("selected", labels[status.selected_source] || "Unavailable");
+      set("mode", labels[status.effective_mode] || "Unavailable");
+      set("sync", syncLabels[status.synchronization] || "Unavailable");
+      set("pending", status.pending ? "Pending" : status.effective_mode ? "Current" : "Unavailable");
+      set("detail", status.detail || "");
+      const validation = panel.querySelector("[data-settings-time-validation]");
+      validation.replaceChildren(...status.validation_errors.map((message) => {
+        const item = document.createElement("div");
+        item.textContent = message;
+        return item;
+      }));
+    } catch (error) {
+      if (error.name === "AbortError" || request !== current) return;
+      manual.disabled = true;
+      manualHelp.hidden = false;
+      set("mode", "Unavailable");
+      set("sync", "Unavailable");
+      set("pending", "Unavailable");
+      set("detail", "Appliance clock status is unavailable. Try refreshing again.");
+    } finally {
+      if (request === current) refreshButton.disabled = false;
+    }
+  };
+  form.addEventListener("atlaso:autosave-success", ({ detail }) => {
+    revisions.forEach((input) => { input.value = detail.revision; });
+    refresh();
+  });
+  stale.querySelector("a").addEventListener("click", (event) => {
+    event.preventDefault();
+    window.location.reload();
+  });
+  refreshButton.addEventListener("click", refresh);
+  tab.addEventListener("click", refresh);
+  if (tab.getAttribute("aria-selected") === "true") refresh();
+}
+
 function updateNtpClockDesiredMode(root, payload = {}) {
   const desiredMode = root.querySelector("[data-clock-desired-mode]");
   if (!(desiredMode instanceof HTMLElement)) return;
@@ -8510,6 +8592,7 @@ function updateNtpClockDesiredMode(root, payload = {}) {
     ntp_client: "NTP client",
     ntp_server: "NTP/NTS server",
     vmware_tools: "VMware Tools",
+    manual: "Manual",
   };
   const label = modeLabels[payload.time_mode];
   if (label) desiredMode.textContent = label;
@@ -8520,7 +8603,7 @@ function updateNtpTimeSourceControl(form, serverEnabled, timeSource) {
   const preservedTimeSource = form.querySelector("[data-time-source-preserved]");
   const clientHelp = form.querySelector("[data-time-source-client-help]");
   const serverReason = form.querySelector("[data-time-source-server-reason]");
-  if (timeSource === "ntp_client" || timeSource === "vmware_tools") {
+  if (["ntp_client", "vmware_tools", "manual"].includes(timeSource)) {
     if (timeSourceSelect instanceof HTMLSelectElement) {
       timeSourceSelect.value = timeSource;
     }
@@ -8564,6 +8647,7 @@ function formatNTPsecSourceHealthPayload(payload = {}) {
       ntp_client: "NTP client",
       ntp_server: "NTP/NTS server",
       vmware_tools: "VMware Tools",
+      manual: "Manual",
     };
     details.push(`Effective mode: ${modeLabels[sections.mode] || sections.mode}`);
   }
@@ -8621,7 +8705,7 @@ function classifyNTPsecSourceHealth(responseOk, payload = {}) {
     return { text: "dry-run", state: "muted" };
   }
   const statusPayload = payload.status && typeof payload.status === "object" ? payload.status : {};
-  const failedSection = statusPayload.mode !== "vmware_tools"
+  const failedSection = !["manual", "vmware_tools"].includes(statusPayload.mode)
     && ["peers", "variables", "nts"].some(
       (name) => Number(statusPayload[name]?.returncode ?? 0) !== 0,
     );
@@ -26837,6 +26921,7 @@ document.addEventListener("DOMContentLoaded", initializeAutomationTables);
 document.addEventListener("DOMContentLoaded", initializeApplianceUpdateSourceWizard);
 document.addEventListener("DOMContentLoaded", initializeManagedPackageWizard);
 document.addEventListener("DOMContentLoaded", () => initializeNtpSettings());
+document.addEventListener("DOMContentLoaded", initializeSettingsTime);
 document.addEventListener("DOMContentLoaded", initializeNTPsecUpstreamsTable);
 document.addEventListener("DOMContentLoaded", initializeNTPsecSourceHealthModal);
 document.addEventListener("DOMContentLoaded", initializeVcfRegistryBundlesTable);

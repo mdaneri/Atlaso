@@ -54,6 +54,7 @@ class SettingsBackupUiDependencies:
     management_ui_path: Endpoint
     factory_reset_staged_credentials_path: str
     appliance_settings_context: Endpoint
+    ntp_context: Endpoint
     appliance_apply_status: Endpoint
     get_appliance_settings_row: Endpoint
     get_dns_settings_row: Endpoint
@@ -517,6 +518,8 @@ def build_router(dependencies: SettingsBackupUiDependencies) -> SettingsBackupUi
             {
                 "identity": identity,
                 **appliance_settings_context(db),
+                "settings_time_ntp": dependencies.ntp_context(db, reconcile=False),
+                "settings_time_utc": utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
                 "appliance_apply_status": appliance_apply_status(
                     db, "appliance_settings"
                 ),

@@ -8,7 +8,8 @@ from sqlalchemy import select
 from atlaso.app import ui
 from atlaso.app.adapters.system import AdapterResult
 from atlaso.app.database import SessionLocal
-from atlaso.app.models import AuditEvent, NtpSettings
+from atlaso.app.models import AuditEvent, Job, JobStep, NtpSettings
+from atlaso.app.security import Identity
 from tests.routers.ui.helpers import login
 
 
@@ -30,7 +31,7 @@ def _mock_ntpd_capabilities(monkeypatch, payload: dict[str, object]) -> None:
 
 
 def test_ntp_router_owns_exact_transport_set() -> None:
-    """Keep the extracted router limited to the three established transports."""
+    """Keep the extracted router limited to the NTP and appliance-time transports."""
     assert [
         (route.path, tuple(sorted(route.methods or ())), route.name)
         for route in ui.ntp_router.routes
@@ -41,6 +42,9 @@ def test_ntp_router_owns_exact_transport_set() -> None:
             ("GET",),
             "ntp_source_health",
         ),
+        ("/ui/management/settings/time/status", ("GET",), "settings_time_status"),
+        ("/ui/management/settings/time", ("POST",), "save_time_settings"),
+        ("/ui/management/settings/time/clock", ("POST",), "stage_manual_clock"),
         (
             "/ui/management/ntp/settings",
             ("POST",),
@@ -215,7 +219,7 @@ def test_ntp_settings_rejects_unknown_time_source_without_saving(client) -> None
     )
 
     assert response.status_code == 422
-    assert "Time source must be ntp_client or vmware_tools" in response.json()[
+    assert "Time source must be ntp_client, vmware_tools, or manual" in response.json()[
         "detail"
     ]
     with SessionLocal() as db:
@@ -490,3 +494,91 @@ def test_ntp_settings_rejects_duplicate_normalized_sources(
 
     assert response.status_code == 422
     assert "Source names must be unique" in response.json()["detail"]
+
+
+def test_settings_time_stages_manual_target_without_changing_the_host(client, monkeypatch):
+    """Require applied Manual mode, valid CSRF, and the current canonical revision."""
+    _mock_ntpd_capabilities(monkeypatch, {"nts": True, "vmware_tools": True})
+    login(client)
+    path = "/ui/management/settings/time"
+    page = client.get("/ui/management/settings")
+    assert page.status_code == 200
+    assert 'aria-controls="settings-time"' in page.text
+    assert 'name="target_utc"' in page.text
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    with SessionLocal() as db:
+        settings = db.scalar(select(NtpSettings))
+        original = settings.updated_at.isoformat()
+        sources = settings.upstream_sources_json
+    form = {"csrf": csrf, "revision": original, "time_source": "manual", "upstream_sources_json": sources}
+    assert client.post(path, data={**form, "csrf": "wrong"}).status_code == 403
+    with monkeypatch.context() as non_admin:
+        non_admin.setattr(Identity, "has_role", lambda _identity, _role: False)
+        assert client.post(path, data=form).status_code == 403
+        assert client.post(f"{path}/clock", data={**form, "target_utc": "2026-11-16T18:14"}).status_code == 403
+    saved = client.post(path, data=form)
+    assert saved.status_code == 200, saved.text
+    assert client.post(path, data=form).status_code == 409
+
+    revision = saved.json()["revision"]
+    target = {"csrf": csrf, "revision": revision, "target_utc": "2026-11-16T18:14"}
+    assert client.post(f"{path}/clock", data=target).status_code == 409
+    monkeypatch.setattr(
+        ui.SystemAdapter, "read_ntpd_status",
+        lambda _self: AdapterResult(
+            command=["atlaso-helper", "ntpd", "status"],
+            dry_run=False,
+            stdout=json.dumps({"mode": "manual", "manual_ready": True,
+                               "synchronization": {"state": "unsynchronized", "healthy": False}}),
+        ),
+    )
+    status = client.get(f"{path}/status")
+    assert status.status_code == 200, status.text
+    assert status.headers["cache-control"] == "no-store"
+    assert status.json()["date_time"].endswith(" UTC")
+    assert status.json()["effective_mode"] == "manual"
+    assert status.json()["synchronization"] == "unsynchronized"
+    assert status.json()["manual_ready"] is True
+    assert client.post(f"{path}/clock", data={**target, "target_utc": "1800-01-01T00:00"}).status_code == 422
+    staged = client.post(f"{path}/clock", data=target, follow_redirects=False)
+    assert staged.status_code == 303, staged.text
+    assert staged.headers["location"].endswith("/settings#settings-time")
+    with SessionLocal() as db:
+        settings = db.scalar(select(NtpSettings))
+        assert settings.manual_time_utc.isoformat().startswith("2026-11-16T18:14:00")
+        assert db.scalar(select(AuditEvent).where(AuditEvent.action == "stage_manual_clock_change")) is not None
+        desired = ui.ntp_context(db, reconcile=False)
+        assert "# Atlaso manual UTC target: 2026-11-16T18:14:00Z" in desired["ntp_config_preview"]
+
+
+def test_settings_time_guard_preserves_server_preference_and_blocks_active_apply(client, monkeypatch):
+    """Serialize client settings against server ownership and captured NTP Apply."""
+    _mock_ntpd_capabilities(monkeypatch, {"nts": True, "vmware_tools": True})
+    login(client)
+    path = "/ui/management/settings/time"
+    page = client.get("/ui/management/settings")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    with SessionLocal() as db:
+        settings = db.scalar(select(NtpSettings))
+        settings.enabled = True
+        revision = settings.updated_at.isoformat()
+        sources = settings.upstream_sources_json
+        db.commit()
+    form = {"csrf": csrf, "revision": revision, "time_source": "vmware_tools", "upstream_sources_json": sources}
+    assert client.post(path, data=form).status_code == 409
+    assert client.post(f"{path}/clock", data={**form, "target_utc": "2026-11-16T18:14"}).status_code == 409
+    locked = client.get("/ui/management/settings").text
+    assert "The NTP service owns clock configuration while server mode is enabled." in locked
+    assert "data-settings-time-controls disabled" in locked
+    with SessionLocal() as db:
+        settings = db.scalar(select(NtpSettings))
+        assert settings.time_source == "ntp_client"
+        settings.enabled = False
+        job = Job(id="job-time-test", type="appliance-apply", status="pending", created_by="admin")
+        db.add(JobStep(id="job-time-test:ntpd", job=job, component_key="ntpd", label="NTP / NTS", position=1))
+        db.commit()
+    assert client.post(path, data=form).status_code == 423
+    with SessionLocal() as db:
+        db.get(Job, "job-time-test").status = "succeeded"
+        db.commit()
+    assert client.post(path, data=form).status_code == 200

@@ -506,7 +506,8 @@ NTP_SYSTEMD_DIR = Path("/etc/systemd/system")
 NTP_GUARD_SERVICE_PATH = NTP_SYSTEMD_DIR / "atlaso-time-sync-guard.service"
 NTP_NTPD_DROPIN_PATH = NTP_SYSTEMD_DIR / "ntpd.service.d" / "atlaso-time-sync.conf"
 NTP_VMTOOLS_DROPIN_PATH = NTP_SYSTEMD_DIR / "vmtoolsd.service.d" / "atlaso-time-sync.conf"
-NTP_ALLOWED_MODES = {"ntp_client", "ntp_server", "vmware_tools"}
+NTP_ALLOWED_MODES = {"ntp_client", "ntp_server", "vmware_tools", "manual"}
+NTP_MANUAL_TIME_PREFIX = "# Atlaso manual UTC target:"
 NETWORK_APPLY_DIR = Path("/var/lib/atlaso/apply/network")
 NETWORK_TRANSACTION_DIR = ATLASO_STATE_DIR / "network-transaction"
 MANAGEMENT_HANDOFF_APPLY_DIR = Path("/var/lib/atlaso/apply/management-handoff")
@@ -7371,7 +7372,7 @@ def _ntpd_time_mode(path: Path) -> str:
     if marker_count > 1:
         raise ValueError("time mode marker must appear exactly once")
     if selected is not None and selected not in NTP_ALLOWED_MODES:
-        raise ValueError("time mode marker must be ntp_client, ntp_server, or vmware_tools")
+        raise ValueError("time mode marker must be ntp_client, ntp_server, vmware_tools, or manual")
     if _ntpd_config_enabled(path):
         return "ntp_server"
     if selected is None:
@@ -7390,6 +7391,23 @@ def _ntpd_applied_time_mode(path: Path) -> str:
     if not any(line.strip().lower().startswith(NTP_TIME_MODE_PREFIX.lower()) for line in path.read_text(encoding="utf-8").splitlines()):
         return "unmanaged"
     return _ntpd_time_mode(path)
+
+
+def _ntpd_manual_target(path: Path, mode: str) -> int | None:
+    """Read a canonical absolute UTC timestamp from the reviewed NTP candidate."""
+    values = [
+        line.removeprefix(NTP_MANUAL_TIME_PREFIX).strip()
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.startswith(NTP_MANUAL_TIME_PREFIX)
+    ]
+    if not values:
+        return None
+    if len(values) != 1 or mode != "manual":
+        raise ValueError("A single manual time target is allowed only in Manual mode.")
+    timestamp = datetime.strptime(values[0], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    if not 2020 <= timestamp.year <= 2099 or values[0] != timestamp.strftime("%Y-%m-%dT%H:%M:%SZ"):
+        raise ValueError("Invalid manual UTC clock target.")
+    return int(timestamp.timestamp())
 
 
 def _parse_ntpd_server(value: str) -> tuple[str, int | None, bool]:
@@ -7677,6 +7695,12 @@ def _ntpd_config_errors(path: Path, mode: str | None = None) -> list[str]:
         elif lower.startswith("# atlaso ntp client allow list:"):
             for item in line.split(":", 1)[1].replace(",", "\n").splitlines():
                 add_allow_entry(item)
+    try:
+        _ntpd_manual_target(path, effective_mode)
+    except ValueError:
+        errors.append("The manual UTC clock target is malformed or incompatible with this mode.")
+    if effective_mode == "manual" and (servers or nts_requested):
+        errors.append("Manual clock mode cannot configure an automatic clock controller.")
     if using_ntpd and not servers:
         errors.append("ntpd config must include at least one server line.")
     if using_ntpd:
@@ -8302,13 +8326,73 @@ def _ntpd_retire_nts_material() -> None:
         ) from exc
 
 
-def _ntpd_transition(mode: str, config_path: Path | None = None, *, restart: bool = True) -> None:
+def _ntpd_manual_provider_protected() -> bool:
+    """Prove the expected guest time protection without changing Tools configuration."""
+    provider, _detail = _guest_tools_detect_provider()
+    if provider == "baremetal":
+        return True
+    if provider == "vmware":
+        state = _ntpd_vmware_timesync_state()
+        tools = _ntpd_service_state("vmtoolsd.service")
+        # Periodic sync being disabled does not rule out VMware Tools one-off
+        # adjustments. Require the Tools service to be inactive and disabled.
+        return all(
+            status.get(key) is False
+            for status in (state, tools)
+            for key in ("active", "enabled")
+        )
+    return provider in {"qemu", "hyperv"} and _guest_tools_clock_safety(
+        provider, verified_mode="manual",
+    ).get("protected") is True
+
+
+def _ntpd_set_manual_time_once(target: int) -> None:
+    """Use systemd-timedated and persist an attempt before stepping the clock."""
+    receipt = NTP_CONFIG_PATH.with_name(".atlaso-manual-clock.json")
+    if receipt.exists() or receipt.is_symlink():
+        info = receipt.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_nlink != 1 or info.st_size > 1024:
+            raise RuntimeError("Manual clock recovery evidence is unsafe.")
+        previous = json.loads(receipt.read_text(encoding="utf-8"))
+        if not isinstance(previous, dict) or type(previous.get("target")) is not int or type(previous.get("complete")) is not bool:
+            raise RuntimeError("Manual clock recovery evidence is invalid.")
+        if previous["target"] == target:
+            if previous["complete"]:
+                return
+            raise RuntimeError("This clock change may already have run. Check the clock and review a new target.")
+    if not _ntpd_manual_provider_protected():
+        raise RuntimeError("Automatic hypervisor clock changes could not be ruled out.")
+    _ntpd_write_transaction({"target": target, "complete": False}, path=receipt)
+    started = time.monotonic()
+    _ntpd_run_checked(
+        ["busctl", "--system", "call", "org.freedesktop.timedate1", "/org/freedesktop/timedate1",
+         "org.freedesktop.timedate1", "SetTime", "xbb", str(target * 1_000_000), "false", "false"],
+        "Set the reviewed UTC clock target",
+    )
+    if not target - 1 <= time.time() <= target + time.monotonic() - started + 1:
+        raise RuntimeError("The system clock did not match the reviewed UTC target.")
+    rtc = _ntpd_run_checked(
+        ["busctl", "--system", "get-property", "org.freedesktop.timedate1", "/org/freedesktop/timedate1",
+         "org.freedesktop.timedate1", "RTCTimeUSec"],
+        "Read back the appliance hardware clock",
+    )
+    match = re.fullmatch(r"t (\d+)", rtc.stdout.strip())
+    if not match or abs(int(match[1]) / 1_000_000 - time.time()) > 2:
+        raise RuntimeError("The hardware clock did not match the new system time.")
+    _ntpd_write_transaction({"target": target, "complete": True}, path=receipt)
+
+
+def _ntpd_transition(
+    mode: str, config_path: Path | None = None, *, restart: bool = True,
+    manual_target: int | None = None,
+) -> None:
     """Move between clock sources without running two synchronizers together.
 
     Args:
         mode: Effective appliance clock controller to activate.
         config_path: Staged NTP configuration, or the already applied configuration.
         restart: Whether NTPsec must restart instead of starting idempotently.
+        manual_target: Approved one-time clock step. Lifecycle reconciliation omits it.
     """
     if mode not in NTP_ALLOWED_MODES and mode != "disabled":
         raise ValueError("Unsupported appliance time mode.")
@@ -8339,6 +8423,16 @@ def _ntpd_transition(mode: str, config_path: Path | None = None, *, restart: boo
         # can then restore the previous config and its referenced key material.
         if mode == "ntp_client" or not _ntpd_nts_server_enabled(config_path):
             _ntpd_retire_nts_material()
+        return
+    if mode == "manual":
+        _ntpd_set_vmware_timesync(False)
+        _ntpd_client_packet_guard(mode)
+        if not _ntpd_manual_provider_protected():
+            raise RuntimeError("Manual clock mode requires verified protection from automatic hypervisor clock changes.")
+        if manual_target is not None:
+            _ntpd_set_manual_time_once(manual_target)
+        _ntpd_checkpoint_verified()
+        _ntpd_retire_nts_material()
         return
     if mode == "vmware_tools":
         _ntpd_client_packet_guard(mode)
@@ -8615,13 +8709,14 @@ def _ntpd_transaction_path() -> Path:
     return NTP_CONFIG_PATH.with_name(".atlaso-ntpd-transaction.json")
 
 
-def _ntpd_write_transaction(payload: dict[str, object]) -> None:
+def _ntpd_write_transaction(payload: dict[str, object], *, path: Path | None = None) -> None:
     """Publish a root-only checkpoint durably before the corresponding mutation.
 
     Args:
         payload: Nonsecret prior-config custody and controller recovery markers.
+        path: Optional fixed root-owned manual clock receipt path.
     """
-    path = _ntpd_transaction_path()
+    path = path or _ntpd_transaction_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(prefix=".atlaso-ntpd-journal-", dir=path.parent)
     try:
@@ -8926,7 +9021,7 @@ def _ntpd_rollback_failed_apply(snapshot: dict[str, object]) -> str:
         return f"Previous applied config restore failed: {restore_error}.{suffix}"
 
     previous_mode = snapshot.get("mode") if snapshot.get("managed") else None
-    if previous_mode in {"ntp_client", "ntp_server", "vmware_tools"}:
+    if previous_mode in NTP_ALLOWED_MODES:
         try:
             _ntpd_transition(str(previous_mode), restart=True)
             snapshot["restored"] = True
@@ -9117,11 +9212,16 @@ def _ntpd_guard(phase: str) -> int:
             print("Legacy clock config does not prove applied authority; known clock controllers were stopped.", file=sys.stderr)
             return 0
         if phase == "pre-vmtoolsd":
+            if mode == "manual":
+                print("Manual clock mode is active; refusing VMware Tools start.", file=sys.stderr)
+                return 1
             _ntpd_stop_service("ntpd.service", disable=mode == "vmware_tools")
             for unit in ("chronyd.service", "systemd-timesyncd.service"):
                 _ntpd_stop_service(unit)
             _ntpd_client_packet_guard(mode)
         elif phase == "pre-ntpd":
+            if mode == "manual":
+                return refuse_unproven_ntpd_start("Manual clock mode is active")
             if mode not in {"ntp_client", "ntp_server", "vmware_tools"}:
                 raise RuntimeError("No active NTP time mode is selected; apply time-source settings before starting ntpd.")
             if mode == "vmware_tools":
@@ -9149,15 +9249,17 @@ def _ntpd_guard(phase: str) -> int:
                     _ntpd_stop_service(unit)
                 _ntpd_run_checked(["systemctl", "enable", "ntpd.service"], "Enable ntpd.service")
                 _ntpd_run_checked(["systemctl", "start", "--no-block", "ntpd.service"], "Queue ntpd.service after VMware Tools restart")
+            elif mode == "manual":
+                _ntpd_set_vmware_timesync(False, require_active=False)
         elif phase == "boot":
-            if mode == "vmware_tools":
+            if mode in {"manual", "vmware_tools"}:
                 _ntpd_stop_service("ntpd.service")
             for unit in ("chronyd.service", "systemd-timesyncd.service"):
                 _ntpd_stop_service(unit)
             _ntpd_client_packet_guard(mode)
             if mode == "vmware_tools":
                 _ntpd_set_vmware_timesync(True)
-            elif mode in {"ntp_client", "ntp_server"}:
+            elif mode in {"manual", "ntp_client", "ntp_server"}:
                 _ntpd_set_vmware_timesync(False)
     except (OSError, RuntimeError, ValueError) as exc:
         print(f"Appliance clock guard failed: {exc}", file=sys.stderr)
@@ -9204,6 +9306,7 @@ def _ntpd_status() -> int:
         "systemd_timesyncd": _ntpd_service_state("systemd-timesyncd.service"),
         "vmware_tools": _ntpd_vmware_timesync_state(),
     }
+    manual_ready = False
     selected_name = "ntpd" if mode in {"ntp_client", "ntp_server"} else "vmware_tools" if mode == "vmware_tools" else None
     selected_state = all_sources.get(selected_name) if selected_name else None
     selected_controller = {
@@ -9335,6 +9438,23 @@ def _ntpd_status() -> int:
             "detail": vmware_detail,
         }
         payload["vmware_timesync_enabled"] = timesync_enabled
+    elif mode == "manual":
+        conflicts = any(
+            source.get("active") is True or source.get("enabled") is True
+            for source in all_sources.values()
+        )
+        unavailable = any(
+            source.get("active") is None or source.get("enabled") is None
+            for source in all_sources.values()
+        ) or not _ntpd_manual_provider_protected()
+        manual_ready = not conflicts and not unavailable
+        payload["synchronization"] = {
+            "state": "unavailable" if unavailable and not conflicts else "unsynchronized",
+            "healthy": None if unavailable and not conflicts else False,
+            "detail": "A competing clock controller is active or enabled." if conflicts else
+                      "Automatic clock protection could not be verified." if unavailable else
+                      "Manual clock mode provides no automatic synchronization.",
+        }
     else:
         payload["synchronization"] = {
             "state": "unavailable",
@@ -9367,6 +9487,7 @@ def _ntpd_status() -> int:
         selected_controller = {"name": None, "active": None, "enabled": None, "detail": detail}
         daemon_conflicts = all_sources
     payload["mode"] = mode
+    payload["manual_ready"] = mode == "manual" and manual_ready
     payload["selected_controller"] = selected_controller
     payload["daemon_conflicts"] = daemon_conflicts
     print(json.dumps(payload, sort_keys=True))
@@ -9643,6 +9764,9 @@ def _handle_ntpd(action: str, args: list[str]) -> int:
     try:
         _ntpd_recover_interrupted_apply()
         previous_config = _ntpd_snapshot_applied_config()
+        manual_target = _ntpd_manual_target(config_path, mode)
+        if manual_target is not None and previous_config.get("mode") != "manual":
+            raise RuntimeError("Apply Manual mode before reviewing a clock change.")
         prior_nts_server = (
             previous_config.get("managed") is True
             and NTP_CONFIG_PATH.is_file()
@@ -9675,6 +9799,8 @@ def _handle_ntpd(action: str, args: list[str]) -> int:
             # Restore the managed NTP state directory after the marker copy,
             # then apply the exact staged config through the package-aware path.
             _ntpd_transition(mode, config_path, restart=True)
+        elif mode == "manual" and manual_target is not None:
+            _ntpd_transition(mode, manual_target=manual_target)
         else:
             _ntpd_transition(mode, config_path if mode == "vmware_tools" else None)
     except _NtpdPostCommitCleanupError as exc:
@@ -23480,25 +23606,31 @@ def _guest_tools_payload(provider: str) -> dict[str, object]:
     }
 
 
-def _guest_tools_clock_safety(provider: str) -> dict[str, object]:
+def _guest_tools_clock_safety(provider: str, *, verified_mode: str | None = None) -> dict[str, object]:
     """Build the time-authority plan from the verified applied NTP configuration.
 
     Args:
         provider: Detected provider whose host time capability must be controlled.
+        verified_mode: Explicit mode only after the caller has verified Manual ownership.
     """
     try:
-        transaction = _ntpd_read_transaction()
-        if transaction is not None and (transaction.get("phase") != "verified"
-                or not NTP_CONFIG_PATH.is_file()
-                or hashlib.sha256(NTP_CONFIG_PATH.read_bytes()).hexdigest() != transaction.get("config_sha256")):
-            raise ValueError("Clock Apply or recovery is still pending.")
-        mode = _ntpd_applied_time_mode(NTP_CONFIG_PATH)
-        if mode not in {"ntp_client", "ntp_server", "vmware_tools"}:
+        mode = verified_mode
+        if mode is None:
+            transaction = _ntpd_read_transaction()
+            if transaction is not None and (transaction.get("phase") != "verified"
+                    or not NTP_CONFIG_PATH.is_file()
+                    or hashlib.sha256(NTP_CONFIG_PATH.read_bytes()).hexdigest() != transaction.get("config_sha256")):
+                raise ValueError("Clock Apply or recovery is still pending.")
+            mode = _ntpd_applied_time_mode(NTP_CONFIG_PATH)
+        if mode not in NTP_ALLOWED_MODES:
             raise ValueError("The applied clock authority is not verified.")
     except (OSError, RuntimeError, ValueError):
         return {"status": "unknown", "authority": "unknown", "protected": False,
                 "reason": "Apply or recover the appliance time-source settings before changing guest tools."}
     if provider == "vmware":
+        if mode == "manual":
+            return {"status": "blocked", "authority": mode, "protected": False,
+                    "reason": "Select an automatic appliance clock source before starting VMware Tools."}
         time_state = _ntpd_vmware_timesync_state()
         periodic = time_state.get("periodic_enabled")
         expected = mode == "vmware_tools"
