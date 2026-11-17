@@ -11,7 +11,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts/interop"))
 import ntp_cold_start_native as fixture  # noqa: E402 - Local interop entrypoint.
-from certificate_peer_transport import PeerTransportRefusal  # noqa: E402 - Local transport module.
+from certificate_peer_transport import (
+    PeerTransportRefusal,  # noqa: E402 - Local transport module.
+)
 
 
 @pytest.fixture
