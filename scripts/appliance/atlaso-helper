@@ -7394,7 +7394,12 @@ def _ntpd_applied_time_mode(path: Path) -> str:
 
 
 def _ntpd_manual_target(path: Path, mode: str) -> int | None:
-    """Read a canonical absolute UTC timestamp from the reviewed NTP candidate."""
+    """Read a canonical absolute UTC timestamp from the reviewed NTP candidate.
+
+    Args:
+        path: Reviewed NTP candidate configuration.
+        mode: Clock mode declared by the candidate.
+    """
     values = [
         line.removeprefix(NTP_MANUAL_TIME_PREFIX).strip()
         for line in path.read_text(encoding="utf-8").splitlines()
@@ -8347,7 +8352,11 @@ def _ntpd_manual_provider_protected() -> bool:
 
 
 def _ntpd_set_manual_time_once(target: int) -> None:
-    """Use systemd-timedated and persist an attempt before stepping the clock."""
+    """Use systemd-timedated and persist an attempt before stepping the clock.
+
+    Args:
+        target: Reviewed UTC target expressed in Unix seconds.
+    """
     receipt = NTP_CONFIG_PATH.with_name(".atlaso-manual-clock.json")
     if receipt.exists() or receipt.is_symlink():
         info = receipt.lstat()

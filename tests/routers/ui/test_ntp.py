@@ -497,7 +497,12 @@ def test_ntp_settings_rejects_duplicate_normalized_sources(
 
 
 def test_settings_time_stages_manual_target_without_changing_the_host(client, monkeypatch):
-    """Require applied Manual mode, valid CSRF, and the current canonical revision."""
+    """Require applied Manual mode, valid CSRF, and the current canonical revision.
+
+    Args:
+        client: Management test client used to stage the clock target.
+        monkeypatch: Fixture used to supply the native clock observations.
+    """
     _mock_ntpd_capabilities(monkeypatch, {"nts": True, "vmware_tools": True})
     login(client)
     path = "/ui/management/settings/time"
@@ -552,7 +557,12 @@ def test_settings_time_stages_manual_target_without_changing_the_host(client, mo
 
 
 def test_settings_time_guard_preserves_server_preference_and_blocks_active_apply(client, monkeypatch):
-    """Serialize client settings against server ownership and captured NTP Apply."""
+    """Serialize client settings against server ownership and captured NTP Apply.
+
+    Args:
+        client: Management test client used to write the desired settings.
+        monkeypatch: Fixture used to supply available clock capabilities.
+    """
     _mock_ntpd_capabilities(monkeypatch, {"nts": True, "vmware_tools": True})
     login(client)
     path = "/ui/management/settings/time"

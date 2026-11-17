@@ -101,7 +101,11 @@ NTP_TIME_SOURCES = frozenset({NTP_TIME_SOURCE_NTP_CLIENT, NTP_TIME_SOURCE_VMWARE
 
 
 def parse_manual_time_utc(value: str) -> datetime:
-    """Parse the UTC wall-clock target used by the Settings time form."""
+    """Parse the UTC wall-clock target used by the Settings time form.
+
+    Args:
+        value: Date and time from a datetime-local field interpreted as UTC.
+    """
     if len(value) == 16:
         value += ":00"
     try:

@@ -276,7 +276,11 @@ def test_manual_mode_keeps_client_sources_and_omits_one_time_target_from_archive
 
 
 def test_manual_lifecycle_reconciliation_never_replays_target(monkeypatch):
-    """Only a reviewed candidate can supply the one-time step to the clock transition."""
+    """Only a reviewed candidate can supply the one-time step to the clock transition.
+
+    Args:
+        monkeypatch: Fixture used to record the native transition operations.
+    """
     from tests.test_appliance_helper import load_helper_module
 
     helper = load_helper_module()
@@ -299,7 +303,11 @@ def test_manual_lifecycle_reconciliation_never_replays_target(monkeypatch):
 
 
 def test_manual_clock_target_cannot_be_smuggled_into_automatic_mode(tmp_path) -> None:
-    """Reject conflicting mode markers before any native transition can run."""
+    """Reject conflicting mode markers before any native transition can run.
+
+    Args:
+        tmp_path: Directory for the NTP candidate configuration.
+    """
     from tests.test_appliance_helper import load_helper_module
 
     helper = load_helper_module()
@@ -314,7 +322,12 @@ def test_manual_clock_target_cannot_be_smuggled_into_automatic_mode(tmp_path) ->
 
 
 def test_manual_clock_native_attempt_is_durable_and_never_retried(tmp_path, monkeypatch):
-    """Refuse a second step after a failed native response and verify the systemd contract."""
+    """Refuse a second step after a failed native response and verify the systemd contract.
+
+    Args:
+        tmp_path: Directory for the native clock attempt record.
+        monkeypatch: Fixture used to simulate clock operations without changing host time.
+    """
     from tests.test_appliance_helper import load_helper_module
 
     helper = load_helper_module()
@@ -327,6 +340,11 @@ def test_manual_clock_native_attempt_is_durable_and_never_retried(tmp_path, monk
     original_lstat = type(receipt).lstat
 
     def receipt_lstat(path):
+        """Simulate a root-owned clock receipt while preserving other path metadata.
+
+        Args:
+            path: Path whose metadata is being read.
+        """
         info = original_lstat(path)
         if path == receipt:
             from types import SimpleNamespace
@@ -338,6 +356,12 @@ def test_manual_clock_native_attempt_is_durable_and_never_retried(tmp_path, monk
     monkeypatch.setattr(helper, "_fsync_directory", lambda _path: None)
 
     def refusal(command, *_args):
+        """Fail the simulated clock change after verifying the attempt record.
+
+        Args:
+            command: Native command used to set the UTC clock.
+            *_args: Additional arguments supplied by the native command runner.
+        """
         assert receipt.read_text(encoding="utf-8") == '{"complete": false, "target": 1794880800}'
         calls.append(command)
         raise RuntimeError("native result unavailable")

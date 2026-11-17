@@ -41,7 +41,11 @@ Endpoint = Callable[..., Any]
 
 
 def _check_ntp_apply_idle(db: Session) -> None:
-    """Refuse time-state writes while a captured NTP Apply can still run."""
+    """Refuse time-state writes while a captured NTP Apply can still run.
+
+    Args:
+        db: Session holding the configuration write lock.
+    """
     active = db.scalar(select(Job.id).join(JobStep).where(
         Job.type == "appliance-apply",
         Job.status.in_([JobStatus.PENDING.value, JobStatus.RUNNING.value]),
@@ -52,7 +56,11 @@ def _check_ntp_apply_idle(db: Session) -> None:
 
 
 def _clock_status(result: Any) -> dict[str, Any]:
-    """Project the bounded native status object without raw probe output."""
+    """Project the bounded native status object without raw probe output.
+
+    Args:
+        result: System adapter result from reading NTP status.
+    """
     if result.returncode != 0 or result.dry_run:
         return {}
     try:
@@ -63,7 +71,13 @@ def _clock_status(result: Any) -> dict[str, Any]:
 
 
 def _settings_sources(raw: str, *, prior: list[dict[str, object]], nts_supported: bool) -> list[dict[str, object]]:
-    """Validate complete wizard rows and preserve NTS flags when editing is unavailable."""
+    """Validate complete wizard rows and preserve NTS flags when editing is unavailable.
+
+    Args:
+        raw: JSON array submitted by the upstream source wizard.
+        prior: Stored upstream rows used to preserve existing NTS preferences.
+        nts_supported: Whether the appliance currently supports configuring NTS.
+    """
     try:
         rows = json.loads(raw)
         if not isinstance(rows, list):
@@ -218,6 +232,12 @@ def build_router(dependencies: NtpUiDependencies) -> NtpUiRouter:
         )
 
     def editable_time_settings(db: Session, revision: str) -> NtpSettings:
+        """Return the locked settings row after checking edit eligibility.
+
+        Args:
+            db: Session used to acquire the write lock and refresh settings.
+            revision: Settings revision read when the operator opened the form.
+        """
         acquire_network_objects_write_lock(db)
         settings = dependencies.get_ntp_settings_row(db)
         # Default row creation may commit.
@@ -235,7 +255,12 @@ def build_router(dependencies: NtpUiDependencies) -> NtpUiRouter:
         identity: Identity = Depends(require_session_identity),
         db: Session = Depends(get_db),
     ) -> JSONResponse:
-        """Observe wall-clock time and the applied authority without enforcing desired state."""
+        """Observe wall-clock time and the applied authority without enforcing desired state.
+
+        Args:
+            identity: Authenticated management identity permitted to read status.
+            db: Session used to read the current NTP configuration.
+        """
         context = dependencies.ntp_context(db, reconcile=False)
         settings = context["ntp_settings"]
         apply = dependencies.ntpd_apply_status(db, context)
@@ -275,7 +300,17 @@ def build_router(dependencies: NtpUiDependencies) -> NtpUiRouter:
         identity: Identity = Depends(require_session_identity),
         db: Session = Depends(get_db),
     ) -> JSONResponse:
-        """Stage client source preferences in the canonical NTP settings row."""
+        """Stage client source preferences in the canonical NTP settings row.
+
+        Args:
+            request: Management request used to verify the form's CSRF token.
+            csrf: Submitted CSRF token.
+            revision: Revision of the NTP settings being edited.
+            time_source: Requested appliance clock source.
+            upstream_sources_json: Complete set of upstream source rows as JSON.
+            identity: Authenticated management identity submitting the change.
+            db: Session that records the desired configuration and audit event.
+        """
         dependencies.require_admin_identity(identity)
         dependencies.verify_csrf(request, csrf)
         settings = editable_time_settings(db, revision)
@@ -306,7 +341,16 @@ def build_router(dependencies: NtpUiDependencies) -> NtpUiRouter:
         identity: Identity = Depends(require_session_identity),
         db: Session = Depends(get_db),
     ) -> RedirectResponse:
-        """Stage an absolute clock target for the separate Appliance Apply review."""
+        """Stage an absolute clock target for the separate Appliance Apply review.
+
+        Args:
+            request: Management request used to verify the form's CSRF token.
+            csrf: Submitted CSRF token.
+            revision: Revision of the NTP settings being edited.
+            target_utc: Absolute UTC value entered in the clock form.
+            identity: Authenticated management identity staging the change.
+            db: Session that records the staged target and audit event.
+        """
         dependencies.require_admin_identity(identity)
         dependencies.verify_csrf(request, csrf)
         settings = editable_time_settings(db, revision)
