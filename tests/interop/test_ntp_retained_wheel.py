@@ -9,7 +9,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts/interop"))
 import ntp_cold_start_native as fixture  # noqa: E402 - Local interop entrypoint.
-from certificate_peer_proof import Refusal as ReceiptRefusal  # noqa: E402 - Local receipt module.
+from certificate_peer_proof import (
+    Refusal as ReceiptRefusal,  # noqa: E402 - Local receipt module.
+)
 
 
 def write_receipt(path, value):
