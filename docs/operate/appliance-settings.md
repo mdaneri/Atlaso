@@ -256,4 +256,30 @@ These captures show responsive layouts and useful operational states referenced 
 
 *Figure: Appliance Settings validation error for an invalid FQDN.*
 
+### Settings Time tab
+
+![Settings Time tab with a synchronized NTP client and editable clock source and upstreams.](../assets/screenshots/settings-time-client-desktop.webp)
+
+*Figure: The appliance synchronizes with an upstream NTP source and keeps the client settings editable.*
+
+![Responsive Settings Time tab with the synchronized NTP client and upstream source list.](../assets/screenshots/settings-time-client-responsive.webp)
+
+*Figure: The Time tab keeps clock status and upstream sources together on a narrower display.*
+
+![Settings Time tab showing applied Manual mode and the enabled date and time field.](../assets/screenshots/settings-time-manual-desktop.webp)
+
+*Figure: After Manual Apply, the clock remains unsynchronized and the UTC clock change form is available.*
+
+![Responsive Settings Time tab with Manual mode and the UTC clock change form.](../assets/screenshots/settings-time-manual-responsive.webp)
+
+*Figure: Use the UTC date and time field to stage the next clock target for Appliance Apply.*
+
+![Settings Time tab with applied NTP/NTS server mode, disabled editors, and the NTP and NTS link.](../assets/screenshots/settings-time-server-desktop.webp)
+
+*Figure: Use NTP and NTS to edit clock configuration while the appliance serves time to other systems.*
+
+![Responsive Settings Time tab with the NTP service ownership notice and read-only clock controls.](../assets/screenshots/settings-time-server-responsive.webp)
+
+*Figure: Clock status stays visible while the NTP service owns the settings.*
+
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->

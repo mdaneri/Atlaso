@@ -84,6 +84,7 @@ ROUTE_TITLES = {
     "/routes-wan": "Routes and WAN simulation",
     "/services": "Services",
     "/settings": "Appliance Settings",
+    "/settings#settings-time": "Settings Time tab",
     "/tasks": "Tasks",
     "/terminal": "Web terminal",
     "/users": "Users",
