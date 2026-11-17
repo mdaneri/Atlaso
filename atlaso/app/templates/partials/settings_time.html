@@ -28,7 +28,7 @@
     <p class="alert warning" data-settings-time-stale hidden>Time settings changed. <a href="{{ management_ui_path('/settings') }}#settings-time">Reload Settings</a> to edit the current values.</p>
     {% if not can_edit %}<p class="muted">Time settings can be edited by an administrator.</p>{% endif %}
     <form id="{{ ntp_form_id }}" class="form-stack" action="{{ ntp_form_action }}" method="post"
-          data-autosave-form data-autosave-status-id="settings-time-autosave-status" data-settings-time-edit>
+          data-autosave-form data-autosave-serialize data-autosave-status-id="settings-time-autosave-status" data-settings-time-edit>
       <input type="hidden" name="csrf" value="{{ csrf_token }}">
       <input type="hidden" name="revision" value="{{ ntp_settings.updated_at.isoformat() }}" data-settings-time-revision>
       <input type="hidden" name="upstream_sources_json" value='{{ ntp_settings_json.upstream_sources | tojson }}' data-ntp-upstreams-json>

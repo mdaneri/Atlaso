@@ -14348,6 +14348,8 @@ function initializeAutosaveForms(root = document) {
     });
     const statusElement = document.getElementById(form.dataset.autosaveStatusId || "");
     const inputAutosave = form.dataset.autosaveTrigger !== "change";
+    const serializeSaves = form.dataset.autosaveSerialize !== undefined;
+    let queuedSave = Promise.resolve();
     let timer = 0;
     let inFlightRequest = null;
 
@@ -14447,8 +14449,7 @@ function initializeAutosaveForms(root = document) {
         xhr.send(formData);
       });
 
-    const save = async () => {
-      window.clearTimeout(timer);
+    const send = async () => {
       const editGeneration = form.atlasoEditGeneration || 0;
       if (inFlightRequest) {
         inFlightRequest.abort();
@@ -14498,6 +14499,14 @@ function initializeAutosaveForms(root = document) {
           resetUploadProgress();
         }
       }
+    };
+    const save = () => {
+      window.clearTimeout(timer);
+      if (!serializeSaves) return send();
+      // Read form fields after the preceding success listener updates the revision.
+      const result = queuedSave.then(send);
+      queuedSave = result.catch(() => {});
+      return result;
     };
     form.atlasoSaveNow = save;
 

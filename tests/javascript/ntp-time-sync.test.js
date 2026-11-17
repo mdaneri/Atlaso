@@ -295,3 +295,61 @@ test("NTP health details include effective mode, controller, conflicts, and sync
   assert.match(rendered, /No system peer is available\./);
   assert.match(rendered, /no_sys_peer/);
 });
+
+
+test("rapid Time edits wait for the previous autosave revision", async () => {
+  const form = new FakeForm({});
+  form.dataset.autosaveSerialize = "";
+  form.revision = "initial";
+  form.selectedSource = "manual";
+  form.getAttribute = () => "/settings/time";
+  form.querySelectorAll = () => [];
+  form.dispatchEvent = (event) => form.emit(event.type, event);
+  form.addEventListener("atlaso:autosave-success", (event) => { form.revision = event.detail.revision; });
+  const writes = [];
+  const root = { querySelectorAll: () => [form] };
+  const browser = {
+    root,
+    HTMLFormElement: FakeForm,
+    HTMLProgressElement: FakeElement,
+    CustomEvent,
+    AbortController,
+    URL,
+    window: { clearTimeout, setTimeout, location: { href: "https://atlaso.example/" } },
+    document: { getElementById: () => null },
+    setAutosaveStatus: () => {},
+    updateDerivedListenAddressSummary: () => {},
+    FormData: class {
+      constructor(submitted) {
+        this.revision = submitted.revision;
+        this.selectedSource = submitted.selectedSource;
+      }
+    },
+    fetch: (_url, options) => new Promise((respond) => {
+      writes.push({
+        revision: options.body.revision,
+        source: options.body.selectedSource,
+        signal: options.signal,
+        succeed: (revision) => respond({ ok: true, json: async () => ({ revision }) }),
+      });
+    }),
+  };
+  vm.runInNewContext(functionSource("initializeAutosaveForms") + "\ninitializeAutosaveForms(root);", browser);
+  const first = form.atlasoSaveNow();
+  await new Promise(setImmediate);
+  form.selectedSource = "ntp_client";
+  const second = form.atlasoSaveNow();
+  await new Promise(setImmediate);
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].signal.aborted, false);
+  writes[0].succeed("first");
+  assert.equal((await first).valid, true);
+  await new Promise(setImmediate);
+  assert.deepEqual(writes.map(({ revision, source }) => ({ revision, source })), [
+    { revision: "initial", source: "manual" },
+    { revision: "first", source: "ntp_client" },
+  ]);
+  writes[1].succeed("second");
+  assert.equal((await second).valid, true);
+  assert.equal(form.revision, "second");
+});
