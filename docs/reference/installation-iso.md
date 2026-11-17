@@ -123,18 +123,30 @@ signed appliance software for each eligible main commit. Both asset sets go to t
 draft's workflow summary reports the full ISO SHA-256. Earlier published versions retain their software-only assets.
 
 Use the [native refresh workflow](installation-iso-refresh.md) to capture the approved Photon RPM closure, guest
-tools and PowerCLI. From the original successful capture's source checkout, export the retained capture and its
-verified provenance to an absent archive path:
+tools and PowerCLI. From a trusted checkout containing the export command, use the original successful capture state
+to export the retained inputs and provenance to an absent archive path. Export verifies the original receipt,
+complete inventory, and source input fingerprint against the checkout before writing:
 
 ```text
 python -m scripts.installation.release_capture pack --capture-state <original-capture-state-directory> --archive <absent-capture.tar.gz>
 ```
 
-Store the archive as an immutable object in maintainer-managed private HTTPS storage. Set `INSTALLATION_CAPTURE_URL`
-and `INSTALLATION_CAPTURE_SHA256` together in the protected `appliance-release` GitHub environment. Store the
-read-only Bearer credential as `INSTALLATION_CAPTURE_TOKEN` using the repository credential procedure. Use a direct
-HTTPS endpoint that does not redirect. Rotate the object and both pins after a new compatible capture is admitted.
-CI checks the archive digest, capture fingerprint for the release source, RPM signatures and transactions, PowerCLI
+Upload the archive as a single OCI layer to the **private** GHCR package
+`ghcr.io/<repository-owner>/atlaso-installation-capture`. Authenticate ORAS using a separate upload credential with
+`write:packages` and the [credential procedure](../contribute/credential-policy.md). Run the push from the archive
+directory and retain the manifest digest printed by ORAS:
+
+```text
+oras push --artifact-type application/vnd.atlaso.installation.capture.v1 ghcr.io/<repository-owner>/atlaso-installation-capture:<capture-tag> capture.tar.gz:application/gzip
+```
+
+Set `INSTALLATION_CAPTURE_DIGEST` to the OCI manifest digest (including `sha256:`),
+`INSTALLATION_CAPTURE_SHA256` to the raw archive SHA-256 (64 lowercase hexadecimal digits), and
+`INSTALLATION_CAPTURE_USERNAME` to the download account username in the protected `appliance-release` GitHub
+environment. Set `INSTALLATION_CAPTURE_TOKEN` there as an environment secret using a classic GitHub token with
+`read:packages` from an account with read access to the package. Keep the package private and give no Actions access
+to the public repository. Rotate both pins together after a new compatible capture is admitted.
+CI checks the manifest and archive digests, capture fingerprint for the release source, RPM signatures and transactions, PowerCLI
 lock, pinned Photon source, and free space. An admission failure leaves the version unpublished. Once inputs are fixed,
 dispatch the workflow from `main` with the full release commit and blank approval fields to retry staging.
 

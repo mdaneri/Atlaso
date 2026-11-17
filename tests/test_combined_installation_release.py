@@ -277,6 +277,23 @@ def test_admit_capture_rejects_incompatible_source_before_extraction(
         assert (admitted / "rpms/payload").read_text() == "rpms"
 
 
+def test_capture_archive_verification_uses_the_pinned_raw_bytes(tmp_path):
+    """Reject a changed archive or invalid pin before archive admission.
+
+    Args:
+        tmp_path: Pytest fixture providing an isolated directory.
+    """
+    archive = tmp_path / "capture.tar.gz"
+    archive.write_bytes(b"verified capture")
+    expected = release_capture.digest(archive)
+    release_capture.verify_archive(archive, expected)
+    with pytest.raises(ValueError, match="protected pin is invalid"):
+        release_capture.verify_archive(archive, f"sha256:{expected}")
+    archive.write_bytes(b"changed capture")
+    with pytest.raises(ValueError, match="SHA-256 differs"):
+        release_capture.verify_archive(archive, expected)
+
+
 def test_evidence_must_bind_the_approved_digest_and_comment_parent(monkeypatch):
     """Evidence must bind the approved digest and comment parent.
 
