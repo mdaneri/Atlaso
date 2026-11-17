@@ -109,13 +109,23 @@ function Assert-InstallationRefreshConsumersQuiescent {
 .SYNOPSIS
 Require original matching Linux completion proof for every native tool invocation.
 .PARAMETER Directory
-Exact phase-owned native protocol directory, when the phase uses WSL tools.
+Exact phase-owned native protocol directory for WSL or pinned SSH tools.
 #>
 function Test-InstallationRefreshNativeQuiescent {
     param([string]$Directory)
     if (-not (Test-Path -LiteralPath $Directory)) { return $true }
     $pin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($Directory, $true)
     try {
+        foreach ($sessionFile in @(Get-ChildItem -LiteralPath $Directory -Filter '*-ssh-original.json' -File)) {
+            $prefix = $sessionFile.Name.Substring(0, $sessionFile.Name.Length - '-original.json'.Length)
+            $resultPath = Join-Path $Directory ($prefix + '-result.json')
+            if (-not (Test-Path -LiteralPath $resultPath)) { return $false }
+            $originalSession = Read-InstallationRefreshEvidence -Path $sessionFile.FullName
+            $sessionResult = Read-InstallationRefreshEvidence -Path $resultPath
+            if ($sessionResult.whole_group_quiescent -ne $true -or $sessionResult.remote_root_absent -ne $true -or
+                $sessionResult.scope -cne $originalSession.scope -or $sessionResult.task_id -cne $originalSession.task_id -or
+                $sessionResult.source_commit -cne $originalSession.source_commit) { return $false }
+        }
         $intents = @(Get-ChildItem -LiteralPath $Directory -Filter '*-intent.json' -File)
         if ($intents.Count -gt 20000) { throw 'Native tool inventory exceeds its bound.' }
         foreach ($intentFile in $intents) {

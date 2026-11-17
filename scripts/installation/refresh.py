@@ -490,13 +490,17 @@ def execute(plan: dict, state: Path, phase: str) -> dict:
     iso = root / "development.iso"
     capabilities = {}
     if phase in {"capture", "admit", "build"}:
-        if plan.get("native_distribution"):
+        if plan.get("native_distribution") or plan.get("native_ssh"):
             from scripts.native_rpm_tools import run
 
             for name in ("rpm", "rpmkeys", "createrepo_c"):
                 capabilities[name] = run([name, "--version"], byte_limit=8192).strip()
         elif any(shutil.which(name) is None for name in ("rpm", "rpmkeys", "createrepo_c")):
-            raise RefreshRefusal("native RPM tools missing; select a preconfigured native_distribution before capture")
+            raise RefreshRefusal("native RPM tools missing; select a prepared native distribution or pinned SSH VM")
+        if phase == "capture" and plan.get("native_ssh"):
+            from scripts.native_rpm_tools import close_ssh
+
+            close_ssh()
     if phase == "compare":
         from scripts.installation.refresh_drift import (
             compare_native_packages,
@@ -785,6 +789,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--pull-request-number", type=int)
     parser.add_argument("--capture-receipt-sha256")
     parser.add_argument("--native-distribution")
+    parser.add_argument("--native-ssh-host")
+    parser.add_argument("--native-ssh-user")
+    parser.add_argument("--native-ssh-host-key-sha256")
+    parser.add_argument("--native-ssh-password-variable")
     parser.add_argument("--protected-file", type=Path, action="append", default=[])
     args = parser.parse_args(argv)
     configured_root = supported_root()
@@ -822,6 +830,12 @@ def main(argv: list[str] | None = None) -> int:
             "protected_files": [{"path": str(path), "sha256": digest(path)} for path in args.protected_file],
             "capture_receipt": {"path": str(args.capture_receipt), "sha256": args.capture_receipt_sha256} if args.capture_receipt else None,
         }
+        ssh_values = (args.native_ssh_host, args.native_ssh_user,
+                      args.native_ssh_host_key_sha256, args.native_ssh_password_variable)
+        if any(item is not None for item in ssh_values):
+            if any(item is None for item in ssh_values):
+                raise RefreshRefusal("native SSH requires address, account, console fingerprint and password-variable name")
+            value["native_ssh"] = dict(zip(("host", "user", "host_key_sha256", "password_variable"), ssh_values, strict=True))
         validate_plan(value, configured_root=str(configured_root), worktree=str(ROOT))
         publish(args.plan, value)
         print(json.dumps({"plan": str(args.plan), "plan_sha256": canonical_plan_sha256(value)}))
@@ -852,13 +866,22 @@ def main(argv: list[str] | None = None) -> int:
             os.environ[variable] = str(temporary)
         os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
         os.environ.pop("ATLASO_NATIVE_RPM_CONTEXT", None)
-        if plan.get("native_distribution"):
+        if plan.get("native_distribution") or plan.get("native_ssh"):
             native_directory = temporary / "native-tools"
             native_directory.mkdir()
             native_context = temporary / "native-context.json"
-            publish(native_context, {"task_id": plan["task_id"], "source_commit": plan["installer_commit"],
-                                    "directory": str(native_directory), "distribution": plan["native_distribution"],
-                                    "deadline_epoch": datetime.fromisoformat(intent["deadline_utc"]).timestamp()})
+            native_value = {"task_id": plan["task_id"], "source_commit": plan["installer_commit"],
+                       "directory": str(native_directory), "distribution": plan["native_distribution"],
+                       "deadline_epoch": datetime.fromisoformat(intent["deadline_utc"]).timestamp()}
+            if plan.get("native_ssh"):
+                native_value.update(ssh=plan["native_ssh"], phase=args.phase, repository_root=str(ROOT),
+                               process_job_name=read(args.child_receipt)["job_name"],
+                               allowed_roots=[str(ROOT), plan["output_root"], plan["rpms"], plan["powercli"],
+                                              plan["software"]["path"]])
+                if args.phase == "compare":
+                    selection = read(state / "compare-intent.json")["comparison"]
+                    native_value["allowed_roots"].extend(item["path"] for item in selection.values())
+            publish(native_context, native_value)
             os.environ["ATLASO_NATIVE_RPM_CONTEXT"] = str(native_context)
         if os.name == "nt" and shutil.which("openssl") is None:
             git = shutil.which("git")
@@ -866,7 +889,13 @@ def main(argv: list[str] | None = None) -> int:
                 directory = Path(git).parent.parent / "mingw64/bin"
                 if (directory / "openssl.exe").is_file():
                     os.environ["PATH"] = str(directory) + os.pathsep + os.environ["PATH"]
-        report = execute(plan, state, args.phase)
+        try:
+            report = execute(plan, state, args.phase)
+        finally:
+            if plan.get("native_ssh"):
+                from scripts.native_rpm_tools import close_ssh
+
+                close_ssh()
         publish(state / f"{args.phase}-report.json", report)
         print(json.dumps({"phase": args.phase, "report_published": True}))
     return 0

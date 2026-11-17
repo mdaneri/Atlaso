@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import ipaddress
 import json
 import re
 import uuid
@@ -76,6 +78,35 @@ _PLAN_KEYS = {
 }
 _RESULT_STATUSES = {"succeeded", "failed", "refused", "interrupted", "pending"}
 _DRIFT_DISPOSITIONS = {"reuse", "requires_capture", "requires_review"}
+
+
+def validate_native_ssh(value: object) -> dict[str, str]:
+    """Validate public SSH selectors; credentials are never accepted in a plan.
+
+    Args:
+        value: Exact private-address, account, console fingerprint and secret-name selection.
+    """
+    selection = _require_mapping(value, "native SSH", {"host", "user", "host_key_sha256", "password_variable"})
+    if any(not isinstance(item, str) for item in selection.values()):
+        raise ValueError("native SSH selectors must be strings")
+    try:
+        address = ipaddress.IPv4Address(selection["host"])
+        networks = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+        if str(address) != selection["host"] or not any(address in ipaddress.IPv4Network(n) for n in networks):
+            raise ValueError("native SSH requires a canonical RFC1918 IPv4 address")
+    except ipaddress.AddressValueError as exc:
+        raise ValueError("native SSH address is invalid") from exc
+    if not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", selection["user"]):
+        raise ValueError("native SSH account is invalid")
+    fingerprint = selection["host_key_sha256"]
+    if not re.fullmatch(r"SHA256:[A-Za-z0-9+/]{43}", fingerprint):
+        raise ValueError("native SSH requires a console-observed Ed25519 SHA256 fingerprint")
+    decoded = base64.b64decode(fingerprint[7:] + "=", validate=True)
+    if len(decoded) != 32 or base64.b64encode(decoded).decode().rstrip("=") != fingerprint[7:]:
+        raise ValueError("native SSH fingerprint is not canonical")
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", selection["password_variable"]):
+        raise ValueError("native SSH password variable name is invalid")
+    return selection
 
 
 def _require_mapping(value: object, name: str, keys: set[str]) -> dict[str, Any]:
@@ -163,7 +194,8 @@ def validate_plan(
         configured_root: Independently resolved supported Codex worktree root.
         worktree: Independently resolved dedicated task checkout beneath the configured root.
     """
-    plan = _require_mapping(value, "refresh plan", _PLAN_KEYS)
+    keys = _PLAN_KEYS | ({"native_ssh"} if isinstance(value, Mapping) and "native_ssh" in value else set())
+    plan = _require_mapping(value, "refresh plan", keys)
     if type(plan["schema"]) is not int or plan["schema"] != 1:
         raise ValueError("refresh plan schema version is unsupported")
     if not isinstance(plan["operation_id"], str) or not _HEX32.fullmatch(plan["operation_id"]):
@@ -181,6 +213,9 @@ def validate_plan(
     if type(plan["pull_request_number"]) is not int or not 0 < plan["pull_request_number"] <= 2**31 - 1:
         raise ValueError("owning pull request number is invalid")
     native_distribution = plan["native_distribution"]
+    native_ssh = validate_native_ssh(plan["native_ssh"]) if "native_ssh" in plan else None
+    if native_ssh is not None and native_distribution is not None:
+        raise ValueError("select either native SSH or a native distribution")
     if native_distribution is not None and (
         not isinstance(native_distribution, str) or not _NATIVE_DISTRIBUTION.fullmatch(native_distribution)
     ):
@@ -276,6 +311,7 @@ def validate_plan(
         "native_distribution": native_distribution,
         "protected_files": [dict(item) for item in protected],
         "capture_receipt": capture_receipt,
+        **({"native_ssh": native_ssh} if native_ssh is not None else {}),
     }
 
 
