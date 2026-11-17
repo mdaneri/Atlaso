@@ -1,4 +1,4 @@
-"""Package an admitted native capture and retrieve its pinned bytes in release CI."""
+"""Package and admit pinned native installation captures for release CI."""
 
 from __future__ import annotations
 
@@ -11,9 +11,6 @@ import re
 import shutil
 import tarfile
 from pathlib import Path
-from urllib.error import URLError
-from urllib.parse import urlsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from scripts.installation.build import unpack_inputs
 from scripts.installation.manifest import (
@@ -28,23 +25,6 @@ MAX_CAPTURE = 16 * 1024**3
 GIB = 1024**3
 SHA256 = re.compile(r"[0-9a-f]{64}")
 COMMIT = re.compile(r"[0-9a-f]{40}")
-
-
-class NoRedirect(HTTPRedirectHandler):
-    """Keep the read-only credential scoped to the configured storage endpoint."""
-
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        """Refuse redirects before forwarding the capture credential.
-
-        Args:
-            req: Original HTTPS request.
-            fp: Response body stream.
-            code: Redirect HTTP status code.
-            msg: Redirect response message.
-            headers: Redirect response headers.
-            newurl: Redirect destination refused by this handler.
-        """
-        raise URLError("capture storage redirects are disabled")
 
 
 def pack(state: Path, archive: Path) -> None:
@@ -94,49 +74,20 @@ def pack(state: Path, archive: Path) -> None:
     print(digest(archive))
 
 
-def fetch(archive: Path, expected: str, url: str, token: str) -> None:
-    """Download an explicitly pinned capture without logging the URL or credential.
+def verify_archive(archive: Path, expected: str) -> None:
+    """Check the protected capture archive checksum before reading its contents.
 
     Args:
-        archive: Absent path for the downloaded capture archive.
+        archive: Path to the downloaded capture archive.
         expected: Pinned SHA-256 of the capture archive.
-        url: Direct HTTPS URL for the private capture.
-        token: Read-only bearer token for the capture endpoint.
     """
-    try:
-        parsed = urlsplit(url)
-    except ValueError:
-        raise ValueError("protected installation capture URL is invalid") from None
     if (
         not SHA256.fullmatch(expected)
-        or parsed.scheme != "https"
-        or not parsed.hostname
-        or parsed.username
-        or parsed.password
-        or parsed.query
-        or parsed.fragment
-        or not token
+        or archive.is_symlink()
+        or not archive.is_file()
+        or not 0 < archive.stat().st_size <= MAX_CAPTURE
     ):
-        raise ValueError(
-            "protected installation capture configuration is missing or invalid"
-        )
-    limit = min(MAX_CAPTURE, shutil.disk_usage(archive.parent).free - 2 * GIB)
-    try:
-        request = Request(url, headers={"Authorization": f"Bearer {token}"})
-        with (
-            build_opener(NoRedirect()).open(request, timeout=60) as response,
-            archive.open("xb") as output,
-        ):
-            total = 0
-            while block := response.read(1024**2):
-                total += len(block)
-                if total > limit:
-                    raise ValueError(
-                        "capture exceeds the archive size or available capacity"
-                    )
-                output.write(block)
-    except OSError, ValueError:
-        raise ValueError("could not download the pinned installation capture") from None
+        raise ValueError("installation capture archive or protected pin is invalid")
     if digest(archive) != expected:
         raise ValueError("installation capture SHA-256 differs from the protected pin")
 
@@ -212,14 +163,15 @@ def check_capacity(inputs: Path, source_iso: Path, *, prepared: bool) -> None:
 
 
 def main() -> None:
-    """Export a native capture or download and admit it for a protected build."""
+    """Export a native capture or admit it for a protected build."""
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="operation", required=True)
     export = commands.add_parser("pack")
     export.add_argument("--capture-state", type=Path, required=True)
     export.add_argument("--archive", type=Path, required=True)
-    receive = commands.add_parser("fetch")
+    receive = commands.add_parser("admit")
     receive.add_argument("--archive", type=Path, required=True)
+    receive.add_argument("--sha256", required=True)
     receive.add_argument("--output", type=Path, required=True)
     receive.add_argument("--target", type=Path, required=True)
     capacity = commands.add_parser("check-capacity")
@@ -237,12 +189,7 @@ def main() -> None:
             prepared=args.payload is not None,
         )
     else:
-        fetch(
-            args.archive,
-            os.getenv("INSTALLATION_CAPTURE_SHA256", ""),
-            os.getenv("INSTALLATION_CAPTURE_URL", ""),
-            os.getenv("INSTALLATION_CAPTURE_TOKEN", ""),
-        )
+        verify_archive(args.archive, args.sha256)
         admit(args.archive, args.output, args.target, os.environ["GITHUB_REPOSITORY"])
 
 
