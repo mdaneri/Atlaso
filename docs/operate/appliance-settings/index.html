@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="Configure appliance identity and access, inspect hardware, manage guest tools, and set operational logging.">
+        <meta name="description" content="Configure appliance identity and access, inspect hardware, manage guest tools, configure time, and set operational logging.">
       
       
         <meta name="author" content="Atlaso contributors">
@@ -1227,6 +1227,34 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#configure-appliance-time" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Configure appliance time
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Configure appliance time">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#set-the-clock-manually" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Set the clock manually
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#configure-authentication-lifetimes" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1298,6 +1326,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Appliance Settings
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#settings-time-tab" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Settings Time tab
       </span>
     </span>
   </a>
@@ -4270,6 +4309,34 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#configure-appliance-time" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Configure appliance time
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Configure appliance time">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#set-the-clock-manually" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Set the clock manually
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#configure-authentication-lifetimes" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4341,6 +4408,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Appliance Settings
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#settings-time-tab" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Settings Time tab
       </span>
     </span>
   </a>
@@ -4486,7 +4564,7 @@
 
 <h1 id="appliance-settings">Appliance settings<a class="headerlink" href="#appliance-settings" title="Permanent link">&para;</a></h1>
 <p>Open <strong>Settings</strong> and choose the tab for the information or control you need. The page groups settings into <strong>General</strong>,
-<strong>Access &amp; Security</strong>, <strong>Hardware</strong>, and <strong>Logging</strong>. Existing identity, resolver, access, authentication, product
+<strong>Access &amp; Security</strong>, <strong>Hardware</strong>, <strong>Time</strong>, and <strong>Logging</strong>. Existing identity, resolver, access, authentication, product
 preference, and logging forms keep their current save behavior. Appliance changes that affect host services still wait
 for the global Appliance Apply workflow; immediate application settings and explicit maintenance tasks are labeled at
 the point of action.</p>
@@ -4510,6 +4588,37 @@ The vendor-listener repair persists across release rollback while existing
 maintenance guards keep the front door closed until recovery completes.
 A failed nginx configuration check blocks startup and restores the configuration
 from before cleanup.</p>
+<h2 id="configure-appliance-time">Configure appliance time<a class="headerlink" href="#configure-appliance-time" title="Permanent link">&para;</a></h2>
+<p>Open <strong>Settings → Time</strong> to read the appliance clock in UTC. <strong>Selected source</strong> records the preferred clock source.
+<strong>Applied mode</strong> and <strong>Synchronization</strong> show what the appliance can verify now. <strong>Pending</strong> indicates a change that
+still needs Appliance Apply or an in-progress clock transition. <strong>Unsynchronized</strong> indicates a known mode without
+current synchronization. <strong>Unavailable</strong> means Atlaso could not verify the corresponding state.</p>
+<p>For a client-only appliance, set <strong>Clock source</strong> to <strong>NTP client</strong> and keep at least one usable upstream enabled.
+For example, add your organization’s <code>time.example.com</code> through the upstream source wizard. Turn on <strong>Use NTS</strong> only
+if the upstream supports NTS and Atlaso trusts its certificate. Select <strong>Review appliance changes</strong>, review the
+<strong>NTP / NTS</strong> unit, and submit. After Apply succeeds, select <strong>Refresh status</strong> and confirm <strong>NTP client</strong> and
+<strong>Synchronized</strong>. Select <strong>VMware Tools</strong> when you want the verified hypervisor clock and the option is available.</p>
+<p>To serve clients, enable NTP in <a href="../../services/ntp/">NTP and NTS</a> and review the change through Appliance Apply.
+<strong>Settings → Time</strong> continues to show clock status, and the editors explain that the NTP service owns the settings.
+Use the service page to change the upstreams while server mode is enabled. Disabling the server there restores the
+remembered clock choice on the next Apply.</p>
+<h3 id="set-the-clock-manually">Set the clock manually<a class="headerlink" href="#set-the-clock-manually" title="Permanent link">&para;</a></h3>
+<p>An administrator can set an absolute UTC date and time when automatic controllers are off.</p>
+<ol>
+<li>On VMware, stop and disable the guest's VMware Tools service before applying Manual mode. Tools events can set
+   time even when periodic sync is disabled. QEMU and Hyper-V require the existing guest clock protections.</li>
+<li>Select <strong>Manual</strong>, review the <strong>NTP / NTS</strong> unit, and apply the mode. Select <strong>Refresh status</strong>. Atlaso enables
+   manual date and time entry after proving automatic clock adjustments are off.</li>
+<li>Enter <strong>Date and time (UTC)</strong> and select <strong>Stage clock change</strong>. Open <strong>Review appliance changes</strong>, inspect the
+   UTC target in the NTP / NTS configuration difference, and submit.</li>
+<li>Verify the new time through <strong>Refresh status</strong> and review the result in <strong>Tasks</strong>. Manual mode reports
+   <strong>Unsynchronized</strong> because no automatic source establishes synchronization.</li>
+</ol>
+<p>Clock steps can affect currently valid certificates, sessions, scheduled work, and logs. Apply the target during a
+maintenance window, then check those services. If Apply reports an uncertain clock change, check the displayed time
+before you stage a new target. To return to automatic control, select <strong>NTP client</strong> or <strong>VMware Tools</strong> and review
+that change. Manual mode survives a reboot, and Settings archives retain the selected source and upstreams. Atlaso
+does not replay the previously staged UTC target during startup, update reconciliation, or archive restore.</p>
 <h2 id="configure-authentication-lifetimes">Configure authentication lifetimes<a class="headerlink" href="#configure-authentication-lifetimes" title="Permanent link">&para;</a></h2>
 <p>On <strong>Access &amp; Security</strong>, <strong>Authentication lifetimes</strong> saves immediately and does not create a pending Appliance Apply unit:</p>
 <ul>
@@ -4642,6 +4751,19 @@ the <a href="../appliance-console/">local appliance console</a> to inspect netwo
 <p><em>Figure: Rendered Appliance Settings configuration preview.</em></p>
 <p><img alt="Atlaso Settings validation card explaining that the appliance FQDN is invalid." src="../../assets/screenshots/settings-validation-error-desktop.webp" /></p>
 <p><em>Figure: Appliance Settings validation error for an invalid FQDN.</em></p>
+<h3 id="settings-time-tab">Settings Time tab<a class="headerlink" href="#settings-time-tab" title="Permanent link">&para;</a></h3>
+<p><img alt="Settings Time tab with a synchronized NTP client and editable clock source and upstreams." src="../../assets/screenshots/settings-time-client-desktop.webp" /></p>
+<p><em>Figure: The appliance synchronizes with an upstream NTP source and keeps the client settings editable.</em></p>
+<p><img alt="Responsive Settings Time tab with the synchronized NTP client and upstream source list." src="../../assets/screenshots/settings-time-client-responsive.webp" /></p>
+<p><em>Figure: The Time tab keeps clock status and upstream sources together on a narrower display.</em></p>
+<p><img alt="Settings Time tab showing applied Manual mode and the enabled date and time field." src="../../assets/screenshots/settings-time-manual-desktop.webp" /></p>
+<p><em>Figure: After Manual Apply, the clock remains unsynchronized and the UTC clock change form is available.</em></p>
+<p><img alt="Responsive Settings Time tab with Manual mode and the UTC clock change form." src="../../assets/screenshots/settings-time-manual-responsive.webp" /></p>
+<p><em>Figure: Use the UTC date and time field to stage the next clock target for Appliance Apply.</em></p>
+<p><img alt="Settings Time tab with applied NTP/NTS server mode, disabled editors, and the NTP and NTS link." src="../../assets/screenshots/settings-time-server-desktop.webp" /></p>
+<p><em>Figure: Use NTP and NTS to edit clock configuration while the appliance serves time to other systems.</em></p>
+<p><img alt="Responsive Settings Time tab with the NTP service ownership notice and read-only clock controls." src="../../assets/screenshots/settings-time-server-responsive.webp" /></p>
+<p><em>Figure: Clock status stays visible while the NTP service owns the settings.</em></p>
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
 
 

@@ -4472,13 +4472,17 @@ NTPsec.</p>
 multiple interfaces are selected. Changing an unselected interface with a duplicate address does not require an
 unrelated NTP or DNS binding change. Ambiguous selected sources are not assigned to an arbitrary interface.</p>
 <h2 id="appliance-clock-source">Appliance clock source<a class="headerlink" href="#appliance-clock-source" title="Permanent link">&para;</a></h2>
-<p>When the NTP service is disabled, <strong>Appliance time source</strong> selects one clock authority:</p>
+<p>When the NTP service is disabled, <a href="../../operate/appliance-settings/#configure-appliance-time"><strong>Settings → Time</strong></a>
+selects the clock authority:</p>
 <ul>
 <li><strong>NTP client</strong> is the default. Atlaso uses its configured upstream NTP/NTS sources to discipline the appliance
   clock and disables VMware Tools periodic guest time synchronization.</li>
 <li><strong>VMware Tools</strong> uses the hypervisor's guest time synchronization and disables Atlaso's NTP client service.
   This choice is available only when the appliance confirms VMware Tools support. Appliances without VMware Tools
   use NTP client; a restored VMware Tools choice is normalized before Apply.</li>
+<li><strong>Manual</strong> disables automatic clock control. After that mode is applied and the absence of automatic clock
+  adjustment is verified, a separate administrator-only Appliance Apply can set one UTC target. A manual clock is
+  shown as unsynchronized.</li>
 </ul>
 <p>These sources are mutually exclusive because both can adjust the same system clock. Enabling the NTP service makes the
 managed <strong>NTP/NTS server</strong> the effective clock mode; NTPsec uses the configured upstream sources and Atlaso disables
@@ -4556,7 +4560,8 @@ current <code>leap_none</code> and <code>sync_ntp</code> state with a selected p
 missing replies
 even while those synchronization flags remain set. Firewall Apply and service activation replay
 the client-only ingress guard in the same nftables transaction as the firewall rules.</p>
-<p>Appliance Settings does not own time enforcement. DNS/DHCP also does not apply NTP configuration.
+<p><strong>Settings → Time</strong> edits the canonical NTP source settings when server mode is disabled. The NTP unit in global
+Appliance Apply enforces clock ownership and records the result. DNS/DHCP does not apply NTP configuration.
 The configured NTP hostname serves both NTP and NTS; Atlaso creates one managed CNAME with A and AAAA targets for
 the selected listener addresses. Disable NTP to remove those owned records while preserving operator DNS rows.
 Web Terminal enablement and interface autosave are isolated to Appliance Settings and never change NTP/NTS sources,
