@@ -146,9 +146,10 @@ Set `INSTALLATION_CAPTURE_DIGEST` to the OCI manifest digest (including `sha256:
 environment. Set `INSTALLATION_CAPTURE_TOKEN` there as an environment secret using a classic GitHub token with
 `read:packages` from an account with read access to the package. Keep the package private and give no Actions access
 to the public repository. Rotate both pins together after a new compatible capture is admitted.
-CI checks the manifest and archive digests, capture fingerprint for the release source, RPM signatures and transactions, PowerCLI
-lock, pinned Photon source, and free space. An admission failure leaves the version unpublished. Once inputs are fixed,
-dispatch the workflow from `main` with the full release commit and blank approval fields to retry staging.
+CI checks the manifest and archive digests, capture fingerprint for the release source, RPM signatures and
+transactions, PowerCLI lock, pinned Photon source, and free space. An admission failure leaves the version
+unpublished. Once inputs are fixed, dispatch the workflow from `main` with the full release commit and blank
+approval fields to retry staging.
 
 Download the complete signed draft and verify and reconstruct the ISO as described below. Record disconnected UEFI
 installation, boot without media, Appliance Update and rollback persistence, unselected-disk preservation, and
