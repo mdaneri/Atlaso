@@ -19,9 +19,9 @@ from pathlib import Path
 PACKAGE_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9+._:-]*\Z")
 PHOTON_DEFAULT_DISTROVERPKG = "photon-release"
 INSTALLATION_FILESYSTEM_SHA256 = "7f5bba3e84f6eb50f6e5e311325089bc642549469d83793e0ba5f40d74ec6024"
-# Reviewed 257.13-6.1.ph5 retains the pinned journal policy and directory metadata.
-# Its new transaction triggers remain subject to full native installation checks.
-INSTALLATION_SYSTEMD_SHA256 = "3f31b4ae0bdcdc410909907dcb0e7bfd09f46259a97cceae0d55195ece4e49ba"
+# Reviewed 257.13-6.2.ph5 retains the pinned journal policy and directory metadata.
+# Its transaction triggers remain subject to full native installation checks.
+INSTALLATION_SYSTEMD_SHA256 = "3a167b0ffd6f92d5228e0aa7124bc762d1ef05e6989730b9e3715f21d986302d"
 INSTALLATION_SYSTEMD_TMPFILES_PATH = Path("/usr/lib/tmpfiles.d/systemd.conf")
 INSTALLATION_SYSTEMD_TMPFILES_SHA256 = "68e4c097e33b30c731a359cb3af86693e5f854c53d3d6bb5ec9eb7d17f04e585"
 INSTALLATION_SYSTEMD_JOURNAL_PATH = Path("/var/log/journal")
@@ -35,18 +35,18 @@ INSTALLATION_AUDIT_PATH = Path("/var/log/audit")
 INSTALLATION_AUDIT_TMPFILES_ROW = "d /var/log/audit 0700 root root - -"
 INSTALLATION_RPCBIND_SHA256 = "2c3d001aca71e6c6c81377a7bfc7ec9c3d26ee7a9891b4a706a8205657bc31ba"
 INSTALLATION_RPCBIND_PATH = Path("/var/lib/rpcbind")
-# Reviewed openssh-server-10.6p1-2.ph5 retains the native root:sys 0711 directory policy.
-INSTALLATION_OPENSSH_SHA256 = "8701947e3a0ca692ad4dc19b51432e2030e04b54d1a3f124276c43ccbd016dc3"
+# Reviewed openssh-server-10.6p2-1.ph5 retains the native root:sys 0711 directory policy.
+INSTALLATION_OPENSSH_SHA256 = "5c29107c8f319168053189a81bcc51711e7a0371494f5575270226cba84c8474"
 INSTALLATION_OPENSSH_PATH = Path("/usr/share/empty.sshd")
 INSTALLATION_OPENLDAP_SHA256 = "11b4af044b7418ba9af5cf6762e2cbe5add5b3463774d20f6be89b8ff98c47dc"
 INSTALLATION_OPENLDAP_UNIT_PATH = Path("/usr/lib/systemd/system/slapd.service")
 INSTALLATION_OPENLDAP_UNIT_SHA256 = "203aafa5cb6c16defe0fae0100bc89b9cbf65d666e7d73a9b510f8fb8b94c8cf"
 INSTALLATION_SHIM_SHA256 = "e41e6109d7be89ae83da63ef8021ef9a0e053ecd4fe1f47ae73dd79270d688c7"
 INSTALLATION_GRUB_EFI_SHA256 = "516e63a3c609abecf4a4bf3ef2661d4f1bed26729a612f73e0bfcb530727e91f"
-INSTALLATION_LINUX_SHA256 = "8f7a626f72355c6ccf22bee6f3c346343540d0f891ceae4136cce2a98f436aa1"
+INSTALLATION_LINUX_SHA256 = "845c5470961f920a91a83f187a749d3c9c97e865a7fdc9f8300691da2f740d0a"
 INSTALLATION_KMOD_SHA256 = "b7614a76f7a17b832e2158fe90413cf2af719b1d1e9d85bfae7195e4905a7850"
 INSTALLATION_KMOD_BINARY_SHA256 = "ee872a0ddff939b69e87beec32090dc98d1882e9028f4bd5729b9a2b858aaaeb"
-INSTALLATION_MODULE_ROOT = Path("/usr/lib/modules/6.12.115-2.ph5")
+INSTALLATION_MODULE_ROOT = Path("/usr/lib/modules/6.12.116-2.ph5")
 INSTALLATION_MODULE_RUN_ROOT = Path("/run")
 INSTALLATION_KMOD_FILES = (
     ("/usr/bin/kmod", 171272, "954714d5862c7081a266babeac7d5dd859e7b0812224dad9a7b81957bf93c629"),
@@ -55,9 +55,9 @@ INSTALLATION_KMOD_FILES = (
 # Canonical original RPM header records across the complete admitted closure.
 # Directory sizes normalize to zero; filesystem allocation sizes are not inputs.
 INSTALLATION_MODULE_INPUT_COUNT = 1235
-INSTALLATION_MODULE_INPUT_BYTES = 37990052
-INSTALLATION_MODULE_INPUT_SHA256 = "b7f214487d0be72d46fdaade667370c3c373524c8bad9a6223bfbaa48c5fd20f"
-INSTALLATION_MODULE_NAMESPACE_SHA256 = "00b00a72b15c378c666d143a1cfc818bda3dbcbef3c1bacef2adc719f87ea458"
+INSTALLATION_MODULE_INPUT_BYTES = 38067500
+INSTALLATION_MODULE_INPUT_SHA256 = "a9e7d74861d7170f38fa00c4b65352a3bf27c486cb43d3a0699cf9ae97fa310a"
+INSTALLATION_MODULE_NAMESPACE_SHA256 = "a89c7d66c2b98fe17e21bc0fff59ea0e7a7643bc3bcd8ec1455dc2dd92955267"
 INSTALLATION_MODULE_GENERATED = frozenset({
     "modules.dep", "modules.dep.bin", "modules.alias", "modules.alias.bin",
     "modules.softdep", "modules.weakdep", "modules.symbols", "modules.symbols.bin",
@@ -68,7 +68,7 @@ _INSTALLATION_STABLE_FIELDS = (
     "st_size", "st_mtime_ns", "st_ctime_ns",
 )
 INSTALLATION_MODULE_GENERATED_PATHS = frozenset(
-    "/lib/modules/6.12.115-2.ph5/" + name for name in INSTALLATION_MODULE_GENERATED
+    "/lib/modules/6.12.116-2.ph5/" + name for name in INSTALLATION_MODULE_GENERATED
 )
 INSTALLATION_LAYOUT_HELPER_PATH = Path(__file__).resolve().parents[3] / "scripts/installation/layout.py"
 INSTALLATION_LAYOUT_HELPER_SHA256 = "1feb571697f3a1e592e3839bc303cd4c20cd8d40f7acd4e3d7df93449de99608"
