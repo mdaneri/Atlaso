@@ -60,3 +60,49 @@ test("runtime load coordinator suppresses overlapping refresh requests", async (
   assert.equal(await first, await second);
   assert.equal(renderCount, 1);
 });
+
+
+test("update comparison details show the before and after MTU and carrier", () => {
+  const comparison = {
+    eth1: { interface: "eth1", carrier: true, mtu: 1500, addresses: [] },
+    eth2: { interface: "eth2", carrier: true, mtu: 1500, addresses: [] },
+  };
+  const document = context.document;
+  const changedDetails = [];
+  const elements = new Map();
+  const root = {
+    querySelector(selector) {
+      if (!elements.has(selector)) elements.set(selector, { append() {}, replaceChildren() {} });
+      return elements.get(selector);
+    },
+  };
+  document.createElement = (tag) => ({
+    append(...children) {
+      if (tag === "ul") changedDetails.push(...children.map((child) => child.textContent));
+    },
+  });
+  runtime.renderMonitorUpdateComparison(root, {
+    phases: {},
+    sections: {
+      interfaces: {
+        state: "ok",
+        changed: [
+          { before: comparison.eth1, after: { ...comparison.eth1, mtu: 9000 } },
+          { before: comparison.eth2, after: { ...comparison.eth2, carrier: false } },
+        ],
+      },
+    },
+  });
+  assert.match(changedDetails[0], /MTU 1500.*→.*MTU 9000/);
+  assert.match(changedDetails[1], /Carrier up.*→.*Carrier down/);
+});
+
+test("an unavailable clock observation clears previously observed health", () => {
+  const fields = new Map(["source", "sync", "pending"].map((field) => [`[data-monitor-clock-${field}]`, {}]));
+  const panel = { querySelector: (selector) => fields.get(selector) };
+  const values = () => Array.from(fields.values(), (field) => field.textContent);
+  runtime.renderClockSummary(panel, { source: "ntp_client", synchronization: "synchronized", pending: false });
+  assert.deepEqual(values(), ["NTP client", "Synchronized", "No transition pending"]);
+  runtime.renderClockSummary(panel, undefined);
+  assert.deepEqual(values(), ["Unavailable", "Unavailable", "Unavailable"]);
+});

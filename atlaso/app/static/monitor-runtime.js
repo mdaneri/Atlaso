@@ -288,10 +288,29 @@
       return `IPv${row.family} priority ${row.priority}: ${row.source || "all"} → ${row.destination || "all"}, ${row.action || "lookup"} ${tableLabel(row.table)}${row.ingress ? ` from ${row.ingress}` : ""}`;
     }
     if (section === "interfaces") {
-      const addresses = Array.isArray(row.addresses) ? row.addresses.map((address) => `${address.address}/${address.prefix}`).join(", ") : "";
-      return `${row.interface || "Interface"}${row.parent ? ` on ${row.parent}${row.vlan === null || row.vlan === undefined ? "" : ` VLAN ${row.vlan}`}` : ""}${addresses ? ` · ${addresses}` : " · no addresses"}`;
+      const addresses = (Array.isArray(row.addresses) ? row.addresses : []).map(({ address, prefix, origin }) =>
+        `${address}/${prefix}${origin ? ` (${origin})` : ""}`).join(", ");
+      const parent = row.parent ? ` on ${row.parent}` : "";
+      const vlan = row.vlan == null ? "" : ` VLAN ${row.vlan}`;
+      const carrier = row.carrier === true ? "up" : row.carrier === false ? "down" : "unavailable";
+      return `${row.interface || "Interface"}${parent}${vlan} · Carrier ${carrier} · MTU ${row.mtu ?? "unavailable"} · ${addresses || "no addresses"}`;
     }
     return `IPv${row.family} forwarding ${row.enabled === true ? "enabled" : row.enabled === false ? "disabled" : "unavailable"}`;
+  }
+
+  function renderClockSummary(panel, clock) {
+    const source = panel.querySelector("[data-monitor-clock-source]");
+    const sync = panel.querySelector("[data-monitor-clock-sync]");
+    const pending = panel.querySelector("[data-monitor-clock-pending]");
+    if (source) source.textContent = clockSourceLabel(clock?.source);
+    if (sync) {
+      const value = clock?.synchronization;
+      sync.textContent = value ? value.charAt(0).toUpperCase() + value.slice(1) : "Unavailable";
+    }
+    if (pending) {
+      pending.textContent = clock?.pending === true ? "Pending or unverified"
+        : clock?.pending === false ? "No transition pending" : "Unavailable";
+    }
   }
 
   function setGridFallback(table, key, rows, state) {
@@ -450,18 +469,7 @@
         const value = panel.querySelector(`[data-monitor-forwarding-family="${row.family}"]`);
         if (value) value.textContent = row.enabled === true ? "Enabled" : row.enabled === false ? "Disabled" : "Unavailable";
       });
-      const clock = sections.clock?.rows?.[0];
-      if (clock) {
-        const source = panel.querySelector("[data-monitor-clock-source]");
-        const sync = panel.querySelector("[data-monitor-clock-sync]");
-        const pending = panel.querySelector("[data-monitor-clock-pending]");
-        if (source) source.textContent = clockSourceLabel(clock.source);
-        if (sync) {
-          const value = clock.synchronization;
-          sync.textContent = value ? value.charAt(0).toUpperCase() + value.slice(1) : "Unavailable";
-        }
-        if (pending) pending.textContent = clock.pending === true ? "Pending or unverified" : clock.pending === false ? "No transition pending" : "Unavailable";
-      }
+      renderClockSummary(panel, sections.clock?.rows?.[0]);
       const ingress = panel.querySelector("[data-monitor-route-lookup] select[name='ingress']");
       if (ingress && sections.interfaces?.rows) {
         const selected = ingress.value;
@@ -586,6 +594,7 @@
     clockSourceLabel,
     formatDuration,
     monitorRuntimeStatusText,
+    renderClockSummary,
     renderMonitorUpdateComparison,
     tableLabel,
   };

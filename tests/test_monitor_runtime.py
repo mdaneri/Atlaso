@@ -14,7 +14,8 @@ from atlaso.monitor_native import (
 )
 
 
-def test_network_projects_forwarding_domains_addresses_and_neighbors(monkeypatch):
+@pytest.mark.parametrize("origin_status", ["complete", "incomplete", "timeout"])
+def test_network_projects_forwarding_domains_addresses_and_neighbors(monkeypatch, origin_status):
     """Keep table identity, observed gateway states, and address origin distinct."""
     data = {
         ("-4", "route", "show", "table", "all"): [
@@ -47,8 +48,10 @@ def test_network_projects_forwarding_domains_addresses_and_neighbors(monkeypatch
 
     def helper(_self, *, timeout_seconds):
         assert 0 < timeout_seconds <= 3
+        if origin_status == "timeout":
+            return AdapterResult([], False, returncode=124)
         return AdapterResult([], False, json.dumps({
-            "complete": True,
+            "complete": origin_status == "complete",
             "links": [{"name": "eth0", "ifindex": 2, "mac": "00:11:22:33:44:55",
                        "addresses": [{"address": "192.0.2.2", "source": "DHCPv4", "state": "assigned"}]}],
         }))
@@ -67,7 +70,9 @@ def test_network_projects_forwarding_domains_addresses_and_neighbors(monkeypatch
     assert [row["state"] for row in payload["neighbors"]["rows"]] == ["FAILED", "No entry observed", "STALE"]
     physical, vlan = payload["interfaces"]["rows"]
     assert physical["carrier"] and physical["rx_errors"] == 3
-    assert physical["addresses"] == [{"address": "192.0.2.2", "prefix": 24, "origin": "DHCPv4"}]
+    expected_origin = "DHCPv4" if origin_status == "complete" else None
+    assert physical["addresses"] == [{"address": "192.0.2.2", "prefix": 24, "origin": expected_origin}]
+    assert payload["interfaces"]["state"] == ("ok" if origin_status == "complete" else "partial")
     assert (vlan["parent"], vlan["vlan"], vlan["carrier"]) == ("eth0", 100, False)
     assert payload["forwarding"]["rows"] == [{"family": 4, "enabled": False}, {"family": 6, "enabled": True}]
 

@@ -240,15 +240,19 @@ def _helper_object(result: AdapterResult) -> Row:
         return {}
 
 
-def _observed_origins(adapter: SystemAdapter, deadline: float) -> dict[tuple[int, str, str, str], str]:
+def _observed_origins(
+    adapter: SystemAdapter, deadline: float,
+) -> tuple[dict[tuple[int, str, str, str], str], bool]:
+    """Return the origins and whether native discovery completed."""
     remaining = min(deadline - time.monotonic(), 3)
     if remaining <= 0.05:
-        return {}
+        return {}, False
     payload = _helper_object(adapter.read_network_address_status(timeout_seconds=remaining))
-    if payload.get("complete") is not True:
-        return {}
+    links = payload.get("links")
+    if payload.get("complete") is not True or not isinstance(links, list):
+        return {}, False
     origins = {}
-    for link in _items(payload.get("links")):
+    for link in _items(links):
         name, index, mac = _token(link.get("name")), _int(link.get("ifindex")), _token(link.get("mac"))
         if not (name and index and mac):
             continue
@@ -257,7 +261,7 @@ def _observed_origins(adapter: SystemAdapter, deadline: float) -> dict[tuple[int
             address = _address(row.get("address"))
             if address and isinstance(origin, str) and origin in ADDRESS_ORIGINS and row.get("state") == "assigned":
                 origins[index, name, mac.lower(), address] = origin
-    return origins
+    return origins, True
 
 
 def _interfaces(adapter: SystemAdapter, deadline: float) -> Section:
@@ -265,9 +269,9 @@ def _interfaces(adapter: SystemAdapter, deadline: float) -> Section:
         native = _json_rows(_ip_arguments("-statistics", "address", "show"), deadline)
     except ValueError:
         return _section([], "unavailable")
-    origins = _observed_origins(adapter, deadline)
+    origins, origins_complete = _observed_origins(adapter, deadline)
     names = {_int(row.get("ifindex")): _token(row.get("ifname")) for row in map(_dict, native[:MAX_ROWS])}
-    partial = len(native) > MAX_ROWS
+    partial = not origins_complete or len(native) > MAX_ROWS
     rows = []
     for link in map(_dict, native[:MAX_ROWS]):
         name = _token(link.get("ifname"))
