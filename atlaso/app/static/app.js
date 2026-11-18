@@ -17432,10 +17432,12 @@ function renderTaskDetail(task) {
     cancelButton.disabled = !task.can_cancel;
     cancelButton.dataset.taskId = task.id;
   }
-  if (networkComparisonLink instanceof HTMLAnchorElement) {
-    const comparisonUrl = String(task.network_comparison_url || "");
-    networkComparisonLink.href = comparisonUrl || "#";
-    networkComparisonLink.classList.toggle("hidden", !comparisonUrl);
+  if (networkComparisonLink) {
+    const available = task.network_comparison_available === true && typeof task.id === "string" && task.id.length > 0;
+    const params = new URLSearchParams({ view: "network" });
+    if (available) params.set("update", task.id);
+    networkComparisonLink.search = params.toString();
+    networkComparisonLink.classList.toggle("hidden", !available);
   }
   if (logButton instanceof HTMLButtonElement) {
     logButton.dataset.taskId = task.id;

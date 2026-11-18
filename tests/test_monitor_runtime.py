@@ -91,21 +91,27 @@ def test_route_lookup_passes_only_numeric_destinations_and_validated_selectors(m
     monkeypatch.setattr(runtime, "SystemAdapter", lambda: SystemAdapter(dry_run=False))
     calls = []
 
-    def observe(argv, _deadline):
-        calls.append(argv[4:])
-        if argv[-1] == "203.0.113.1":
+    def observe(argv, _deadline, *, input_data):
+        calls.append((argv, input_data))
+        if input_data == b"route get fibmatch 203.0.113.1\n":
             return 2, "RTNETLINK answers: Network is unreachable"
-        table, interface = ("200", "eth2") if "iif" in argv else ("100", "eth0")
+        table, interface = ("200", "eth2") if b" iif " in input_data else ("100", "eth0")
         return 0, json.dumps([{"dst": "default", "table": table, "dev": interface, "gateway": "192.0.2.1"}])
 
     monkeypatch.setattr(runtime, "run_native", observe)
-    for fields in (("example.com", "", ""), ("192.0.2.2", "::1", ""), ("192.0.2.2", "", "eth0;id")):
+    for fields in (
+        ("example.com", "", ""), ("192.0.2.2", "::1", ""), ("192.0.2.2", "", "eth0;id"),
+        ("192.0.2.2\n", "", ""), ("192.0.2.2", "", "eth0\neth1"), ("fe80::1%eth0", "", ""),
+    ):
         with pytest.raises(ValueError):
             runtime.route_lookup(*fields)
     assert calls == []
     assert runtime.route_lookup("192.0.2.2", "192.0.2.4", "")["rows"][0]["table"] == 100
     assert runtime.route_lookup("192.0.2.2", "192.0.2.4", "eth1")["rows"][0]["table"] == 200
-    assert calls[1] == ["-4", "route", "get", "fibmatch", "192.0.2.2", "from", "192.0.2.4", "iif", "eth1"]
+    assert calls[1] == (
+        ["ip", "-N", "-j", "-details", "-4", "-batch", "-"],
+        b"route get fibmatch 192.0.2.2 from 192.0.2.4 iif eth1\n",
+    )
     assert runtime.route_lookup("203.0.113.1", "", "")["state"] == "unreachable"
 
 

@@ -150,12 +150,10 @@ def test_comparison_requires_an_install_task_and_matching_transaction():
         network_reader = Identity(
             "operator", "network-admin", {"read:monitoring", "read:routes"}
         )
-        assert _task_row(install, network_reader)["network_comparison_url"] == (
-            "/ui/management/monitor?view=network&update=job_212345abcdef"
-        )
+        assert _task_row(install, network_reader)["network_comparison_available"] is True
         monitoring_reader = Identity("viewer", "viewer", {"read:monitoring"})
-        assert "network_comparison_url" not in _task_row(install, monitoring_reader)
-        assert "network_comparison_url" not in _task_row(check, network_reader)
+        assert "network_comparison_available" not in _task_row(install, monitoring_reader)
+        assert "network_comparison_available" not in _task_row(check, network_reader)
 
 
 def test_native_capture_failure_is_retained_as_unavailable(monkeypatch):

@@ -381,13 +381,16 @@ def route_lookup(destination: str, source: str, ingress: str) -> Section:
     if SystemAdapter().dry_run:
         return _section([], "unavailable")
     deadline = time.monotonic() + 3
-    arguments = _ip_arguments(f"-{family}", "route", "get", "fibmatch", target)
+    # Only one read-only batch line reaches ip. The address parser and ingress
+    # allowlist exclude whitespace, continuations, and batch delimiters.
+    query = ["route", "get", "fibmatch", target]
     if origin:
-        arguments.extend(("from", origin))
+        query.extend(("from", origin))
     if ingress:
-        arguments.extend(("iif", ingress))
+        query.extend(("iif", ingress))
+    arguments = _ip_arguments("-4" if family == 4 else "-6", "-batch", "-")
     try:
-        code, output = run_native(arguments, deadline)
+        code, output = run_native(arguments, deadline, input_data=(" ".join(query) + "\n").encode("ascii"))
         if code:
             if "Network is unreachable" in output or "No route to host" in output:
                 return _section([], "unreachable")

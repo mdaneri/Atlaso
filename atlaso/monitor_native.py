@@ -37,19 +37,25 @@ class ObservationUnavailable(ValueError):
     """A bounded native observation could not be completed."""
 
 
-def run_native(args: list[str], deadline: float) -> tuple[int, str]:
-    """Run one native command using a fixed search path and bounded output."""
+def run_native(args: list[str], deadline: float, *, input_data: bytes = b"") -> tuple[int, str]:
+    """Run one native command using a fixed search path and bounded I/O."""
+    if len(input_data) > 256:
+        raise ObservationUnavailable
     executable = shutil.which(args[0], path=NATIVE_PATH) if os.name == "posix" else None
     if not executable or time.monotonic() >= deadline:
         raise ObservationUnavailable
     try:
         with subprocess.Popen(
-            [executable, *args[1:]], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT, env={"PATH": NATIVE_PATH, "LC_ALL": "C"},
+            [executable, *args[1:]],
+            stdin=subprocess.PIPE if input_data else subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env={"PATH": NATIVE_PATH, "LC_ALL": "C"},
         ) as process:
             assert process.stdout is not None
             output = bytearray()
             try:
+                if process.stdin is not None:
+                    with process.stdin:
+                        process.stdin.write(input_data)
                 while time.monotonic() < deadline:
                     ready, _, _ = select.select([process.stdout], [], [], max(0, deadline - time.monotonic()))
                     if not ready:

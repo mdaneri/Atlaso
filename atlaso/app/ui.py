@@ -9504,9 +9504,7 @@ def _task_row(job: Job, identity: Identity | None = None) -> dict[str, Any]:
             and identity.can("read:monitoring")
             and identity.can("read:routes")
         ):
-            row["network_comparison_url"] = (
-                f"{MANAGEMENT_UI_ROOT}/monitor?view=network&update={job.id}"
-            )
+            row["network_comparison_available"] = True
     if steps:
         row["_children"] = [_job_step_row(step) for step in steps]
     return row
