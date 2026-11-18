@@ -1,0 +1,76 @@
+{% if monitor_can_network %}
+<section id="monitor-network-panel" class="tab-panel {{ 'active' if monitor_view == 'network' else '' }}" role="tabpanel" aria-labelledby="monitor-network-tab" {% if monitor_view != 'network' %}hidden{% endif %} data-monitor-network-panel>
+  <article class="panel monitor-runtime-panel">
+    <div class="panel-head">
+      <div><h2>Network runtime</h2><p class="muted">Inspect the routes and kernel state currently used by the appliance.</p></div>
+      <button class="button secondary" type="button" data-monitor-refresh>Refresh</button>
+    </div>
+    <p class="muted" data-monitor-runtime-status role="status" aria-live="polite">Waiting for a live network observation.</p>
+    <noscript><p class="alert warning">Live network observations and route lookup require JavaScript. Open the appliance’s local console for native recovery commands.</p></noscript>
+    {% if monitor_update %}
+    <section class="monitor-update-comparison" data-monitor-update="{{ monitor_update }}" aria-labelledby="monitor-update-comparison-title">
+      <div class="panel-head compact"><div><h3 id="monitor-update-comparison-title">Network changes during update</h3><p class="muted" data-monitor-update-status>Loading before and after observations.</p></div></div>
+      <div class="monitor-update-captures"><span>Before <time data-monitor-update-before>Not captured</time></span><span>After <time data-monitor-update-after>Not captured</time></span></div>
+      <div class="monitor-update-sections" data-monitor-update-sections></div>
+    </section>
+    {% endif %}
+    <div class="monitor-forwarding-grid" data-monitor-forwarding>
+      <div><span>IPv4 forwarding</span><strong data-monitor-forwarding-family="4">Loading</strong></div>
+      <div><span>IPv6 forwarding</span><strong data-monitor-forwarding-family="6">Loading</strong></div>
+    </div>
+  </article>
+  <article class="panel monitor-runtime-panel">
+    <div class="panel-head compact"><div><h2>Routes</h2><p class="muted">All kernel routing tables, including defaults and alternate paths.</p><p class="muted hidden" data-monitor-section-status="routes" role="status"></p></div></div>
+    <label class="monitor-grid-filter">Filter routes <input type="search" data-monitor-route-filter placeholder="Family, table, or interface"></label>
+    <div class="monitor-table-scroll"><div class="tabulator-shell" data-monitor-grid="routes" data-fallback-id="monitor-routes-fallback"></div>
+      <table id="monitor-routes-fallback" class="data-table compact"><thead><tr><th>Family</th><th>Table</th><th>Destination</th><th>Gateway</th><th>Interface</th><th>Metric</th><th>Type</th></tr></thead><tbody><tr><td colspan="7">Waiting for a live network observation.</td></tr></tbody></table>
+    </div>
+  </article>
+  <article class="panel monitor-runtime-panel">
+    <div class="panel-head compact"><div><h2>Policy rules</h2><p class="muted">Rules are shown in the priority order used by the kernel.</p><p class="muted hidden" data-monitor-section-status="rules" role="status"></p></div></div>
+    <div class="monitor-table-scroll"><div class="tabulator-shell" data-monitor-grid="rules" data-fallback-id="monitor-rules-fallback"></div>
+      <table id="monitor-rules-fallback" class="data-table compact"><thead><tr><th>Family</th><th>Priority</th><th>Source</th><th>Destination</th><th>Ingress</th><th>Table or action</th></tr></thead><tbody><tr><td colspan="6">Waiting for a live network observation.</td></tr></tbody></table>
+    </div>
+  </article>
+  <article class="panel monitor-runtime-panel">
+    <div class="panel-head compact"><div><h2>Interfaces and addresses</h2><p class="muted">Observed addresses and link details are separate from saved network settings.</p><p class="muted hidden" data-monitor-section-status="interfaces" role="status"></p></div></div>
+    <div class="monitor-table-scroll"><div class="tabulator-shell" data-monitor-grid="interfaces" data-fallback-id="monitor-interfaces-fallback"></div>
+      <table id="monitor-interfaces-fallback" class="data-table compact"><thead><tr><th>Interface</th><th>Link</th><th>Parent / VLAN</th><th>Addresses</th><th>MTU</th><th>RX errors</th><th>TX errors</th></tr></thead><tbody><tr><td colspan="7">Waiting for a live network observation.</td></tr></tbody></table>
+    </div>
+  </article>
+  <article class="panel monitor-runtime-panel">
+    <div class="panel-head compact"><div><h2>Gateway neighbors</h2><p class="muted">Observed ARP and IPv6 neighbor state for locally known next hops.</p><p class="muted hidden" data-monitor-section-status="neighbors" role="status"></p></div></div>
+    <div class="monitor-table-scroll"><div class="tabulator-shell" data-monitor-grid="neighbors" data-fallback-id="monitor-neighbors-fallback"></div>
+      <table id="monitor-neighbors-fallback" class="data-table compact"><thead><tr><th>Family</th><th>Address</th><th>Interface</th><th>State</th></tr></thead><tbody><tr><td colspan="4">Waiting for a live network observation.</td></tr></tbody></table>
+    </div>
+  </article>
+  <article class="panel monitor-runtime-panel">
+    <div class="panel-head compact"><div><h2>Route lookup</h2><p class="muted">Check which route the kernel would select. This lookup sends no packets.</p></div></div>
+    <form class="monitor-route-lookup" data-monitor-route-lookup novalidate>
+      <label>Destination <input name="destination" required inputmode="url" autocomplete="off" placeholder="203.0.113.10"></label>
+      <label>Source address <input name="source" inputmode="url" autocomplete="off" placeholder="Optional"></label>
+      <label>Ingress interface <select name="ingress"><option value="">Local traffic</option></select></label>
+      <button class="button secondary" type="submit">Look up route</button>
+    </form>
+    <p class="muted" data-monitor-lookup-status role="status" aria-live="polite">Enter a destination IP address to inspect route selection.</p>
+    <pre class="monitor-lookup-result" data-monitor-lookup-result hidden></pre>
+  </article>
+</section>
+{% endif %}
+{% if monitor_can_services %}
+<section id="monitor-services-panel" class="tab-panel {{ 'active' if monitor_view == 'services' else '' }}" role="tabpanel" aria-labelledby="monitor-services-tab" {% if monitor_view != 'services' %}hidden{% endif %} data-monitor-services-panel>
+  <article class="panel monitor-runtime-panel">
+    <div class="panel-head"><div><h2>Services &amp; Clock</h2><p class="muted">Current service and clock observations from the appliance.</p><p class="muted hidden" data-monitor-section-status="services" role="status"></p><p class="muted hidden" data-monitor-section-status="clock" role="status"></p></div><button class="button secondary" type="button" data-monitor-refresh>Refresh</button></div>
+    <p class="muted" data-monitor-runtime-status role="status" aria-live="polite">Waiting for a live service observation.</p>
+    <noscript><p class="alert warning">Live service and clock observations require JavaScript. The existing configuration pages remain available for desired-state review.</p></noscript>
+    <div class="monitor-clock-summary">
+      <div><span>Effective clock source</span><strong data-monitor-clock-source>Loading</strong></div>
+      <div><span>Synchronization</span><strong data-monitor-clock-sync>Loading</strong></div>
+      <div><span>Apply state</span><strong data-monitor-clock-pending>Loading</strong></div>
+    </div>
+    <div class="monitor-table-scroll"><div class="tabulator-shell" data-monitor-grid="services" data-fallback-id="monitor-services-fallback"></div>
+      <table id="monitor-services-fallback" class="data-table compact"><thead><tr><th>Service</th><th>State</th><th>Active for</th><th>Restarts</th><th>Listeners</th><th>Configuration</th></tr></thead><tbody><tr><td colspan="6">Waiting for a live service observation.</td></tr></tbody></table>
+    </div>
+  </article>
+</section>
+{% endif %}

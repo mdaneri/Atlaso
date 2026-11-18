@@ -90,7 +90,7 @@ except ModuleNotFoundError:
 
 COMMANDS: dict[str, set[str]] = {
     "logs": {"page"},
-    "diagnostics": {"source"},
+    "diagnostics": {"source", "listeners"},
     "staging": {"prepare"},
     "local-users": {"validate", "apply", "status", "authenticate"},
     "appliance-settings": {"validate", "preflight", "apply"},
@@ -200,6 +200,7 @@ _IPV4LL_DISABLE_ONLY_LINKS: ContextVar[frozenset[str]] = ContextVar("ipv4ll_disa
 _IPV4LL_REENABLE_ONLY_LINKS: ContextVar[frozenset[str]] = ContextVar("ipv4ll_reenable_only_links", default=frozenset())
 UPDATE_RELEASE_NOTES_URL_MAX_LENGTH = 2048
 NO_PATH_ACTIONS = {
+    ("diagnostics", "listeners"),
     ("vcf-backups", "status"),
     ("public-services", "reverse-proxy-status"),
     ("firewall", "replay"),
@@ -266,6 +267,7 @@ NON_PATH_ARGUMENT_ACTIONS = {
     ("nat", "acknowledge-publishing"),
     ("nat", "recover-publishing"),
     ("diagnostics", "source"),
+    ("diagnostics", "listeners"),
     ("ntpd", "guard"),
     ("local-users", "authenticate"),
     ("ldap", "authenticate"),
@@ -38471,6 +38473,27 @@ def _handle_appliance_update_locked(action: str, args: list[str]) -> int:
     return 2
 
 
+def _handle_monitor_listeners(args: list[str], *, real_apply: bool) -> int:
+    """Observe only the packaged service listeners using the installed collector."""
+    if args or not real_apply:
+        return 2
+    try:
+        result = subprocess.run(
+            ["/opt/atlaso/.venv/bin/python", "-I", "-m", "atlaso.monitor_native"],
+            check=False, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+            timeout=5, env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C"},
+        )
+        if result.returncode or len(result.stdout) > 1_048_576:
+            return 1
+        payload = json.loads(result.stdout)
+        if not isinstance(payload, dict) or payload.get("state") not in ("ok", "partial", "unavailable"):
+            return 1
+        print(json.dumps(payload, separators=(",", ":")))
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return 1
+    return 0
+
+
 def _handle_diagnostic_source(args: list[str]) -> int:
     """Return one sanitized observational source through the installed collector.
 
@@ -38557,6 +38580,8 @@ def main(argv: list[str]) -> int:
         return _handle_kms(action, normalized_args)
     if real_apply and group == "kms" and action in {"recovery-export", "recovery-import"}:
         return _handle_kms(action, normalized_args)
+    if (group, action) == ("diagnostics", "listeners"):
+        return _handle_monitor_listeners(normalized_args, real_apply=real_apply)
     if (group, action) == ("diagnostics", "source"):
         return _handle_diagnostic_source(normalized_args)
 

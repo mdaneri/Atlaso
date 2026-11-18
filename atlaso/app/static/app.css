@@ -8663,6 +8663,178 @@ dialog.has-expanded-monaco .confirm-modal-panel {
   min-height: calc(100vh - 150px);
 }
 
+.monitor-workspace {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.monitor-section-tabs {
+  width: fit-content;
+  max-width: 100%;
+}
+
+.monitor-section-panels > .tab-panel.active {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.monitor-section-panels > .tab-panel[hidden] {
+  display: none;
+}
+
+.monitor-runtime-panel {
+  min-width: 0;
+}
+
+.monitor-runtime-panel .monitor-table-scroll {
+  max-width: 100%;
+}
+
+.monitor-grid-filter,
+.monitor-route-lookup label {
+  display: grid;
+  gap: 0.4rem;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.monitor-grid-filter {
+  max-width: 24rem;
+  margin: 0 0 0.85rem;
+}
+
+.monitor-route-lookup {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  align-items: end;
+  gap: 0.75rem;
+}
+
+.monitor-route-lookup input,
+.monitor-route-lookup select,
+.monitor-grid-filter input {
+  width: 100%;
+  min-width: 0;
+}
+
+.monitor-forwarding-grid,
+.monitor-clock-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.monitor-clock-summary {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 1rem;
+}
+
+.monitor-forwarding-grid > div,
+.monitor-clock-summary > div {
+  display: grid;
+  gap: 0.3rem;
+  padding: 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 0.65rem;
+}
+
+.monitor-forwarding-grid span,
+.monitor-clock-summary span,
+.monitor-update-captures span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.monitor-forwarding-grid strong,
+.monitor-clock-summary strong {
+  overflow-wrap: anywhere;
+}
+
+.monitor-lookup-result,
+.monitor-update-diff-section pre {
+  max-height: 24rem;
+  overflow: auto;
+  padding: 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 0.65rem;
+  background: var(--surface-soft);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.monitor-update-comparison {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.monitor-update-captures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.monitor-update-captures span {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.monitor-update-sections {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.monitor-update-diff-section {
+  min-width: 0;
+  padding: 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 0.65rem;
+}
+
+.monitor-update-diff-section h4 {
+  margin: 0;
+}
+
+.monitor-update-diff-section p {
+  margin-bottom: 0;
+}
+
+.monitor-update-diff-section ul {
+  margin-bottom: 0;
+  padding-left: 1.2rem;
+}
+
+.monitor-update-diff-section li {
+  margin-top: 0.35rem;
+  overflow-wrap: anywhere;
+}
+
+.monitor-runtime-panel .tabulator-shell {
+  min-width: 0;
+}
+
+.monitor-runtime-panel .monitor-default-route-row {
+  font-weight: 700;
+  background: var(--surface-soft);
+}
+
+@media (max-width: 760px) {
+  .monitor-route-lookup {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .monitor-clock-summary,
+  .monitor-update-sections {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .monitor-metrics {
   margin-bottom: 0;
 }

@@ -17369,6 +17369,7 @@ function renderTaskDetail(task) {
   const consoleErrorContent = modal.querySelector("[data-task-detail-console-error-content]");
   const result = modal.querySelector("[data-task-detail-result]");
   const cancelButton = modal.querySelector("[data-task-detail-cancel]");
+  const networkComparisonLink = modal.querySelector("[data-task-detail-network-comparison]");
   const logButton = modal.querySelector("[data-task-detail-log]");
   if (title instanceof HTMLElement) {
     title.textContent = `${task.type_label || task.type || "Task"} ${task.id}`;
@@ -17430,6 +17431,11 @@ function renderTaskDetail(task) {
     cancelButton.title = task.cancel_reason || "";
     cancelButton.disabled = !task.can_cancel;
     cancelButton.dataset.taskId = task.id;
+  }
+  if (networkComparisonLink instanceof HTMLAnchorElement) {
+    const comparisonUrl = String(task.network_comparison_url || "");
+    networkComparisonLink.href = comparisonUrl || "#";
+    networkComparisonLink.classList.toggle("hidden", !comparisonUrl);
   }
   if (logButton instanceof HTMLButtonElement) {
     logButton.dataset.taskId = task.id;
@@ -21950,6 +21956,9 @@ function initializeMonitorPage() {
   let expandedZoomPercent = 100;
   let expandedZoomCenterTime = null;
   const status = root.querySelector("[data-monitor-status]");
+  const overviewPanel = root.closest("#monitor-overview-panel");
+  const overviewTab = document.querySelector('[data-tab-target="monitor-overview-panel"]');
+  const overviewIsActive = () => !(overviewPanel instanceof HTMLElement) || !overviewPanel.hidden;
   const buttons = Array.from(root.querySelectorAll("[data-monitor-range]")).filter((button) => button instanceof HTMLButtonElement);
   const modal = root.querySelector("[data-monitor-chart-modal]");
   const modalCanvas = root.querySelector("[data-monitor-expanded-chart]");
@@ -22005,6 +22014,13 @@ function initializeMonitorPage() {
     onError: (error) => setStatus(`Monitor unavailable: ${error.message}`),
   });
   const load = () => loadCoordinator.refresh();
+  overviewTab?.addEventListener("click", () => {
+    window.requestAnimationFrame(() => {
+      if (!overviewIsActive()) return;
+      if (latestPayload) renderMonitorPage(root, latestPayload);
+      load();
+    });
+  });
   buttons.forEach((button) => {
     button.addEventListener("click", () => {
       hours = Number(button.dataset.monitorRange || 6);
@@ -22056,13 +22072,15 @@ function initializeMonitorPage() {
     expandedType = "";
   });
   window.addEventListener("resize", () => {
-    if (latestPayload) {
+    if (latestPayload && overviewIsActive()) {
       renderMonitorPage(root, latestPayload);
       renderExpandedChart();
     }
   });
-  load();
-  window.setInterval(load, 5000);
+  if (overviewIsActive()) load();
+  window.setInterval(() => {
+    if (overviewIsActive()) load();
+  }, 5000);
 }
 
 function initializeHistoryBackButtons() {

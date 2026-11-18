@@ -1,6 +1,14 @@
 {% extends "base.html" %}
 {% block page_title %}Monitor{% endblock %}
 {% block content %}
+<section class="monitor-workspace" data-monitor-runtime-page data-network-url="{{ management_ui_root }}/monitor/network/data" data-services-url="{{ management_ui_root }}/monitor/services/data" data-lookup-url="{{ management_ui_root }}/monitor/network/lookup" data-update-url-template="{{ management_ui_root }}/monitor/network/updates/__JOB_ID__">
+  <div class="tab-buttons tool-tabs monitor-section-tabs" role="tablist" aria-label="Monitor views" data-tab-storage-key="atlaso:monitor:active-tab">
+    <button class="tab-button {{ 'active' if monitor_view == 'overview' else '' }}" id="monitor-overview-tab" type="button" role="tab" data-tab-target="monitor-overview-panel" aria-controls="monitor-overview-panel" aria-selected="{{ 'true' if monitor_view == 'overview' else 'false' }}">Overview</button>
+    {% if monitor_can_network %}<button class="tab-button {{ 'active' if monitor_view == 'network' else '' }}" id="monitor-network-tab" type="button" role="tab" data-tab-target="monitor-network-panel" aria-controls="monitor-network-panel" aria-selected="{{ 'true' if monitor_view == 'network' else 'false' }}">Network</button>{% endif %}
+    {% if monitor_can_services %}<button class="tab-button {{ 'active' if monitor_view == 'services' else '' }}" id="monitor-services-tab" type="button" role="tab" data-tab-target="monitor-services-panel" aria-controls="monitor-services-panel" aria-selected="{{ 'true' if monitor_view == 'services' else 'false' }}">Services &amp; Clock</button>{% endif %}
+  </div>
+  <div class="tab-panels monitor-section-panels">
+  <section id="monitor-overview-panel" class="tab-panel {{ 'active' if monitor_view == 'overview' else '' }}" role="tabpanel" aria-labelledby="monitor-overview-tab" {% if monitor_view != 'overview' %}hidden{% endif %}>
 <section class="monitor-page" data-monitor-page>
   <div class="metric-grid monitor-metrics">
     <article class="metric">
@@ -192,4 +200,12 @@
     </div>
   </dialog>
 </section>
+  </section>
+  {% include "partials/monitor_runtime.html" %}
+  </div>
+</section>
+{% endblock %}
+
+{% block extra_scripts %}
+  <script src="/static/monitor-runtime.js?v=issue-1176-1"></script>
 {% endblock %}

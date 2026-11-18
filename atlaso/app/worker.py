@@ -841,6 +841,9 @@ def recover_interrupted_worker_jobs(
                                 "could not be safely restored."
                             ),
                         )
+                elif mode == "run":
+                    db.commit()
+                    _capture_appliance_update_network_snapshot(job.id, "after")
             continue
         else:
             job.status = finalizer_status if recovered else JobStatus.FAILED.value
@@ -1338,7 +1341,10 @@ def _reconcile_appliance_update_status_surface() -> bool:
             or started_at <= finished_at
         ):
             return False
-    return _publish_appliance_update_status(marker_job_id, finish=True)
+    restored = _publish_appliance_update_status(marker_job_id, finish=True)
+    if restored:
+        _capture_appliance_update_network_snapshot(marker_job_id, "after")
+    return restored
 
 
 def _set_appliance_update_step_running(job_id: str, stream: str, *, completed: int, total: int) -> bool:
@@ -1385,6 +1391,13 @@ def _mark_appliance_update_apply_started(job_id: str, stream: str) -> None:
         step = db.get(JobStep, f"{job_id}:{stream}")
         if job is None or step is None:
             raise RuntimeError("Appliance Update apply phase has no durable task record.")
+
+        from atlaso.app.services.monitor_update_comparison import capture_snapshot
+
+        try:
+            capture_snapshot(db, job=job, phase="before")
+        except Exception:  # noqa: BLE001 - monitoring must not block the update apply.
+            LOGGER.warning("Appliance Update network comparison could not be saved for phase before")
 
         def _marked_payload(value: str | None) -> str:
             """Return a serialized task payload with the apply marker.
@@ -1438,6 +1451,21 @@ def _complete_appliance_update_step(
             total=total,
         )
         db.commit()
+
+
+def _capture_appliance_update_network_snapshot(job_id: str, phase: str) -> None:
+    """Persist an update network snapshot without changing the task outcome."""
+    try:
+        from atlaso.app.services.monitor_update_comparison import capture_snapshot
+
+        with SessionLocal() as db:
+            job = db.get(Job, job_id)
+            if job is None:
+                return
+            capture_snapshot(db, job=job, phase=phase)
+            db.commit()
+    except Exception:  # noqa: BLE001 - monitoring must not alter update completion.
+        LOGGER.warning("Appliance Update network comparison could not be saved for phase %s", phase)
 
 
 def _persist_appliance_update_step_completion(
@@ -1892,6 +1920,8 @@ def _run_appliance_update_admitted(job_id: str) -> None:
                             "The update completed, but ordinary browser UIs could not be safely restored."
                         ),
                     )
+        else:
+            _capture_appliance_update_network_snapshot(job_id, "after")
 
 
 def _automation_stage_path(job_id: str, interpreter: str) -> Path:

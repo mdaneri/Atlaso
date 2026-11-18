@@ -2991,6 +2991,28 @@ class Job(Base):
     )
 
 
+class ApplianceUpdateNetworkSnapshot(Base):
+    """Retain one immutable network observation for an Appliance Update phase.
+
+    Attributes:
+        job_id: Appliance Update task owning the observation.
+        phase: Before or after installation observation phase.
+        transaction_id: Durable identity of the update transaction.
+        captured_at: UTC time associated with the native observation.
+        snapshot_json: Projected and bounded runtime network sections.
+    """
+
+    __tablename__ = "appliance_update_network_snapshots"
+
+    job_id: Mapped[str] = mapped_column(
+        ForeignKey("jobs.id", ondelete="CASCADE"), primary_key=True
+    )
+    phase: Mapped[str] = mapped_column(String(8), primary_key=True)
+    transaction_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    snapshot_json: Mapped[str] = mapped_column(Text, nullable=False)
+
+
 class TaskLogCheckpoint(Base):
     """Track sanitized producer state and the immutable history character boundary.
 

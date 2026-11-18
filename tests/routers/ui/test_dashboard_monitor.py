@@ -15,6 +15,10 @@ def test_dashboard_monitor_router_owns_exact_transport_set():
         ("/ui/management/dashboard/data", ("GET",), "dashboard_data"),
         ("/ui/management/monitor", ("GET",), "monitor_page"),
         ("/ui/management/monitor/data", ("GET",), "monitor_data"),
+        ("/ui/management/monitor/network/data", ("GET",), "monitor_network_data"),
+        ("/ui/management/monitor/network/lookup", ("GET",), "monitor_network_lookup"),
+        ("/ui/management/monitor/network/updates/{job_id}", ("GET",), "monitor_update_data"),
+        ("/ui/management/monitor/services/data", ("GET",), "monitor_services_data"),
         ("/ui/management/server-time", ("GET",), "server_time"),
     ]
 
@@ -89,3 +93,30 @@ def test_monitor_data_and_server_time_keep_transport_contracts(client):
     server_time = client.get("/server-time")
     assert server_time.status_code == 200
     assert server_time.json()["label"].startswith("Server ")
+
+
+def test_runtime_monitor_permissions_and_direct_links(client):
+    """Enforce monitoring and resource scopes on the browser page and data endpoints."""
+    from atlaso.app.security import Identity, require_session_identity
+
+    login(client)
+    root = "/ui/management/monitor"
+    identity = Identity("test-monitor", "viewer", {"read:monitoring"})
+    client.app.dependency_overrides[require_session_identity] = lambda: identity
+    try:
+        assert client.get(root).status_code == 200
+        for path in ("?view=network", "?view=services", "/network/data",
+                     "/network/lookup?destination=192.0.2.1", "/network/updates/job_missing", "/services/data"):
+            assert client.get(root + path).status_code == 403, path
+        identity.scopes.update({"read:routes", "read:services"})
+        assert client.get(root + "?view=network&update=job_missing").status_code == 200
+        assert client.get(root + "?view=services").status_code == 200
+        for path in ("/network/data", "/services/data"):
+            observed = client.get(root + path)
+            assert observed.status_code == 200, observed.text
+            assert set(observed.json()) == {"captured_at", "sections"}
+            assert observed.headers["cache-control"] == "no-store"
+        assert client.get(root + "/network/updates/job_missing").status_code == 404
+        assert client.get(root + "/network/lookup?destination=example.org").status_code == 422
+    finally:
+        client.app.dependency_overrides.pop(require_session_identity, None)
