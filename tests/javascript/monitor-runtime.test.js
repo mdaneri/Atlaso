@@ -62,11 +62,7 @@ test("runtime load coordinator suppresses overlapping refresh requests", async (
 });
 
 
-test("update comparison details show the before and after MTU and carrier", () => {
-  const comparison = {
-    eth1: { interface: "eth1", carrier: true, mtu: 1500, addresses: [] },
-    eth2: { interface: "eth2", carrier: true, mtu: 1500, addresses: [] },
-  };
+function renderComparisonDetails(sections) {
   const document = context.document;
   const changedDetails = [];
   const elements = new Map();
@@ -81,20 +77,46 @@ test("update comparison details show the before and after MTU and carrier", () =
       if (tag === "ul") changedDetails.push(...children.map((child) => child.textContent));
     },
   });
-  runtime.renderMonitorUpdateComparison(root, {
-    phases: {},
-    sections: {
-      interfaces: {
-        state: "ok",
-        changed: [
-          { before: comparison.eth1, after: { ...comparison.eth1, mtu: 9000 } },
-          { before: comparison.eth2, after: { ...comparison.eth2, carrier: false } },
-        ],
-      },
+  runtime.renderMonitorUpdateComparison(root, { phases: {}, sections });
+  return changedDetails;
+}
+
+test("update comparison details show the before and after MTU and carrier", () => {
+  const comparison = {
+    eth1: { interface: "eth1", carrier: true, mtu: 1500, addresses: [] },
+    eth2: { interface: "eth2", carrier: true, mtu: 1500, addresses: [] },
+  };
+  const changedDetails = renderComparisonDetails({
+    interfaces: {
+      state: "ok",
+      changed: [
+        { before: comparison.eth1, after: { ...comparison.eth1, mtu: 9000 } },
+        { before: comparison.eth2, after: { ...comparison.eth2, carrier: false } },
+      ],
     },
   });
   assert.match(changedDetails[0], /MTU 1500.*→.*MTU 9000/);
   assert.match(changedDetails[1], /Carrier up.*→.*Carrier down/);
+});
+
+test("policy rule comparisons show changes to egress and individual selectors", () => {
+  const before = {
+    family: 4, priority: 100, action: "lookup", table: 200, egress: "eth1",
+    selectors: "fwmark 0x1, suppress_prefixlen 0",
+  };
+  const details = renderComparisonDetails({
+    rules: {
+      state: "ok",
+      changed: [
+        { before, after: { ...before, egress: "eth2" } },
+        { before, after: { ...before, selectors: "fwmark 0x2, suppress_prefixlen 0" } },
+        { before, after: { ...before, selectors: "fwmark 0x1, suppress_prefixlen 24" } },
+      ],
+    },
+  });
+  assert.match(details[0], /Egress eth1.*→.*Egress eth2/);
+  assert.match(details[1], /fwmark 0x1.*→.*fwmark 0x2/);
+  assert.match(details[2], /suppress_prefixlen 0.*→.*suppress_prefixlen 24/);
 });
 
 test("an unavailable clock observation clears previously observed health", () => {

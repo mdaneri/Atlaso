@@ -134,6 +134,15 @@
     return Array.isArray(section?.rows) ? section.rows : [];
   }
 
+  function ruleSelectorsText(selectors) {
+    if (Array.isArray(selectors)) return selectors.join(", ");
+    if (typeof selectors === "string") return selectors;
+    if (selectors && typeof selectors === "object") {
+      return Object.entries(selectors).map(([name, value]) => `${name} ${value}`).join(", ");
+    }
+    return null;
+  }
+
   function projectRows(key, rows) {
     return rows.map((row) => {
       const rowKey = [key, row.family, row.table, row.priority, row.destination, row.source, row.interface, row.address, row.unit, row.metric, row.protocol, row.type, JSON.stringify(row.nexthops || [])]
@@ -158,7 +167,7 @@
           _runtime_row: rowKey,
           family: familyLabel(row.family),
           table_label: row.table === null || row.table === undefined ? "--" : tableLabel(row.table),
-          selectors_text: Array.isArray(row.selectors) ? row.selectors.join(", ") : typeof row.selectors === "string" ? row.selectors : row.selectors && typeof row.selectors === "object" ? Object.entries(row.selectors).map(([name, value]) => `${name} ${value}`).join(", ") : "--",
+          selectors_text: ruleSelectorsText(row.selectors) ?? "--",
         };
       }
       if (key === "interfaces") {
@@ -285,7 +294,11 @@
       return `${family} ${table} ${destination} via ${gateway}${egressInterface ? ` on ${egressInterface}` : ""}${row.metric === null || row.metric === undefined ? "" : ` (metric ${row.metric})`}`;
     }
     if (section === "rules") {
-      return `IPv${row.family} priority ${row.priority}: ${row.source || "all"} → ${row.destination || "all"}, ${row.action || "lookup"} ${tableLabel(row.table)}${row.ingress ? ` from ${row.ingress}` : ""}`;
+      const summary = `IPv${row.family} priority ${row.priority}: ${row.source || "all"} → ${row.destination || "all"}, ${row.action || "lookup"} ${tableLabel(row.table)}`;
+      const ingress = row.ingress ? ` from ${row.ingress}` : "";
+      const egress = row.egress ? ` · Egress ${row.egress}` : "";
+      const selectors = ruleSelectorsText(row.selectors);
+      return `${summary}${ingress}${egress}${selectors ? ` · ${selectors}` : ""}`;
     }
     if (section === "interfaces") {
       const addresses = (Array.isArray(row.addresses) ? row.addresses : []).map(({ address, prefix, origin }) =>
