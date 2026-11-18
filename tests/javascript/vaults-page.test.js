@@ -21,6 +21,7 @@ function functionSource(name) {
 
 class FakeElement {
   constructor() {
+    this.isConnected = true;
     this.dataset = {};
     this.children = [];
     this.listeners = new Map();
@@ -39,6 +40,11 @@ class FakeElement {
 
 class FakeDialog extends FakeElement {}
 class FakeButton extends FakeElement {}
+class FakeMutationObserver {
+  constructor(callback) { this.callback = callback; }
+  observe() {}
+  trigger() { this.callback(); }
+}
 class FakeInput extends FakeElement {
   constructor(value = "") {
     super();
@@ -81,7 +87,7 @@ class FakeForm extends FakeElement {
     };
   }
 
-  reset() {}
+  reset() { this.listeners.get("reset")?.(); }
 
   querySelector(selector) {
     const elements = {
@@ -117,6 +123,11 @@ function makeRuntime() {
   const copiedText = [];
   const statuses = [];
   const newRecordFields = [];
+  const timers = new Map();
+  const clearedTimers = new Set();
+  const observers = [];
+  let nextTimerId = 0;
+  let fetchHandler = async () => ({ ok: true, json: async () => ({ value: "fixture-value" }) });
   let wizardOpenOptions;
   let wizardOptions;
   const wizard = { open(options) { wizardOpenOptions = options; } };
@@ -128,8 +139,8 @@ function makeRuntime() {
       createElement: () => new FakeElement(),
     },
     window: {
-      clearTimeout() {},
-      setTimeout() { return 1; },
+      clearTimeout(id) { clearedTimers.add(id); },
+      setTimeout(callback, delay) { const id = ++nextTimerId; timers.set(id, { callback, delay }); return id; },
       AtlasoUiPatterns: {
         createWizard(options) { wizardOptions = options; return wizard; },
         createGrid(config) { gridConfigs.push(config); return {}; },
@@ -140,6 +151,9 @@ function makeRuntime() {
     HTMLFormElement: FakeForm,
     HTMLInputElement: FakeInput,
     HTMLButtonElement: FakeButton,
+    FormData: class { set() {} },
+    fetch: (...args) => fetchHandler(...args),
+    MutationObserver: class extends FakeMutationObserver { constructor(callback) { super(callback); observers.push(this); } },
     managementUiPath: (path) => path,
     copyTextToClipboard: async (value, message) => { copiedText.push({ value, message }); },
     showTransientGridStatus: (message) => statuses.push(message),
@@ -147,7 +161,32 @@ function makeRuntime() {
     escapeHtml: (value) => String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]),
   });
   vm.runInContext(`${functionSource("initializeVaultsPage")}; initializeVaultsPage();`, context);
-  return { form, gridConfig: gridConfigs[0], wizardOptions, wizardOpenOptions: () => wizardOpenOptions, copiedText, statuses, newRecordFields };
+  return {
+    form, gridConfig: gridConfigs[0], wizardOptions, wizardOpenOptions: () => wizardOpenOptions,
+    copiedText, statuses, newRecordFields, timers, clearedTimers, observers,
+    fireTimer(id) { timers.get(id)?.callback(); },
+    setFetchHandler(handler) { fetchHandler = handler; },
+  };
+}
+
+function click(element, event = {}) {
+  return element.listeners.get("click")?.({ target: element, ...event });
+}
+
+function makePasswordCell() {
+  const eye = new FakeButton();
+  eye.dataset.vaultPasswordEye = "true";
+  const value = new FakeElement();
+  value.dataset.vaultPasswordValue = "true";
+  value.textContent = "••••••••";
+  const cellElement = new FakeElement();
+  cellElement.querySelector = (selector) => selector === "[data-vault-password-eye]" ? cellElement.eye
+    : selector === "[data-vault-password-value]" ? cellElement.value : null;
+  cellElement.eye = eye;
+  cellElement.value = value;
+  const cell = { getElement: () => cellElement, getRow: () => ({ getData: () => ({ id: 9 }) }) };
+  const event = { target: { closest: (selector) => selector === "[data-vault-password-eye]" ? eye : null } };
+  return { eye, value, cellElement, cell, event };
 }
 
 class FakeImportForm extends FakeForm {
@@ -300,6 +339,153 @@ test("Vault entry wizard defaults to Unknown and preserves service through Edit,
   assert.equal(form.elements.service_type.value, "operations");
   wizardOptions.prepareReview();
   assert.equal(form.review.service.textContent, "Operations");
+});
+
+test("Vault entry reveal starts a fresh 15-second timeout after manual hide", async () => {
+  const { form, wizardOptions, timers, clearedTimers, fireTimer } = makeRuntime();
+  wizardOptions.onOpen({ context: { vaultId: 4, row: { id: 9 } } });
+  const eye = form.passwordEye;
+
+  await click(eye);
+  const firstTimer = [...timers.keys()][0];
+  assert.equal(timers.get(firstTimer).delay, 15000);
+  assert.equal(form.password.type, "text");
+
+  await click(eye);
+  assert.ok(clearedTimers.has(firstTimer));
+  assert.equal(form.password.type, "password");
+
+  await click(eye);
+  const secondTimer = [...timers.keys()][1];
+  assert.equal(timers.get(secondTimer).delay, 15000);
+  fireTimer(firstTimer);
+  assert.equal(form.password.type, "text");
+  assert.equal(eye.dataset.revealed, "true");
+
+  fireTimer(secondTimer);
+  assert.equal(form.password.type, "password");
+  assert.equal(eye.dataset.revealed, "false");
+});
+
+test("Vault entry close invalidates a pending password reveal response", async () => {
+  const runtime = makeRuntime();
+  const { form, wizardOptions } = runtime;
+  let resolveFetch;
+  runtime.setFetchHandler(() => new Promise((resolve) => { resolveFetch = resolve; }));
+  wizardOptions.onOpen({ context: { vaultId: 4, row: { id: 9 } } });
+  const pending = click(form.passwordEye);
+  wizardOptions.onClose();
+  resolveFetch({ ok: true, json: async () => ({ value: "late-value" }) });
+  await pending;
+
+  assert.equal(form.password.type, "password");
+  assert.equal(form.passwordEye.dataset.revealed, "false");
+  assert.equal(form.passwordEye.disabled, false);
+});
+
+test("Vault entry close, reset, and reopen cancel active reveal timers", async () => {
+  const { form, wizardOptions, timers, clearedTimers, fireTimer } = makeRuntime();
+  const context = { vaultId: 4, row: { id: 9 } };
+  wizardOptions.onOpen({ context });
+  await click(form.passwordEye);
+  const firstTimer = [...timers.keys()][0];
+
+  wizardOptions.onClose();
+  assert.ok(clearedTimers.has(firstTimer));
+  fireTimer(firstTimer);
+  assert.equal(form.password.type, "password");
+
+  wizardOptions.onOpen({ context });
+  await click(form.passwordEye);
+  const secondTimer = [...timers.keys()][1];
+  form.reset();
+  assert.ok(clearedTimers.has(secondTimer));
+  fireTimer(secondTimer);
+  assert.equal(form.password.type, "password");
+
+  wizardOptions.onOpen({ context });
+  await click(form.passwordEye);
+  const thirdTimer = [...timers.keys()][2];
+  assert.equal(timers.get(thirdTimer).delay, 15000);
+  fireTimer(secondTimer);
+  assert.equal(form.password.type, "text");
+  fireTimer(thirdTimer);
+  assert.equal(form.password.type, "password");
+});
+
+test("Vault grid reveal resets after hide and ignores stale timers after control replacement", async () => {
+  const { gridConfig, timers, clearedTimers, fireTimer, observers } = makeRuntime();
+  const passwordColumn = gridConfig.options.columns.find((column) => column.title === "Password");
+  const original = makePasswordCell();
+
+  await passwordColumn.cellClick(original.event, original.cell);
+  const firstTimer = [...timers.keys()][0];
+  assert.equal(timers.get(firstTimer).delay, 15000);
+  assert.equal(original.value.textContent, "fixture-value");
+
+  await passwordColumn.cellClick(original.event, original.cell);
+  assert.ok(clearedTimers.has(firstTimer));
+  assert.equal(original.value.textContent, "••••••••");
+
+  await passwordColumn.cellClick(original.event, original.cell);
+  const secondTimer = [...timers.keys()][1];
+  fireTimer(firstTimer);
+  assert.equal(original.value.textContent, "fixture-value");
+
+  const replacement = makePasswordCell();
+  original.cellElement.eye = replacement.eye;
+  original.cellElement.value = replacement.value;
+  observers[0].trigger();
+  assert.ok(clearedTimers.has(secondTimer));
+  assert.equal(original.value.textContent, "••••••••");
+
+  await passwordColumn.cellClick(replacement.event, original.cell);
+  const replacementTimer = [...timers.keys()][2];
+  assert.equal(timers.get(replacementTimer).delay, 15000);
+  fireTimer(secondTimer);
+  assert.equal(replacement.value.textContent, "fixture-value");
+  fireTimer(replacementTimer);
+  assert.equal(replacement.value.textContent, "••••••••");
+});
+
+test("Vault grid ignores a reveal response after the row controls are replaced", async () => {
+  const runtime = makeRuntime();
+  const { gridConfig, observers } = runtime;
+  const passwordColumn = gridConfig.options.columns.find((column) => column.title === "Password");
+  const original = makePasswordCell();
+  let resolveFetch;
+  runtime.setFetchHandler(() => new Promise((resolve) => { resolveFetch = resolve; }));
+  const pending = passwordColumn.cellClick(original.event, original.cell);
+
+  const replacement = makePasswordCell();
+  original.cellElement.eye = replacement.eye;
+  original.cellElement.value = replacement.value;
+  observers[0].trigger();
+  resolveFetch({ ok: true, json: async () => ({ value: "late-value" }) });
+  await pending;
+
+  assert.equal(original.value.textContent, "••••••••");
+  assert.equal(replacement.value.textContent, "••••••••");
+  assert.equal(original.eye.disabled, false);
+});
+
+test("Vault grid reveal timers remain independent across cells", async () => {
+  const { gridConfig, timers, fireTimer } = makeRuntime();
+  const passwordColumn = gridConfig.options.columns.find((column) => column.title === "Password");
+  const first = makePasswordCell();
+  const second = makePasswordCell();
+
+  await passwordColumn.cellClick(first.event, first.cell);
+  await passwordColumn.cellClick(second.event, second.cell);
+  const [firstTimer, secondTimer] = [...timers.keys()];
+  assert.equal(timers.get(firstTimer).delay, 15000);
+  assert.equal(timers.get(secondTimer).delay, 15000);
+
+  fireTimer(firstTimer);
+  assert.equal(first.value.textContent, "••••••••");
+  assert.equal(second.value.textContent, "fixture-value");
+  fireTimer(secondTimer);
+  assert.equal(second.value.textContent, "••••••••");
 });
 
 test("VCF import candidate account details include the service label as text", async () => {
