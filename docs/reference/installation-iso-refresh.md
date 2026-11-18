@@ -200,7 +200,9 @@ validation budgets from another task.
    Preserve the complete result and any failed builder artifacts for the owning cleanup path. Do not
    restart or repurpose a failed or completed builder. The canonical build wrapper's `-CleanupOnly` path
    handles its exact retained sensitive staging, not the builder VM or all reservations. Keep failed
-   resources for their owning diagnosis and cleanup procedure.
+   resources for their owning diagnosis and cleanup procedure. If the in-guest repository probe fails, use its
+   reported curl exit code and HTTP status to distinguish transport failures from server responses. The diagnostic
+   omits the raw curl error and response body.
 3. **Admit.** Run `admit` after drift and, when required, capture. It repeats early drift admission and
    verifies current official package metadata, signatures, every selected identity, full RPM closure and
    transaction, and the reviewed runtime-profile digests. A canonical capture also contains a separate

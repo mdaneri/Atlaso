@@ -21,6 +21,9 @@ image/common/data-disks.conf text eol=lf
 image/common/data-disks/** text eol=lf
 image/vmware-workstation/development-trust/*.pem text eol=lf
 
+# Preserve the exact public RPM signing key bytes across checkouts.
+image/common/photon-rpm-gpg/VMWARE-RPM-GPG-KEY* text eol=lf
+
 scripts/appliance/atlaso-helper text eol=lf
 
 # Photon installation admission checks the layout helper byte for byte.

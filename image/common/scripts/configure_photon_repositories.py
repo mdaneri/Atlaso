@@ -297,6 +297,12 @@ def probe_repository_metadata(
                 timeout=PROBE_TIMEOUT_SECONDS + PROBE_PROCESS_GRACE_SECONDS,
             )
             probe_result = completed.stdout.splitlines()
+            if completed.returncode != 0:
+                status = probe_result[0] if probe_result else ""
+                http = f", HTTP {status}" if len(status) == 3 and status.isascii() and status.isdecimal() else ""
+                raise PhotonRepositoryError(
+                    f"Canonical Photon 5 updates metadata is unreachable (curl exit {completed.returncode}{http})."
+                )
             if payload_path.stat().st_size > MAX_METADATA_BYTES:
                 raise PhotonRepositoryError(
                     "Photon repository metadata exceeds the safety limit."
@@ -305,13 +311,14 @@ def probe_repository_metadata(
         except PhotonRepositoryError:
             raise
         except (OSError, subprocess.SubprocessError) as exc:
+            detail = (
+                "probe timed out" if isinstance(exc, subprocess.TimeoutExpired)
+                else "curl or its output file is unavailable" if isinstance(exc, FileNotFoundError)
+                else "probe process or output could not be read"
+            )
             raise PhotonRepositoryError(
-                "Canonical Photon 5 updates metadata is unreachable."
+                f"Canonical Photon 5 updates metadata is unreachable ({detail})."
             ) from exc
-    if completed.returncode != 0:
-        raise PhotonRepositoryError(
-            "Canonical Photon 5 updates metadata is unreachable."
-        )
     if probe_result != ["200", CANONICAL_METADATA_URL]:
         raise PhotonRepositoryError(
             "Canonical Photon 5 updates metadata did not return the approved endpoint."
