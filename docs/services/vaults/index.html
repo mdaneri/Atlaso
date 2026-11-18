@@ -4419,7 +4419,9 @@ identify the account's product component from source metadata. Known historical 
 metadata without decrypting or reimporting passwords; ambiguous or unrecognized entries show <strong>Unknown</strong>. Use the entry
 wizard's <strong>Edit</strong> action to correct a label. Multiple URIs are displayed on separate lines. Passwords are masked by
 default. Administrators can use the compact eye control to reveal one value
-for 15 seconds; Atlaso audits the reveal without recording the value and returns it with browser caching disabled.</p>
+for 15 seconds; Atlaso audits the reveal without recording the value and returns it with browser caching disabled.
+Use the eye again to hide the value immediately. Each subsequent reveal starts a fresh 15-second interval in both the
+table and entry wizard. Closing or resetting the wizard hides its password and cancels the reveal interval.</p>
 <p>Vault keys use lowercase dotted segments, for example <code>vcf.sddc_manager.admin</code> or <code>esx.esx01.root</code>. Values are encrypted
 with the appliance secrets key before database storage. Keep <code>ATLASO_SECRETS_KEY</code> with the appliance recovery material.
 Each entry may also store up to nine credential-free HTTP, HTTPS, SSH, or SFTP URIs. Add them on the third page of the
