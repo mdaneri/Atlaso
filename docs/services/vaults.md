@@ -19,6 +19,8 @@ metadata without decrypting or reimporting passwords; ambiguous or unrecognized 
 wizard's **Edit** action to correct a label. Multiple URIs are displayed on separate lines. Passwords are masked by
 default. Administrators can use the compact eye control to reveal one value
 for 15 seconds; Atlaso audits the reveal without recording the value and returns it with browser caching disabled.
+Use the eye again to hide the value immediately. Each subsequent reveal starts a fresh 15-second interval in both the
+table and entry wizard. Closing or resetting the wizard hides its password and cancels the reveal interval.
 
 Vault keys use lowercase dotted segments, for example `vcf.sddc_manager.admin` or `esx.esx01.root`. Values are encrypted
 with the appliance secrets key before database storage. Keep `ATLASO_SECRETS_KEY` with the appliance recovery material.
