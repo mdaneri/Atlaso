@@ -25367,7 +25367,20 @@ function initializeVaultsPage() {
   const entryPassword = entryForm.querySelector("[data-vault-entry-password]");
   const entryPasswordEye = entryForm.querySelector("[data-vault-entry-password-eye]");
   const uriError = workspace.querySelector("[data-vault-uri-error]");
-  let entryPasswordRevealTimer = 0;
+  const entryPasswordReveal = { timer: 0, generation: 0, active: false };
+  const clearEntryPasswordReveal = ({ deactivate = false } = {}) => {
+    entryPasswordReveal.generation += 1;
+    if (entryPasswordReveal.timer) window.clearTimeout(entryPasswordReveal.timer);
+    entryPasswordReveal.timer = 0;
+    if (deactivate) entryPasswordReveal.active = false;
+    if (entryPassword instanceof HTMLInputElement) entryPassword.type = "password";
+    if (entryPasswordEye instanceof HTMLButtonElement) {
+      entryPasswordEye.disabled = false;
+      entryPasswordEye.dataset.revealed = "false";
+      entryPasswordEye.setAttribute("aria-label", "Reveal password");
+      entryPasswordEye.title = "Reveal password";
+    }
+  };
   const uriValues = () => [...(uriList?.querySelectorAll("[data-vault-uri-input]") || [])]
     .map((input) => String(input.value || "").trim())
     .filter(Boolean);
@@ -25541,11 +25554,11 @@ function initializeVaultsPage() {
       entryForm.querySelector("[data-vault-entry-review-uris]").textContent = uriValues().length ? `${uriValues().length} configured` : "None";
     },
     onOpen: ({ context }) => {
+      clearEntryPasswordReveal();
+      entryPasswordReveal.active = true;
       const row = context?.row || null;
       const copying = Boolean(context?.copy && row);
       const vaultId = context?.vaultId;
-      window.clearTimeout(entryPasswordRevealTimer);
-      entryPasswordRevealTimer = 0;
       entryForm.reset();
       if (entryPassword instanceof HTMLInputElement) entryPassword.type = "password";
       entryForm.action = row && !copying
@@ -25578,20 +25591,25 @@ function initializeVaultsPage() {
         entryPasswordEye.title = "Reveal password";
       }
     },
+    onClose: () => clearEntryPasswordReveal({ deactivate: true }),
   });
+  entryForm.addEventListener("reset", () => clearEntryPasswordReveal());
   entryPasswordEye?.addEventListener("click", async () => {
     if (!(entryPasswordEye instanceof HTMLButtonElement) || !(entryPassword instanceof HTMLInputElement)) return;
     if (entryPasswordEye.dataset.revealed === "true") {
-      entryPassword.type = "password";
-      entryPasswordEye.dataset.revealed = "false";
-      entryPasswordEye.setAttribute("aria-label", "Reveal password");
-      entryPasswordEye.title = "Reveal password";
+      clearEntryPasswordReveal();
       return;
     }
     const match = entryForm.action.match(/\/vaults\/(\d+)\/entries\/(\d+)\/edit$/);
     const vaultId = match?.[1] || entryForm.dataset.vaultId;
     const entryId = match?.[2] || String(entryForm.elements.copy_entry_id.value || "");
     if (!vaultId || !entryId) return;
+    clearEntryPasswordReveal();
+    const generation = entryPasswordReveal.generation;
+    const ownsReveal = () => entryPasswordReveal.active
+      && entryPasswordReveal.generation === generation
+      && entryPassword.isConnected
+      && entryPasswordEye.isConnected;
     entryPasswordEye.disabled = true;
     const body = new FormData();
     body.set("csrf", String(entryForm.elements.csrf.value || ""));
@@ -25604,23 +25622,21 @@ function initializeVaultsPage() {
       });
       if (!response.ok) throw new Error();
       const payload = await response.json();
+      if (!ownsReveal()) return;
       entryPassword.value = String(payload.value || "");
       entryPassword.type = "text";
       entryPasswordEye.dataset.revealed = "true";
       entryPasswordEye.setAttribute("aria-label", "Hide password");
       entryPasswordEye.title = "Hide password";
-      entryPasswordRevealTimer = window.setTimeout(() => {
-        if (!entryPassword.isConnected) return;
-        entryPassword.type = "password";
-        entryPasswordEye.dataset.revealed = "false";
-        entryPasswordEye.setAttribute("aria-label", "Reveal password");
-        entryPasswordEye.title = "Reveal password";
-        entryPasswordRevealTimer = 0;
+      entryPasswordReveal.timer = window.setTimeout(() => {
+        if (!ownsReveal()) return;
+        entryPasswordReveal.timer = 0;
+        clearEntryPasswordReveal();
       }, 15000);
     } catch (_error) {
-      showTransientGridStatus("Password reveal failed");
+      if (ownsReveal()) showTransientGridStatus("Password reveal failed");
     } finally {
-      entryPasswordEye.disabled = false;
+      if (entryPasswordReveal.generation === generation) entryPasswordEye.disabled = false;
     }
   });
 
@@ -25630,6 +25646,30 @@ function initializeVaultsPage() {
     const source = document.getElementById(`vault-entries-data-${vaultId}`);
     const rows = JSON.parse(source?.textContent || "[]");
     rows.push({ is_new: true, key: "" });
+    const revealStates = new Map();
+    const currentRevealControls = (state) => state.eye.isConnected
+      && state.value.isConnected
+      && state.cellElement.querySelector("[data-vault-password-eye]") === state.eye
+      && state.cellElement.querySelector("[data-vault-password-value]") === state.value;
+    const invalidateGridReveal = (state) => {
+      state.generation += 1;
+      if (state.timer) window.clearTimeout(state.timer);
+      state.timer = 0;
+      state.pending = false;
+      state.value.textContent = "••••••••";
+      state.eye.dataset.revealed = "false";
+      state.eye.setAttribute("aria-label", "Reveal password");
+      state.eye.title = "Reveal password";
+      state.eye.disabled = false;
+    };
+    const revealObserver = new MutationObserver(() => {
+      for (const [eye, state] of revealStates) {
+        if (currentRevealControls(state)) continue;
+        invalidateGridReveal(state);
+        revealStates.delete(eye);
+      }
+    });
+    revealObserver.observe(element, { childList: true, subtree: true });
     window.AtlasoUiPatterns.createGrid({
       element,
       pattern: "wizard-backed",
@@ -25746,13 +25786,33 @@ function initializeVaultsPage() {
               if (!(eye instanceof HTMLButtonElement)) return;
               const value = cell.getElement().querySelector("[data-vault-password-value]");
               if (!(value instanceof HTMLElement)) return;
-              if (eye.dataset.revealed === "true") {
-                value.textContent = "••••••••";
-                eye.dataset.revealed = "false";
-                eye.setAttribute("aria-label", "Reveal password");
-                eye.title = "Reveal password";
+              let state = revealStates.get(eye);
+              if (!state) {
+                state = { eye, value, cellElement: cell.getElement(), generation: 0, timer: 0, pending: false };
+                revealStates.set(eye, state);
+              }
+              if (state.value !== value || state.cellElement !== cell.getElement()) {
+                invalidateGridReveal(state);
+                revealStates.delete(eye);
+                state = { eye, value, cellElement: cell.getElement(), generation: 0, timer: 0, pending: false };
+                revealStates.set(eye, state);
+              }
+              if (!currentRevealControls(state)) {
+                invalidateGridReveal(state);
+                revealStates.delete(eye);
                 return;
               }
+              if (eye.dataset.revealed === "true") {
+                invalidateGridReveal(state);
+                return;
+              }
+              invalidateGridReveal(state);
+              const generation = state.generation;
+              state.pending = true;
+              const ownsReveal = () => state.generation === generation
+                && state.pending
+                && revealStates.get(eye) === state
+                && currentRevealControls(state);
               eye.disabled = true;
               const body = new FormData();
               body.set("csrf", String(entryForm.elements.csrf.value || ""));
@@ -25766,21 +25826,24 @@ function initializeVaultsPage() {
                 });
                 if (!response.ok) throw new Error("Password reveal failed.");
                 const payload = await response.json();
+                if (!ownsReveal()) return;
                 value.textContent = String(payload.value || "");
+                state.pending = false;
                 eye.dataset.revealed = "true";
                 eye.setAttribute("aria-label", "Hide password");
                 eye.title = "Hide password";
-                window.setTimeout(() => {
-                  if (!value.isConnected) return;
-                  value.textContent = "••••••••";
-                  eye.dataset.revealed = "false";
-                  eye.setAttribute("aria-label", "Reveal password");
-                  eye.title = "Reveal password";
+                state.timer = window.setTimeout(() => {
+                  if (state.generation !== generation || revealStates.get(eye) !== state) return;
+                  state.timer = 0;
+                  if (currentRevealControls(state)) invalidateGridReveal(state);
                 }, 15000);
               } catch (_error) {
-                value.textContent = "Reveal failed";
+                if (ownsReveal()) value.textContent = "Reveal failed";
               } finally {
-                eye.disabled = false;
+                if (state.generation === generation) {
+                  state.pending = false;
+                  eye.disabled = false;
+                }
               }
             },
           },

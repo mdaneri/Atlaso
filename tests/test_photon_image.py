@@ -30,6 +30,108 @@ def load_lifecycle_runner():
     return module
 
 
+@pytest.mark.parametrize(
+    ("platform", "initial_state", "removal", "expected_status", "expected_attempted"),
+    [
+        ("vmware", "installed", "remove", 0, True),
+        ("vmware", "absent", "remove", 0, False),
+        ("none", "installed", "remove", 0, False),
+        ("vmware", "installed", "fail", 23, True),
+        ("vmware", "installed", "retain", 1, True),
+        ("vmware", "query-error", "remove", 1, False),
+        ("vmware", "installed", "query-error", 1, True),
+        ("unsupported", "installed", "remove", 2, False),
+    ],
+)
+def test_photon_hostname_conflict_guard(
+    platform: str,
+    initial_state: str,
+    removal: str,
+    expected_status: int,
+    expected_attempted: bool,
+) -> None:
+    """Exercise the VMware-only net-tools guard with package-manager stubs.
+
+    Args:
+        platform: Guest platform selected by the provisioner.
+        initial_state: Initial RPM query result for net-tools.
+        removal: Stubbed TDNF removal outcome.
+        expected_status: Expected status from the extracted shell transaction.
+        expected_attempted: Whether one guarded removal transaction is expected.
+    """
+    bash = shutil.which("bash")
+    if os.name == "nt":
+        bash = str(Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Git/bin/bash.exe")
+    if not bash or not Path(bash).is_file():
+        pytest.skip("bash is required to exercise the Photon package guard")
+
+    provision = Path("image/common/scripts/provision-atlaso.sh").read_text(
+        encoding="utf-8"
+    )
+    start = provision.index('case "$ATLASO_GUEST_PLATFORM" in')
+    end = provision.index(
+        '\n\n# sudo -E preserves Packer\'s communicator environment.', start
+    )
+    guarded_case = provision[start:end]
+    script = f'''set -eu
+ATLASO_GUEST_PLATFORM={platform}
+NET_TOOLS_STATE={initial_state}
+REMOVAL_OUTCOME={removal}
+log_step() {{ :; }}
+rpm() {{
+  [ "$1" = "-q" ] && [ "$2" = "net-tools" ] || return 90
+  case "$NET_TOOLS_STATE" in
+    installed) printf '%s\n' 'net-tools-2.10-3.ph5.x86_64'; return 0 ;;
+    absent) printf '%s\n' 'package net-tools is not installed'; return 1 ;;
+    query-error) printf '%s\n' 'error: cannot open rpm database' >&2; return 1 ;;
+    post-query-error) printf '%s\n' 'error: rpm database read failed' >&2; return 1 ;;
+    *) return 91 ;;
+  esac
+}}
+run_tdnf() {{
+  label="$1"
+  shift
+  if [ "$label" = "Photon legacy network tools removal" ]; then
+    [ "$*" = "--noautoremove remove net-tools" ] || return 92
+    printf '%s\n' 'REMOVE_NET_TOOLS'
+    [ "$REMOVAL_OUTCOME" != "fail" ] || return 23
+    case "$REMOVAL_OUTCOME" in
+      retain) ;;
+      query-error) NET_TOOLS_STATE=post-query-error ;;
+      *) NET_TOOLS_STATE=absent ;;
+    esac
+    return 0
+  fi
+  if [ "$label" = "Photon appliance package installation" ]; then
+    [ "$1" = install ] || return 93
+    shift
+    printf 'INSTALL_PACKAGES=%s\n' "$*"
+    return 0
+  fi
+  return 94
+}}
+{guarded_case}
+printf '%s\n' 'INSTALL_REACHED'
+'''
+    completed = subprocess.run(
+        [bash, "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+
+    assert completed.returncode == expected_status, completed.stderr
+    assert ("REMOVE_NET_TOOLS" in completed.stdout) is expected_attempted
+    assert ("INSTALL_REACHED" in completed.stdout) is (expected_status == 0)
+    if expected_status == 0:
+        transactions = [line for line in completed.stdout.splitlines() if line.startswith("INSTALL_PACKAGES=")]
+        assert len(transactions) == 1
+        packages = transactions[0].removeprefix("INSTALL_PACKAGES=").split()
+        assert ("open-vm-tools" in packages) is (platform == "vmware")
+        assert ("hostname" in packages) is (platform == "vmware")
+
+
 @pytest.mark.parametrize("offline", [False, True])
 def test_notices_lock_selection(tmp_path: Path, offline: bool) -> None:
     """Execute shared notice selection without touching host paths.

@@ -675,7 +675,32 @@ log_step "installing Photon appliance packages"
 GUEST_INTEGRATION_PACKAGES=""
 case "$ATLASO_GUEST_PLATFORM" in
   vmware)
+    # Photon 5 subrelease 91+ split hostname from net-tools; their packages
+    # conflict over /usr/bin/hostname, while open-vm-tools requires hostname.
+    log_step "removing conflicting Photon legacy network tools"
+    if NET_TOOLS_QUERY="$(LC_ALL=C rpm -q net-tools 2>&1)"; then
+      run_tdnf "Photon legacy network tools removal" --noautoremove remove net-tools
+      if NET_TOOLS_QUERY="$(LC_ALL=C rpm -q net-tools 2>&1)"; then
+        echo "Conflicting Photon net-tools package remains installed after removal." >&2
+        exit 1
+      else
+        NET_TOOLS_QUERY_STATUS=$?
+        if [ "$NET_TOOLS_QUERY_STATUS" -ne 1 ] ||
+          [ "$NET_TOOLS_QUERY" != "package net-tools is not installed" ]; then
+          echo "Could not verify removal of the conflicting Photon net-tools package." >&2
+          exit 1
+        fi
+      fi
+    else
+      NET_TOOLS_QUERY_STATUS=$?
+      if [ "$NET_TOOLS_QUERY_STATUS" -ne 1 ] ||
+        [ "$NET_TOOLS_QUERY" != "package net-tools is not installed" ]; then
+        echo "Could not determine whether the conflicting Photon net-tools package is installed." >&2
+        exit 1
+      fi
+    fi
     GUEST_INTEGRATION_PACKAGES="open-vm-tools"
+    GUEST_INTEGRATION_PACKAGES="$GUEST_INTEGRATION_PACKAGES hostname"
     ;;
   none)
     GUEST_INTEGRATION_PACKAGES=""
