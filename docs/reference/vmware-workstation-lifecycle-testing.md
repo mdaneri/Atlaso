@@ -988,6 +988,9 @@ absence check.
 The wrapper uses the shared Photon ISO remastering, kickstart rendering, checksum validation, and Packer var-file
 generation. `image/common/source` holds the original Photon ISO download cache. The canonical image installs
 `open-vm-tools` and stages the locked offline RPM closures used by the provider-neutral first-boot guest-agent selector.
+On VMware builds, provisioning removes an installed legacy `net-tools` package without autoremove and verifies its
+absence before package installation. Photon 5's updated `hostname` package conflicts with `net-tools`; the build then
+installs `hostname` explicitly with `open-vm-tools`. Repository and RPM signature checks remain enabled.
 The Workstation build wrapper opens a visible VMware console by default. Use `-Headless` only when an unattended build
 is preferred.
 The shared builder removes and verifies the absence of its plaintext kickstart source, generated Packer variable file,

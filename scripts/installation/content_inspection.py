@@ -33,7 +33,7 @@ PHOTON_BOOTSTRAP_PIP_RPMS = {
     "python3-setuptools": "b0adce2fba217f99ee6c97ac74d20f6f2e52029c323037e901c2aba5e3c0dab0",
 }
 PHOTON_MODULE_RPMS = {
-    "linux": "845c5470961f920a91a83f187a749d3c9c97e865a7fdc9f8300691da2f740d0a",
+    "linux": "82f4fa46cd8059013ab94e0f8bae467c390b37e9277fb446ed4011d56f534d71",
     "kmod": "b7614a76f7a17b832e2158fe90413cf2af719b1d1e9d85bfae7195e4905a7850",
     "kmod-binary": "ee872a0ddff939b69e87beec32090dc98d1882e9028f4bd5729b9a2b858aaaeb",
 }
@@ -50,8 +50,8 @@ PHOTON_MODULE_RPMS = {
 # e41e6109d7be89ae83da63ef8021ef9a0e053ecd4fe1f47ae73dd79270d688c7.
 # The LDAP directories and unit are from openldap-servers-2.6.4-6.ph5,
 # SHA-256 11b4af044b7418ba9af5cf6762e2cbe5add5b3463774d20f6be89b8ff98c47dc.
-# The kernel boot configuration and module alias index are from linux-6.12.116-2.ph5, SHA-256
-# 845c5470961f920a91a83f187a749d3c9c97e865a7fdc9f8300691da2f740d0a.
+# The kernel boot configuration and module alias index are from linux-6.12.116-3.ph5, SHA-256
+# 82f4fa46cd8059013ab94e0f8bae467c390b37e9277fb446ed4011d56f534d71.
 RPM_DIAGNOSTIC_PATHS = (
     "/bin",
     "/boot",
@@ -176,8 +176,8 @@ RPM_DIAGNOSTIC_PATHS = (
     "/usr/lib/systemd/system/slapd.service",
     "/var/lib/openldap",
     "/var/run/openldap",
-    "/boot/linux-6.12.116-2.ph5.cfg",
-    "/lib/modules/6.12.116-2.ph5/modules.alias",
+    "/boot/linux-6.12.116-3.ph5.cfg",
+    "/lib/modules/6.12.116-3.ph5/modules.alias",
 )
 SOURCE_MEMBERS = (
     "source/image/common/scripts/provision-atlaso.sh",
