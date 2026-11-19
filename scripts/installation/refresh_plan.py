@@ -78,6 +78,10 @@ _PLAN_KEYS = {
 }
 _RESULT_STATUSES = {"succeeded", "failed", "refused", "interrupted", "pending"}
 _DRIFT_DISPOSITIONS = {"reuse", "requires_capture", "requires_review"}
+_OPTIONAL_PLAN_KEYS = {"native_ssh", "builder_dns"}
+_PRIVATE_IPV4_NETWORKS = tuple(
+    ipaddress.IPv4Network(network) for network in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+)
 
 
 def validate_native_ssh(value: object) -> dict[str, str]:
@@ -91,8 +95,7 @@ def validate_native_ssh(value: object) -> dict[str, str]:
         raise ValueError("native SSH selectors must be strings")
     try:
         address = ipaddress.IPv4Address(selection["host"])
-        networks = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
-        if str(address) != selection["host"] or not any(address in ipaddress.IPv4Network(n) for n in networks):
+        if str(address) != selection["host"] or not any(address in network for network in _PRIVATE_IPV4_NETWORKS):
             raise ValueError("native SSH requires a canonical RFC1918 IPv4 address")
     except ipaddress.AddressValueError as exc:
         raise ValueError("native SSH address is invalid") from exc
@@ -194,7 +197,7 @@ def validate_plan(
         configured_root: Independently resolved supported Codex worktree root.
         worktree: Independently resolved dedicated task checkout beneath the configured root.
     """
-    keys = _PLAN_KEYS | ({"native_ssh"} if isinstance(value, Mapping) and "native_ssh" in value else set())
+    keys = _PLAN_KEYS | (_OPTIONAL_PLAN_KEYS.intersection(value) if isinstance(value, Mapping) else set())
     plan = _require_mapping(value, "refresh plan", keys)
     if type(plan["schema"]) is not int or plan["schema"] != 1:
         raise ValueError("refresh plan schema version is unsupported")
@@ -234,6 +237,19 @@ def validate_plan(
     output_root = _path(plan["output_root"], "output root")
 
     receipt_value = plan["capture_receipt"]
+    builder_dns = None
+    if "builder_dns" in plan:
+        if receipt_value is not None:
+            raise ValueError("builder DNS requires a fresh capture")
+        builder_dns = plan["builder_dns"]
+        if not isinstance(builder_dns, str):
+            raise ValueError("builder DNS requires a canonical RFC1918 IPv4 address")
+        try:
+            address = ipaddress.IPv4Address(builder_dns)
+        except ipaddress.AddressValueError as exc:
+            raise ValueError("builder DNS requires a canonical RFC1918 IPv4 address") from exc
+        if str(address) != builder_dns or not any(address in network for network in _PRIVATE_IPV4_NETWORKS):
+            raise ValueError("builder DNS requires a canonical RFC1918 IPv4 address")
     capture_receipt = None
     receipt_path = None
     if receipt_value is not None:
@@ -312,6 +328,7 @@ def validate_plan(
         "protected_files": [dict(item) for item in protected],
         "capture_receipt": capture_receipt,
         **({"native_ssh": native_ssh} if native_ssh is not None else {}),
+        **({"builder_dns": builder_dns} if builder_dns is not None else {}),
     }
 
 

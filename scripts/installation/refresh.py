@@ -788,6 +788,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--software-commit")
     parser.add_argument("--pull-request-number", type=int)
     parser.add_argument("--capture-receipt-sha256")
+    parser.add_argument("--builder-dns", help="Explicit private IPv4 resolver for a fresh VMware capture builder")
     parser.add_argument("--native-distribution")
     parser.add_argument("--native-ssh-host")
     parser.add_argument("--native-ssh-user")
@@ -836,6 +837,8 @@ def main(argv: list[str] | None = None) -> int:
             if any(item is None for item in ssh_values):
                 raise RefreshRefusal("native SSH requires address, account, console fingerprint and password-variable name")
             value["native_ssh"] = dict(zip(("host", "user", "host_key_sha256", "password_variable"), ssh_values, strict=True))
+        if args.builder_dns is not None:
+            value["builder_dns"] = args.builder_dns
         validate_plan(value, configured_root=str(configured_root), worktree=str(ROOT))
         publish(args.plan, value)
         print(json.dumps({"plan": str(args.plan), "plan_sha256": canonical_plan_sha256(value)}))
