@@ -509,6 +509,14 @@ WAN-policy runtime after `network-online.target`; management-handoff rollback sn
 Ordinary Appliance Settings Apply records the exact live WAN defaults for the resolver interface before reconfiguring
 networkd. Once the link settles, it verifies and restores any missing captured default in tables 200 and main, including
 after resolver rollback. Recovery uses only last-applied WAN intent and reports a competing route without replacing it.
+Ordinary Network Apply also protects active WAN defaults when Network reconfigures a link without applying Routing &
+WAN. Before replacing networkd files, it captures only live defaults in the main table and table 200 that match the
+last-applied WAN gateway, interface, and metric. After native link activation it restores a missing captured route only
+when the candidate keeps that link eligible and the last-applied route still applies. A failed Network Apply performs
+the same check after network rollback. An Apply that includes Routing & WAN follows that reviewed route transition,
+and does not restore an obsolete default over its candidate. Protected management handoffs continue to use their
+existing bundled route holds, readiness checks, and rollback. These Network Apply checks cover all eligible affected
+interfaces; the Appliance Settings recovery above remains scoped to the resolver interface.
 The browser wizard derives explicit IPv4 or IPv6 defaults as canonical
 `0.0.0.0/0` or `::/0`, requires a same-family next hop that is on-link for the selected target (or IPv6 link-local),
 and rejects a second default of the same family. The UI/API,
