@@ -99,6 +99,31 @@ test("update comparison details show the before and after MTU and carrier", () =
   assert.match(changedDetails[1], /Carrier up.*→.*Carrier down/);
 });
 
+test("route comparisons show changes to each projected path attribute", () => {
+  const before = {
+    family: 6, table: 200, destination: "default", type: "unicast", protocol: "static",
+    preferred_source: "2001:db8::1", source_prefix: "2001:db8:1::/64", nexthop_id: 10,
+    nexthops: [{ gateway: "fe80::1", interface: "eth1", weight: 1 }, { gateway: "fe80::2", interface: "eth2", weight: 1 }],
+  };
+  const details = renderComparisonDetails({
+    routes: {
+      state: "ok",
+      changed: [
+        { before, after: { ...before, preferred_source: "2001:db8::2" } },
+        { before, after: { ...before, source_prefix: "2001:db8:2::/64" } },
+        { before, after: { ...before, protocol: "ra" } },
+        { before, after: { ...before, nexthop_id: 11 } },
+        { before, after: { ...before, nexthops: [before.nexthops[0], { ...before.nexthops[1], weight: 2 }] } },
+      ],
+    },
+  });
+  assert.match(details[0], /Preferred source 2001:db8::1.*→.*Preferred source 2001:db8::2/);
+  assert.match(details[1], /Source prefix 2001:db8:1::\/64.*→.*Source prefix 2001:db8:2::\/64/);
+  assert.match(details[2], /Protocol static.*→.*Protocol ra/);
+  assert.match(details[3], /Next-hop ID 10.*→.*Next-hop ID 11/);
+  assert.match(details[4], /fe80::2 on eth2 \(weight 1\).*→.*fe80::2 on eth2 \(weight 2\)/);
+});
+
 test("policy rule comparisons show changes to egress and individual selectors", () => {
   const before = {
     family: 4, priority: 100, action: "lookup", table: 200, egress: "eth1",

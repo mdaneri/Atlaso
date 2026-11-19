@@ -284,14 +284,25 @@
       const family = familyLabel(row.family);
       const table = tableLabel(row.table);
       const destination = row.destination || "unknown destination";
-      const nextHops = Array.isArray(row.nexthops) ? row.nexthops : [];
-      const gateway = nextHops.length
-        ? nextHops.map((hop) => hop.gateway || hop.type || "On-link").join(", ")
-        : row.gateway || (row.type && row.type !== "unicast" ? row.type : "On-link");
-      const egressInterface = nextHops.length
-        ? nextHops.map((hop) => hop.interface).filter(Boolean).join(", ") || row.interface
-        : row.interface;
-      return `${family} ${table} ${destination} via ${gateway}${egressInterface ? ` on ${egressInterface}` : ""}${row.metric === null || row.metric === undefined ? "" : ` (metric ${row.metric})`}`;
+      const path = row.gateway || row.interface
+        ? ` via ${row.gateway || "On-link"}${row.interface ? ` on ${row.interface}` : ""}`
+        : "";
+      const details = [`${family} ${table} ${destination}${path}`];
+      if (row.metric != null) details.push(`Metric ${row.metric}`);
+      if (row.type) details.push(`Type ${row.type}`);
+      if (row.protocol) details.push(`Protocol ${row.protocol}`);
+      if (row.preferred_source) details.push(`Preferred source ${row.preferred_source}`);
+      if (row.source_prefix) details.push(`Source prefix ${row.source_prefix}`);
+      if (row.nexthop_id != null) details.push(`Next-hop ID ${row.nexthop_id}`);
+      if (Array.isArray(row.nexthops) && row.nexthops.length) {
+        const nextHops = row.nexthops.map((hop) => {
+          const device = hop.interface ? ` on ${hop.interface}` : "";
+          const weight = hop.weight == null ? "" : ` (weight ${hop.weight})`;
+          return `${hop.gateway || "On-link"}${device}${weight}`;
+        });
+        details.push(`Next hops ${nextHops.join(", ")}`);
+      }
+      return details.join(" · ");
     }
     if (section === "rules") {
       const summary = `IPv${row.family} priority ${row.priority}: ${row.source || "all"} → ${row.destination || "all"}, ${row.action || "lookup"} ${tableLabel(row.table)}`;
