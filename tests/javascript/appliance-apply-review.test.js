@@ -274,6 +274,19 @@ test("server plan counts locked changed WAN separately from five unchanged depen
   assert.match(harness.selectionSummary.textContent, /1 explicitly selected/);
 });
 
+test("server plan distinguishes unfinished setup selections from real dependencies", () => {
+  const harness = createServerPlanHarness([
+    { id: "ntpd", selected: true, changed: true, valid: true },
+    { id: "vcf_backups", selected: true, changed: false, valid: true },
+    { id: "ca", selected: true, changed: false, required: true, valid: true },
+  ]);
+  harness.context.updateApplianceApplySelection();
+
+  assert.match(harness.selectionSummary.textContent,
+    /1 changed component \+ 1 unchanged selection \+ 1 required dependency = 3 components to process/);
+  assert.match(harness.selectionSummary.textContent, /2 explicitly selected/);
+});
+
 test("server plan leaves required rows checked when invalid and blocks submission", () => {
   const harness = createServerPlanHarness([
     { id: "network", selected: true, changed: true, valid: true },

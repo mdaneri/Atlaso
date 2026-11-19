@@ -9,6 +9,64 @@ import pytest
 from tests.routers.ui.helpers import login, submit_reviewed_appliance_apply
 
 
+@pytest.mark.parametrize("ntp_succeeded", [False, True])
+def test_initial_apply_retry_selects_unfinished_components_and_new_edits(client, monkeypatch, ntp_succeeded):
+    """Resume a partial initial Apply without replaying completed components."""
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, JobStep
+
+    login(client)
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    before = datetime.now(timezone.utc) - timedelta(minutes=5)
+    with SessionLocal() as db:
+        units = ui.appliance_apply_units(db)
+        monkeypatch.setattr(ui, "appliance_apply_units", lambda _db, **_kwargs: units)
+        monkeypatch.setattr(ui, "network_listener_handoff_required", lambda *_args: False)
+        monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+        failed_job = Job(id="initial-partial", type="appliance-apply", status=JobStatus.FAILED.value,
+                         created_at=before, created_by="admin", result="{}")
+        db.add(failed_job)
+        completed = {unit["id"] for unit in units} - {"vcf_private_registry", "ntpd"}
+        if ntp_succeeded:
+            completed.add("ntpd")
+        ui.update_appliance_apply_baselines(db, units, completed)
+        for index, unit in enumerate(units):
+            unit_id = unit["id"]
+            unit["changed"] = unit_id == "network"
+            unit["valid"] = True
+            if unit_id == "vcf_private_registry":
+                continue
+            db.add(JobStep(id=f"initial-partial:{unit_id}", job=failed_job, component_key=unit_id,
+                           label=unit["label"], position=index, status=(
+                               JobStatus.SUCCEEDED.value if unit_id in completed else JobStatus.FAILED.value
+                           )))
+        db.commit()
+
+    retry = client.get("/appliance-apply/review").json()
+    assert retry["initial_apply_required"] is True
+    expected_roots = {"network", "vcf_private_registry"}
+    if not ntp_succeeded:
+        expected_roots.add("ntpd")
+    assert set(retry["requested_units"]) == expected_roots
+    assert "local_users" not in {unit["id"] for unit in retry["units"]}
+    assert any(unit["required_dependency"] for unit in retry["units"])
+
+    response = submit_reviewed_appliance_apply(
+        client, "/appliance-apply", data={"csrf": csrf, "selected_units": "network"},
+        headers={"Accept": "application/json"},
+    )
+    assert response.status_code == 202, response.text
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert json.loads(job.result)["initial_setup_partial"] is True
+        job.status = JobStatus.SUCCEEDED.value
+        db.commit()
+
+    assert client.get("/appliance-apply/review").json()["initial_apply_required"] is True
+
+
 @pytest.mark.parametrize("baseline_kind", ["missing", "legacy", "modern"])
 @pytest.mark.parametrize("selection", ["wan", "nat"])
 @pytest.mark.parametrize("invalid_network", [False, True])
