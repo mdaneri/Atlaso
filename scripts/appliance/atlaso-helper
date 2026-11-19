@@ -3112,35 +3112,46 @@ def _restore_management_resolver(
     _reload_management_resolver(interface_name, network_path)
 
 
+def _applied_mirrored_wan_defaults(interface_name: str | None = None) -> dict[str, list[tuple[int, int, str, int]]]:
+    """Read the exact mirrored route identities from the installed WAN intent.
+
+    Args:
+        interface_name: Limit recovery to a specific link when supplied.
+    """
+    if WAN_RUNTIME_CONFIG_PATH.is_symlink():
+        raise ValueError("applied WAN configuration is unsafe")
+    if not WAN_RUNTIME_CONFIG_PATH.exists():
+        return {}
+    if not WAN_RUNTIME_CONFIG_PATH.is_file():
+        raise ValueError("applied WAN configuration is unsafe")
+    if WAN_RUNTIME_CONFIG_PATH.stat().st_size > 2_000_000:
+        raise ValueError("applied WAN configuration exceeds the observation limit")
+    applied = _mirrored_wan_defaults(_parse_wan_config(WAN_RUNTIME_CONFIG_PATH))
+    routes: dict[str, list[tuple[int, int, str, int]]] = {}
+    for (destination, name), route in applied.items():
+        if interface_name is not None and name != interface_name:
+            continue
+        family = ip_network(destination).version
+        gateway = ip_address(route.get("gateway", ""))
+        metric = int(route.get("metric", "100") or "100") or (1024 if family == 6 else 0)
+        if not _valid_network_interface_name(name) or gateway.version != family or not 0 <= metric <= 0xFFFFFFFF:
+            raise ValueError("applied WAN default is invalid")
+        routes.setdefault(name, []).extend(
+            (family, table, str(gateway), metric) for table in (254, LAB_ROUTE_TABLE_ID)
+        )
+    return routes
+
+
 def _resolver_wan_default_routes(interface_name: str) -> list[tuple[int, int, str, int]]:
     """Capture only live, last-applied WAN defaults owned by the resolver link.
 
     Args:
         interface_name: Resolver link whose live routes will be captured.
     """
-    if WAN_RUNTIME_CONFIG_PATH.is_symlink():
-        raise ValueError("applied WAN configuration is unsafe")
-    if not WAN_RUNTIME_CONFIG_PATH.exists():
-        return []
-    if not WAN_RUNTIME_CONFIG_PATH.is_file():
-        raise ValueError("applied WAN configuration is unsafe")
-    if WAN_RUNTIME_CONFIG_PATH.stat().st_size > 2_000_000:
-        raise ValueError("applied WAN configuration exceeds the observation limit")
-    applied = _mirrored_wan_defaults(_parse_wan_config(WAN_RUNTIME_CONFIG_PATH))
-    routes = []
-    for (destination, name), route in applied.items():
-        if name != interface_name:
-            continue
-        family = ip_network(destination).version
-        gateway = ip_address(route["gateway"])
-        metric = int(route.get("metric", "100") or "100") or (1024 if family == 6 else 0)
-        if gateway.version != family or not 0 <= metric <= 0xFFFFFFFF:
-            raise ValueError("applied WAN default is invalid")
-        for table in (254, LAB_ROUTE_TABLE_ID):
-            identity = (family, table, str(gateway), metric)
-            if _resolver_wan_default_present(interface_name, identity):
-                routes.append(identity)
-    return routes
+    return [
+        route for route in _applied_mirrored_wan_defaults(interface_name).get(interface_name, [])
+        if _resolver_wan_default_present(interface_name, route)
+    ]
 
 
 def _resolver_wan_default_present(
@@ -16125,6 +16136,44 @@ def _finish_network_transaction(state: dict, phase: str) -> bool:
     return True
 
 
+def _capture_network_wan_defaults() -> dict[str, list[list[int | str]]]:
+    """Capture live mirrored WAN defaults in the format used by the Network journal."""
+    captured: dict[str, list[list[int | str]]] = {}
+    for name, routes in _applied_mirrored_wan_defaults().items():
+        live = [list(route) for route in routes if _resolver_wan_default_present(name, route)]
+        if live:
+            captured[name] = live
+    return captured
+
+
+def _restore_network_wan_defaults(state: dict, *, candidate: bool = False) -> None:
+    """Recover captured defaults after activation without replaying stale WAN intent.
+
+    Args:
+        state: Durable Network transaction snapshot created before networkd reload.
+        candidate: Require the newly applied Network binding to remain eligible.
+    """
+    captured = state.get("previous_wan_defaults", {})
+    if not captured:
+        return
+    applied = _applied_mirrored_wan_defaults()
+    network = _applied_wan_network_state() if candidate else None
+    if candidate and network is None:
+        raise ValueError("applied Network ownership is unavailable for WAN default recovery")
+    for name, routes in applied.items():
+        selected = [route for route in routes if list(route) in captured.get(name, [])]
+        if network is not None:
+            if network["management_ui"].get(name) is not True:
+                continue
+            prefixes = [ip_network(prefix) for owner, prefix in network["prefixes"] if owner == name]
+            selected = [
+                route for route in selected
+                if (route[0] == 6 and ip_address(route[2]).is_link_local and any(p.version == 6 for p in prefixes))
+                or any(ip_address(route[2]) in prefix for prefix in prefixes)
+            ]
+        _restore_resolver_wan_defaults(name, selected)
+
+
 def _restore_network_transaction(state: dict) -> bool:
     """Restore every file and link, retaining the marker if any stage fails.
 
@@ -16174,6 +16223,7 @@ def _restore_network_transaction(state: dict) -> bool:
         state, NETWORK_TRANSACTION_DIR / "state.json", require_replacement=True,
         allow_unselected_legacy=_restored_legacy_route_baseline(state),
     )
+    _restore_network_wan_defaults(state)
     _restore_transition_source_guard(state)
     return _finish_network_transaction(state, "rolled-back")
 
@@ -16203,11 +16253,12 @@ def _reconcile_network_transaction(job_id: str, *, committed: bool) -> None:
 
 
 @contextmanager
-def _network_apply_transaction(path: Path):
+def _network_apply_transaction(path: Path, *, preserve_wan_defaults: bool = True):
     """Restore installed files and link state if an ordinary candidate is rejected.
 
     Args:
         path: Validated staged Network intent.
+        preserve_wan_defaults: Capture and recover routes for an ordinary Network Apply.
     """
     existing = _network_transaction_state()
     if existing:
@@ -16225,6 +16276,7 @@ def _network_apply_transaction(path: Path):
     physical, vlans, link_states = _management_handoff_candidate_links(
         {"network_config_path": str(path)}, include_removed=True,
     )
+    wan_defaults = _capture_network_wan_defaults() if preserve_wan_defaults else {}
     paths = {
         NETWORKD_MGMT_CONFIG_PATH, ROUTE_DOMAIN_CONFIG_PATH, ROUTE_DOMAIN_SERVICE_PATH,
         *(NETWORKD_CONFIG_DIR / name for name in files),
@@ -16255,6 +16307,8 @@ def _network_apply_transaction(path: Path):
                  "candidate_vlan_interfaces": vlans, "candidate_link_states": link_states,
                  "backup_root": str(backup_root), "job_id": job_id, "phase": "applying",
                  "source_transition_guard": True}
+        if wan_defaults:
+            state["previous_wan_defaults"] = wan_defaults
         _fsync_directory(backup_root)
         published = True
         marker = NETWORK_TRANSACTION_DIR / "state.json"
@@ -16275,6 +16329,7 @@ def _network_apply_transaction(path: Path):
             finally:
                 _IPV4LL_REENABLE_ONLY_LINKS.reset(reenable_token)
                 _IPV4LL_DISABLE_ONLY_LINKS.reset(policy_token)
+            _restore_network_wan_defaults(state, candidate=True)
             for target in paths:
                 if target.is_file():
                     _fsync_file(target)
@@ -16557,7 +16612,11 @@ def _handle_network_locked(
         print(str(exc), file=sys.stderr)
         return 2
     try:
-        with _network_apply_transaction(config_path):
+        transaction = (
+            _network_apply_transaction(config_path, preserve_wan_defaults=False) if preserve_transition_routes
+            else _network_apply_transaction(config_path)
+        )
+        with transaction:
             held_sources = [*_removed_vlan_source_holds(config_path), *(handoff_held_addresses or [])]
             held_identities = {
                 (row["name"], row["address"], row["mac"], row["table"])

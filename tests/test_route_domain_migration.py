@@ -1014,7 +1014,17 @@ def test_ordinary_first_upgrade_seeds_and_reconfigures_management_before_exact_g
     monkeypatch.setattr(helper, "_network_config_errors", lambda _path: [])
     monkeypatch.setattr(helper, "_network_detection_preflight", lambda _path: None)
     monkeypatch.setattr(helper, "_route_domain_ingress_desired_rules", lambda _path: [])
-    monkeypatch.setattr(helper, "_network_apply_transaction", lambda _path: nullcontext())
+    def transaction(_path, *, preserve_wan_defaults=True):
+        """Keep WAN recovery outside the protected management handoff.
+
+        Args:
+            _path: Staged Network configuration.
+            preserve_wan_defaults: Whether ordinary Network owns default recovery.
+        """
+        assert preserve_wan_defaults is not protected_finalization
+        return nullcontext()
+
+    monkeypatch.setattr(helper, "_network_apply_transaction", transaction)
     monkeypatch.setattr(helper, "_network_transaction_state", lambda: state)
     monkeypatch.setattr(helper, "_ordinary_network_old_management_bindings",
                         lambda _path: [{"name": "eth0", "table": 100}])
