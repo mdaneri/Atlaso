@@ -1879,6 +1879,37 @@ def test_management_handoff_rollback_restores_absent_firewall(monkeypatch, tmp_p
     ]
 
 
+def test_management_handoff_rollback_recovers_defaults_after_links(monkeypatch, tmp_path):
+    """Restore the captured defaults after restoring the prior links and sources."""
+    helper = load_helper_module()
+    calls = []
+    defaults = {"eth0": [[4, 254, "192.0.2.1", 100], [4, 200, "192.0.2.1", 100]]}
+    monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(helper, "NETWORKD_MGMT_CONFIG_PATH", tmp_path / "absent.network")
+    monkeypatch.setattr(helper, "NAT_RUNTIME_CONFIG_PATH", tmp_path / "absent-nat")
+    monkeypatch.setattr(helper, "_run", lambda command: subprocess.CompletedProcess(command, 0))
+    monkeypatch.setattr(helper, "_nginx_binary", lambda: "nginx")
+    monkeypatch.setattr(helper, "_nginx_test_command", lambda: subprocess.CompletedProcess([], 0))
+    monkeypatch.setattr(helper, "_quiesce_management_handoff_firewall", lambda *_args: None)
+    monkeypatch.setattr(helper, "_restore_management_handoff_firewall", lambda *_args: None)
+    monkeypatch.setattr(helper, "_restore_management_handoff_resolver", lambda *_args: None)
+    monkeypatch.setattr(helper, "_restore_management_handoff_links", lambda *_args: calls.append("links"))
+    monkeypatch.setattr(helper, "_wait_restored_management_addresses", lambda *_args: calls.append("addresses"))
+    monkeypatch.setattr(helper, "_restore_route_domains", lambda *_args: calls.append("sources"))
+    monkeypatch.setattr(helper, "_retire_transition_routes", lambda *_args, **_kwargs: calls.append("seeds"))
+    monkeypatch.setattr(helper, "_transition_source_guard", lambda *_args: None)
+    monkeypatch.setattr(helper, "_applied_mirrored_wan_defaults", lambda: {
+        name: [tuple(route) for route in routes] for name, routes in defaults.items()
+    })
+    monkeypatch.setattr(helper, "_restore_resolver_wan_defaults", lambda name, routes: calls.append((name, routes)))
+
+    helper._restore_management_handoff({"snapshots": [], "previous_wan_defaults": defaults}, startup=True)
+
+    assert calls[:5] == [
+        "links", "addresses", "sources", "seeds", ("eth0", [tuple(route) for route in defaults["eth0"]]),
+    ]
+
+
 def test_management_handoff_snapshot_includes_previous_tls_identity(monkeypatch, tmp_path):
     """Capture the certificate files named by the applied management site.
 
@@ -3642,12 +3673,14 @@ def test_management_handoff_prepares_candidate_depot_auth_before_final_reload(mo
     ]
 
 
-def test_management_handoff_syncs_transaction_and_backups_before_marker(monkeypatch, tmp_path):
+@pytest.mark.parametrize("wan_included", [False, True])
+def test_management_handoff_syncs_transaction_and_backups_before_marker(monkeypatch, tmp_path, wan_included):
     """Make the transaction directory and backups durable before the marker.
 
     Args:
         monkeypatch: Pytest fixture used to isolate snapshot dependencies.
         tmp_path: Temporary root containing runtime and durable state files.
+        wan_included: Whether the protected handoff owns a candidate WAN snapshot.
     """
     helper = load_helper_module()
     monkeypatch.setattr(helper, "_preflight_route_domains", lambda: None)
@@ -3662,6 +3695,8 @@ def test_management_handoff_syncs_transaction_and_backups_before_marker(monkeypa
     runtime_path = tmp_path / "runtime.conf"
     runtime_path.write_text("previous runtime\n", encoding="utf-8")
     operations: list[tuple[str, Path]] = []
+    defaults = {"eth0": [[4, 254, "192.0.2.1", 100], [4, 200, "192.0.2.1", 100]]}
+    monkeypatch.setattr(helper, "_capture_network_wan_defaults", lambda: defaults)
     monkeypatch.setattr(helper, "MANAGEMENT_HANDOFF_STATE_DIR", state_dir)
     monkeypatch.setattr(helper, "MANAGEMENT_HANDOFF_BACKUP_DIR", backup_dir)
     monkeypatch.setattr(helper, "MANAGEMENT_HANDOFF_STATE_PATH", state_dir / "state.json")
@@ -3697,6 +3732,7 @@ def test_management_handoff_syncs_transaction_and_backups_before_marker(monkeypa
             "previous_management_interfaces": ["eth0"],
             "previous_management_addresses": ["192.0.2.10"],
             "previous_https_enabled": False,
+            **({"wan_config_path": "candidate-wan"} if wan_included else {}),
         }
     )
 
@@ -3707,6 +3743,7 @@ def test_management_handoff_syncs_transaction_and_backups_before_marker(monkeypa
     ]
     backup_path = Path(str(state["snapshots"][0]["backup"]))
     assert state["previous_source_transition_guard"] is False
+    assert state["previous_wan_defaults"] == ({} if wan_included else defaults)
     assert backup_path.read_text(encoding="utf-8") == "previous runtime\n"
 
 
@@ -4445,6 +4482,8 @@ def test_management_handoff_candidate_durability_gates_ack(
     mapping_change,
     candidate_https,
     candidate_port,
+    *,
+    wan_included=True,
 ):
     """Acknowledge only a durable candidate and roll back a sync failure.
 
@@ -4457,6 +4496,7 @@ def test_management_handoff_candidate_durability_gates_ack(
         mapping_change: Effective forwarding difference in the candidate handoff.
         candidate_https: Whether candidate management uses HTTPS.
         candidate_port: Candidate management public port.
+        wan_included: Whether the protected handoff owns a candidate WAN snapshot.
     """
     helper = load_helper_module()
     monkeypatch.setattr(helper, "_network_identity_preflight", lambda _path: None)
@@ -4482,7 +4522,17 @@ def test_management_handoff_candidate_durability_gates_ack(
         "previous_management_public_port": 80,
         "candidate_management_interface": "eth1",
         "resolver_apply_started": False,
+        "previous_wan_defaults": {} if wan_included else {
+            "eth1": [[4, 254, "198.51.100.1", 100], [4, 200, "198.51.100.1", 100]],
+        },
     }
+    if not wan_included:
+        def restore_defaults(captured, *, candidate):
+            assert captured is state and candidate is True
+            assert len(captured["previous_wan_defaults"]["eth1"]) == 2
+            retirement_operations.append("preserved-defaults")
+
+        monkeypatch.setattr(helper, "_restore_network_wan_defaults", restore_defaults)
     phases: list[str] = []
     cleared: list[bool] = []
     restored: list[bool] = []
@@ -4719,7 +4769,7 @@ def test_management_handoff_candidate_durability_gates_ack(
             "firewall_config_path": str(candidate),
             "appliance_settings_config_path": "candidate-settings",
             "public_services_config_path": "candidate-public",
-            "wan_config_path": "candidate-wan",
+            **({"wan_config_path": "candidate-wan"} if wan_included else {}),
             **({"nat_config_path": str(nat)} if paired_publishing else {}),
         }
     )
@@ -4732,7 +4782,7 @@ def test_management_handoff_candidate_durability_gates_ack(
         assert guard_events == ["guard-on", "candidate-network", "source-intent", "final-network"]
     else:
         assert guard_events == ["guard-on", "candidate-network", "source-intent", "final-network",
-                                "wan", "source-intent"]
+                                *(["wan"] if wan_included else []), "source-intent"]
 
     if candidate_sync_error in {"candidate-revalidation-failure", "pre-nginx-address-timeout"}:
         assert result == 1
@@ -4790,10 +4840,11 @@ def test_management_handoff_candidate_durability_gates_ack(
     assert resolver_calls == ["eth1", "eth1"]
     assert address_scopes == [None, not (candidate_https and candidate_port == 443),
                               None, not (candidate_https and candidate_port == 443)]
-    assert wan_calls == ["candidate-wan"]
+    assert wan_calls == (["candidate-wan"] if wan_included else [])
     assert retirement_operations == ["source-reconcile", "resolver", "candidate-address-ready", "final-network",
-                                     "resolver", "address-ready", "wan", "default-ready",
-                                     "source-reconcile", "ingress-reconcile", "seed-retirement"]
+                                     "resolver", "address-ready", *(["wan"] if wan_included else []), "default-ready",
+                                     "source-reconcile", "ingress-reconcile", "seed-retirement",
+                                     *([] if wan_included else ["preserved-defaults"])]
     assert len(applied_firewalls) == 2
     assert candidate_rule in applied_firewalls[0]
     assert 'iifname "eth0"' in applied_firewalls[0]
@@ -4822,6 +4873,13 @@ def test_management_handoff_candidate_durability_gates_ack(
     )
     payload = json.loads(capsys.readouterr().out.splitlines()[-1])
     assert payload["management_handoff"] == "awaiting application commit"
+
+
+def test_management_handoff_preserves_defaults_after_retirement(monkeypatch, tmp_path, capsys):
+    """Recover captured defaults after the final reconfigure without a WAN Apply."""
+    test_management_handoff_candidate_durability_gates_ack(
+        monkeypatch, tmp_path, capsys, False, False, "unchanged", True, 443, wan_included=False,
+    )
 
 
 def test_management_handoff_blocks_before_snapshot_when_ordinary_recovery_fails(
