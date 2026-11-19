@@ -121,6 +121,11 @@ def test_fresh_capture_dns_is_optional_and_changes_the_plan_digest() -> None:
 
 @pytest.mark.parametrize("resolver", [None, ["192.168.56.2"], "192.168.056.2", "8.8.8.8", "127.0.0.1"])
 def test_fresh_capture_rejects_invalid_dns_selectors(resolver: object) -> None:
+    """Reject invalid resolver addresses in fresh VMware capture plans.
+
+    Args:
+        resolver: Candidate value supplied by the parametrized test case.
+    """
     with pytest.raises(ValueError, match="builder DNS requires a canonical RFC1918"):
         validate_plan({**plan(fresh_capture=True), "builder_dns": resolver})
 
