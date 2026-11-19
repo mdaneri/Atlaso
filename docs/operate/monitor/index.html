@@ -1068,6 +1068,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#inspect-routing-and-services" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Inspect routing and services
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#verify-an-exception" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4248,6 +4259,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#inspect-routing-and-services" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Inspect routing and services
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#verify-an-exception" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4419,8 +4441,10 @@
 
 
 <h1 id="monitor-appliance-health">Monitor appliance health<a class="headerlink" href="#monitor-appliance-health" title="Permanent link">&para;</a></h1>
-<p>Open <strong>Monitor</strong> for a read-only view of current appliance runtime health. The page reports CPU, memory pressure,
-network throughput, unique-device disk activity, interface state, and virtual-machine context.</p>
+<p>Open <strong>Monitor</strong> for a read-only view of appliance runtime health. <strong>Overview</strong> reports CPU, memory pressure, network
+throughput, unique-device disk activity, interface state, and virtual-machine context. <strong>Network</strong> shows live routes,
+policy rules, interfaces, forwarding, gateway neighbors, and a kernel route lookup. <strong>Services &amp; Clock</strong> reports
+observed service state, restart counts, verified listener addresses, and the effective clock source.</p>
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 <h2 id="interface-overview">Interface overview<a class="headerlink" href="#interface-overview" title="Permanent link">&para;</a></h2>
 <p>This verified appliance view provides visual orientation before you begin.</p>
@@ -4429,6 +4453,10 @@ network throughput, unique-device disk activity, interface state, and virtual-ma
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
 <h2 id="read-the-charts">Read the charts<a class="headerlink" href="#read-the-charts" title="Permanent link">&para;</a></h2>
+<p>Use <strong>Overview</strong>, <strong>Network</strong>, and <strong>Services &amp; Clock</strong> to switch between the time-series charts and live runtime
+observations. Each runtime view loads when opened. Choose <strong>Refresh</strong> to request a new observation. The capture time
+shows when the observation was taken. Partial or unavailable sections remain labeled so missing data is not read as an
+empty route table or healthy service.</p>
 <ul>
 <li>Start with the appliance totals before expanding per-CPU, per-interface, or per-device series.</li>
 <li>Use the common time-range selector to compare the same interval across charts.</li>
@@ -4440,6 +4468,22 @@ network throughput, unique-device disk activity, interface state, and virtual-ma
 <li>Treat unexpectedly down configured physical interfaces as actionable. Disabled optional services and unused
   interfaces are not exceptions.</li>
 </ul>
+<h2 id="inspect-routing-and-services">Inspect routing and services<a class="headerlink" href="#inspect-routing-and-services" title="Permanent link">&para;</a></h2>
+<p>The Network view lists IPv4 and IPv6 routes from every observed kernel table and policy rules in priority order. Table
+<code>100</code> is labeled <strong>Management</strong> and table <code>200</code> <strong>Lab</strong>, with the native table numbers retained. Use the route filter
+to narrow the grid by family, table, or interface. The interface and address grid reports observed carrier, MTU,
+effective addresses and address origin alongside receive and transmit errors. IPv4 and IPv6 forwarding state is shown
+separately. Gateway neighbors are observed from the current kernel table, without sending probes. <strong>Route lookup</strong>
+uses the entered destination and optional source and ingress interface to ask which route the kernel would select. It
+sends no packets and reports route selection, not reachability.</p>
+<p>When opened from a completed Appliance Update task, Monitor also compares captured routes, policy rules, interface
+addresses, and forwarding before and after that update. Capture times are shown for each phase. Partial observations
+identify the affected section, and updates created before snapshot support show <strong>No comparison recorded</strong>. Live
+neighbor state, interface counters, and route lookups are not historical update data.</p>
+<p>Services &amp; Clock reports service state, activation age, restart count, and listener addresses when the appliance can
+verify socket ownership. A missing or unverifiable listener observation is labeled <strong>Unavailable</strong>. The clock summary
+uses the same verified time-source and synchronization status as <strong>Settings → Time</strong>, including pending or unverified
+state. Open the owning settings link to review desired service state.</p>
 <p>Filesystem-capacity charts are intentionally not part of this page. Disk activity is counted once per underlying
 device, even when a filesystem is visible through multiple mount paths. The initial server snapshot also populates the
 accessible fallback tables when browser scripting is unavailable.</p>

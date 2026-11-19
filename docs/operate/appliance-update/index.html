@@ -1419,6 +1419,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#compare-network-state-around-an-update" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Compare network state around an update
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#update-only-browser-surface" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4358,6 +4369,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#compare-network-state-around-an-update" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Compare network state around an update
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#update-only-browser-surface" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4688,6 +4710,15 @@ recovery must prove the exact helper stopped and retry its scoped repository cre
 cleanup before it can terminalize the interrupted hierarchy. The persisted task and stream
 identify the same credential owner across restarts; a failed cleanup deliberately retains
 ownership and the queue hold until a later recovery attempt verifies both steps.</p>
+<h2 id="compare-network-state-around-an-update">Compare network state around an update<a class="headerlink" href="#compare-network-state-around-an-update" title="Permanent link">&para;</a></h2>
+<p>After an installation task reaches its terminal result and any required worker or service
+restart is verified, open its network comparison in <strong>Monitor → Network</strong>. The comparison
+shows capture times and added, removed, or changed IPv4 and IPv6 routes, policy rules,
+interface addresses, and forwarding state. This can reveal a missing WAN default in
+<code>main</code> or the lab routing table after an update. A partial or unavailable capture is labeled
+by section. Tasks predating this feature report <strong>No comparison recorded</strong>. The live
+Network view also shows current routes, forwarding, gateway neighbors, interfaces and
+address origin. Its route lookup does not send traffic.</p>
 <h2 id="update-only-browser-surface">Update-only browser surface<a class="headerlink" href="#update-only-browser-surface" title="Permanent link">&para;</a></h2>
 <p>Task polling recognizes the update-mode response and opens the status page automatically. Its refresh URL retains the
 task identifier and removes workspace fragments, so a previously selected Update Sources tab cannot leave the browser
