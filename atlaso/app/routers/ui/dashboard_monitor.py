@@ -107,11 +107,21 @@ def build_router(
         return JSONResponse(dashboard_snapshot(db))
 
     def require_network(identity: Identity = Depends(require_session_identity)) -> None:
+        """Require the Monitor and routing read scopes.
+
+        Args:
+            identity: Authenticated identity for the requested network view.
+        """
         require_monitoring_read(identity)
         if not identity.can("read:routes"):
             raise HTTPException(status_code=403, detail="Routing read access is required")
 
     def require_services(identity: Identity = Depends(require_session_identity)) -> None:
+        """Require the Monitor and service read scopes.
+
+        Args:
+            identity: Authenticated identity for the requested service view.
+        """
         require_monitoring_read(identity)
         if not identity.can("read:services"):
             raise HTTPException(status_code=403, detail="Service read access is required")
@@ -130,6 +140,8 @@ def build_router(
             request: Incoming HTTP request.
             identity: Authenticated identity authorizing the request.
             db: Active database session.
+            view: Monitor tab to open.
+            update: Appliance Update task to compare in the Network tab.
 
         Returns:
             The endpoint response.
@@ -205,7 +217,13 @@ def build_router(
         source: Annotated[str, Query(max_length=64)] = "",
         ingress: Annotated[str, Query(max_length=15)] = "",
     ) -> JSONResponse:
-        """Return the kernel's route selection for one numeric tuple."""
+        """Return the kernel's route selection for one numeric tuple.
+
+        Args:
+            destination: Numeric destination address.
+            source: Optional source address of the same family.
+            ingress: Optional interface to simulate as the incoming link.
+        """
         try:
             result = monitor_runtime.route_lookup(destination, source, ingress)
         except ValueError as exc:
@@ -214,7 +232,12 @@ def build_router(
 
     @router.get("/monitor/network/updates/{job_id}", dependencies=[Depends(require_network)], response_model=None)
     def monitor_update_data(job_id: str, db: Session = Depends(get_db)) -> JSONResponse:
-        """Return the comparison for one Appliance Update install task."""
+        """Return the comparison for one Appliance Update install task.
+
+        Args:
+            job_id: Appliance Update task identifier.
+            db: Database session used to load the stored captures.
+        """
         comparison = monitor_update_comparison.get_comparison(db, job_id)
         if comparison is None:
             raise HTTPException(status_code=404, detail="Update comparison not found", headers=NO_STORE)

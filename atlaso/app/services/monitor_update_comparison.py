@@ -64,6 +64,11 @@ SECTION_IDENTITIES = {
 
 
 def _capture_timestamp(value: Any) -> str:
+    """Normalize a recorded capture time to UTC.
+
+    Args:
+        value: Timestamp from a stored or newly collected capture.
+    """
     if isinstance(value, str):
         try:
             timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -76,7 +81,11 @@ def _capture_timestamp(value: Any) -> str:
 
 
 def _project_snapshot(payload: Any) -> dict[str, Any]:
-    """Keep only the bounded network fields consumed by the comparison view."""
+    """Keep only the bounded network fields consumed by the comparison view.
+
+    Args:
+        payload: Network observation to project for durable storage or display.
+    """
     payload = payload if isinstance(payload, dict) else {}
     sections = payload.get("sections")
     sections = sections if isinstance(sections, dict) else {}
@@ -134,6 +143,11 @@ def capture_snapshot(db: Session, *, job: Job, phase: str) -> bool:
 
     Native discovery failures are recorded as unavailable sections and do not
     change Appliance Update task outcomes.
+
+    Args:
+        db: Session used to retain the snapshot.
+        job: Appliance Update task owning the capture.
+        phase: Before or after the update.
     """
     if phase not in {"before", "after"} or job.type != "appliance-update":
         return False
@@ -181,6 +195,11 @@ def capture_snapshot(db: Session, *, job: Job, phase: str) -> bool:
 
 
 def _snapshot_row(snapshot: ApplianceUpdateNetworkSnapshot | None) -> dict[str, Any]:
+    """Read one stored capture for the comparison.
+
+    Args:
+        snapshot: Stored capture for the phase, if present.
+    """
     if snapshot is None:
         return {
             "state": "unrecorded",
@@ -200,6 +219,11 @@ def _snapshot_row(snapshot: ApplianceUpdateNetworkSnapshot | None) -> dict[str, 
 
 
 def _empty_sections(state: str = "unavailable") -> dict[str, dict[str, Any]]:
+    """Build empty observations for each comparable section.
+
+    Args:
+        state: Capture state to attach to the empty sections.
+    """
     return {
         name: {"state": state, "rows": []}
         for name in SNAPSHOT_SECTIONS
@@ -207,6 +231,12 @@ def _empty_sections(state: str = "unavailable") -> dict[str, dict[str, Any]]:
 
 
 def _row_identity(section: str, row: dict[str, Any]) -> tuple[str, ...]:
+    """Build the identity used to match rows across phases.
+
+    Args:
+        section: Network section whose identity fields apply.
+        row: Projected observation to identify.
+    """
     values: list[str] = []
     for field in SECTION_IDENTITIES[section]:
         value = row.get(field)
@@ -217,6 +247,13 @@ def _row_identity(section: str, row: dict[str, Any]) -> tuple[str, ...]:
 def _compare_rows(
     section: str, before_rows: list[Any], after_rows: list[Any]
 ) -> dict[str, list[dict[str, Any]]]:
+    """Compare complete observations from before and after an update.
+
+    Args:
+        section: Network section whose rows are being compared.
+        before_rows: Observations recorded before the update.
+        after_rows: Observations recorded after the update.
+    """
     before: dict[tuple[str, ...], list[dict[str, Any]]] = defaultdict(list)
     after: dict[tuple[str, ...], list[dict[str, Any]]] = defaultdict(list)
     for row in before_rows:
@@ -252,7 +289,12 @@ def _compare_rows(
 
 
 def get_comparison(db: Session, job_id: str) -> dict[str, Any] | None:
-    """Return projected before/after observations and diffs for an install task."""
+    """Return projected before/after observations and diffs for an install task.
+
+    Args:
+        db: Session used to load the task and its stored snapshots.
+        job_id: Appliance Update task identifier.
+    """
     job = db.get(Job, job_id)
     if job is None or job.type != "appliance-update":
         return None

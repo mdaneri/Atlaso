@@ -36,10 +36,20 @@ CLOCK_MODES = {"ntp_client", "ntp_server", "vmware_tools", "manual", "unverified
 
 
 def _dict(value: Any) -> Row:
+    """Use a native object or an empty mapping.
+
+    Args:
+        value: Decoded value that may contain an object.
+    """
     return value if isinstance(value, dict) else {}
 
 
 def _int(value: Any) -> int | None:
+    """Accept a bounded nonnegative integer.
+
+    Args:
+        value: Native number or decimal string.
+    """
     if type(value) is int and 0 <= value < 1 << 64:
         return value
     if isinstance(value, str) and re.fullmatch(r"[0-9]{1,20}", value):
@@ -48,14 +58,30 @@ def _int(value: Any) -> int | None:
 
 
 def _items(value: Any) -> list[Row]:
+    """Keep object rows from an optional native list.
+
+    Args:
+        value: Decoded value that may contain a list of rows.
+    """
     return [row for row in value if isinstance(row, dict)] if isinstance(value, list) else []
 
 
 def _token(value: Any) -> str | None:
+    """Accept a bounded native label.
+
+    Args:
+        value: Candidate label from native output.
+    """
     return value if isinstance(value, str) and re.fullmatch(r"[\w.:@/+-]{1,80}", value, re.ASCII) else None
 
 
 def _address(value: Any, family: int | None = None) -> str | None:
+    """Normalize a numeric address.
+
+    Args:
+        value: Address text returned by the kernel or supplied for lookup.
+        family: Required IP version, if specified.
+    """
     if not isinstance(value, str) or len(value) > 96:
         return None
     try:
@@ -68,6 +94,12 @@ def _address(value: Any, family: int | None = None) -> str | None:
 
 
 def _prefix(value: Any, family: int) -> str | None:
+    """Normalize a route destination or policy prefix.
+
+    Args:
+        value: Native address, prefix, or default marker.
+        family: IP version expected in the prefix.
+    """
     if value == "default":
         return "default"
     if not isinstance(value, str):
@@ -83,6 +115,11 @@ def _prefix(value: Any, family: int) -> str | None:
 
 
 def _table(value: Any) -> int | str | None:
+    """Normalize a native routing table identifier.
+
+    Args:
+        value: Native table number or name.
+    """
     if isinstance(value, str) and value in TABLE_IDS:
         return TABLE_IDS[value]
     number = _int(value)
@@ -90,6 +127,12 @@ def _table(value: Any) -> int | str | None:
 
 
 def _native_label(value: Any, labels: dict[int, str]) -> str | None:
+    """Label a numeric native value or preserve a recognized token.
+
+    Args:
+        value: Native numeric value or label.
+        labels: Display names indexed by native numeric value.
+    """
     number = _int(value)
     if number is not None:
         return labels.get(number, str(number))
@@ -97,6 +140,12 @@ def _native_label(value: Any, labels: dict[int, str]) -> str | None:
 
 
 def _next_hop(row: Row, family: int) -> Row:
+    """Project next-hop fields from a native route.
+
+    Args:
+        row: Native route or next-hop object.
+        family: IP version of the route.
+    """
     via = _dict(row.get("via"))
     return {
         "gateway": _address(row.get("gateway"), family) or _address(via.get("addr") or via.get("host")),
@@ -106,6 +155,12 @@ def _next_hop(row: Row, family: int) -> Row:
 
 
 def _route(row: Row, family: int) -> Row | None:
+    """Project one native route for Monitor.
+
+    Args:
+        row: Native route object.
+        family: IP version of the route dump.
+    """
     destination = _prefix(row.get("dst"), family) or ("default" if "dst" not in row else None)
     table = _table(row.get("table", 254))
     if not destination or table is None:
@@ -126,16 +181,31 @@ def _route(row: Row, family: int) -> Row | None:
 
 
 def _rule_prefix(row: Row, field: str, family: int) -> str:
+    """Normalize a source or destination selector in a policy rule.
+
+    Args:
+        row: Native policy-rule object with optional prefix lengths.
+        field: Native selector key, either src or dst.
+        family: IP version of the rule dump.
+    """
     value = row.get(field)
     length = _int(row.get(f"{field}len"))
+    if value is None or (value == "all" and length in (None, 0)):
+        return "all"
     if value == "0":
         value = "0.0.0.0" if family == 4 else "::"
     if length is not None and isinstance(value, str):
         return _prefix(f"{value}/{length}", family) or "unavailable"
-    return _prefix(value, family) or ("all" if value in (None, "all") else "unavailable")
+    return _prefix(value, family) or "unavailable"
 
 
 def _rule(row: Row, family: int) -> Row | None:
+    """Project one native policy rule for Monitor.
+
+    Args:
+        row: Native policy-rule object.
+        family: IP version of the rule dump.
+    """
     priority = _int(row.get("priority", 0))
     if priority is None:
         return None
@@ -178,6 +248,12 @@ def _rule(row: Row, family: int) -> Row | None:
 
 
 def _neighbor(row: Row, family: int) -> Row | None:
+    """Project one native neighbor entry.
+
+    Args:
+        row: Native neighbor object.
+        family: IP version of the neighbor dump.
+    """
     address = _address(row.get("dst"), family)
     interface = _token(row.get("dev"))
     if not address or not interface:
@@ -191,14 +267,31 @@ def _neighbor(row: Row, family: int) -> Row | None:
 
 
 def _section(rows: list[Row], state: str = "ok") -> Section:
+    """Build an observation section with its collection state.
+
+    Args:
+        rows: Projected observations retained for the section.
+        state: Completeness of the observations.
+    """
     return {"state": state, "rows": rows}
 
 
 def _ip_arguments(*args: str) -> list[str]:
+    """Build arguments for structured numeric ip output.
+
+    Args:
+        *args: Operation and options following the fixed output flags.
+    """
     return ["ip", "-N", "-j", "-details", *args]
 
 
 def _json_rows(args: list[str], deadline: float) -> list[Any]:
+    """Read a native JSON array before the deadline.
+
+    Args:
+        args: Native command and argument list.
+        deadline: Monotonic deadline shared with other observations.
+    """
     code, output = run_native(args, deadline)
     if code:
         raise ObservationUnavailable
@@ -209,6 +302,13 @@ def _json_rows(args: list[str], deadline: float) -> list[Any]:
 
 
 def _dual_stack(arguments: list[str], project: Callable[[Row, int], Row | None], deadline: float) -> Section:
+    """Collect and project rows for both IP families.
+
+    Args:
+        arguments: Family-independent arguments for the read operation.
+        project: Projector for one native row and IP version.
+        deadline: Monotonic deadline for both reads.
+    """
     rows: list[Row] = []
     complete = 0
     partial = False
@@ -232,6 +332,11 @@ def _dual_stack(arguments: list[str], project: Callable[[Row, int], Row | None],
 
 
 def _helper_object(result: AdapterResult) -> Row:
+    """Decode an available helper observation.
+
+    Args:
+        result: Result returned by the read-only system adapter.
+    """
     if result.returncode or result.dry_run or len(result.stdout) > MAX_OUTPUT:
         return {}
     try:
@@ -243,7 +348,12 @@ def _helper_object(result: AdapterResult) -> Row:
 def _observed_origins(
     adapter: SystemAdapter, deadline: float,
 ) -> tuple[dict[tuple[int, str, str, str], str], bool]:
-    """Return the origins and whether native discovery completed."""
+    """Return the origins and whether native discovery completed.
+
+    Args:
+        adapter: Adapter that reads native address status.
+        deadline: Monotonic deadline shared by the network capture.
+    """
     remaining = min(deadline - time.monotonic(), 3)
     if remaining <= 0.05:
         return {}, False
@@ -265,6 +375,12 @@ def _observed_origins(
 
 
 def _interfaces(adapter: SystemAdapter, deadline: float) -> Section:
+    """Collect interface, address, and link observations.
+
+    Args:
+        adapter: Adapter that reads address origins.
+        deadline: Monotonic deadline shared by the network capture.
+    """
     try:
         native = _json_rows(_ip_arguments("-statistics", "address", "show"), deadline)
     except ValueError:
@@ -326,6 +442,12 @@ def _forwarding() -> Section:
 
 
 def _gateway_neighbors(routes: Section, deadline: float) -> Section:
+    """Match observed neighbors to route next hops.
+
+    Args:
+        routes: Projected routing section used to identify gateways.
+        deadline: Monotonic deadline for the neighbor reads.
+    """
     if routes["state"] == "unavailable":
         return _section([], "unavailable")
     gateways = set()
@@ -350,7 +472,11 @@ def _gateway_neighbors(routes: Section, deadline: float) -> Section:
 
 
 def collect_network(*, include_neighbors: bool = True) -> dict[str, Any]:
-    """Read kernel network state without invoking any configuration handlers."""
+    """Read kernel network state without invoking any configuration handlers.
+
+    Args:
+        include_neighbors: Whether to include live gateway neighbor entries.
+    """
     captured_at = datetime.now(UTC).isoformat()
     adapter = SystemAdapter()
     if adapter.dry_run:
@@ -370,7 +496,13 @@ def collect_network(*, include_neighbors: bool = True) -> dict[str, Any]:
 
 
 def route_lookup(destination: str, source: str, ingress: str) -> Section:
-    """Run a single validated kernel route lookup without sending traffic."""
+    """Run a single validated kernel route lookup without sending traffic.
+
+    Args:
+        destination: Numeric destination address.
+        source: Optional numeric source address of the same family.
+        ingress: Optional interface for a forwarded lookup.
+    """
     if "%" in destination or "%" in source:
         raise ValueError("Use numeric addresses without zone suffixes.")
     target = _address(destination)
@@ -430,6 +562,11 @@ def _service_properties() -> dict[str, dict[str, str]]:
 
 
 def _services(adapter: SystemAdapter) -> Section:
+    """Project packaged service state and verified listeners.
+
+    Args:
+        adapter: Adapter that reads verified socket ownership.
+    """
     properties = _service_properties()
     if not properties:
         return _section([], "unavailable")
@@ -457,6 +594,11 @@ def _services(adapter: SystemAdapter) -> Section:
 
 
 def _clock(adapter: SystemAdapter) -> Section:
+    """Project the effective clock source and synchronization.
+
+    Args:
+        adapter: Adapter that reads native clock status.
+    """
     payload = _helper_object(adapter.read_ntpd_status())
     if not payload:
         return _section([], "unavailable")

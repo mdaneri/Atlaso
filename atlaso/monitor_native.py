@@ -38,7 +38,13 @@ class ObservationUnavailable(ValueError):
 
 
 def run_native(args: list[str], deadline: float, *, input_data: bytes = b"") -> tuple[int, str]:
-    """Run one native command using a fixed search path and bounded I/O."""
+    """Run one native command using a fixed search path and bounded I/O.
+
+    Args:
+        args: Native executable name and argument list.
+        deadline: Monotonic deadline for the command.
+        input_data: Optional bounded bytes written to the native process.
+    """
     if len(input_data) > 256:
         raise ObservationUnavailable
     executable = shutil.which(args[0], path=NATIVE_PATH) if os.name == "posix" else None
@@ -75,7 +81,12 @@ def run_native(args: list[str], deadline: float, *, input_data: bytes = b"") -> 
 
 
 def listener_endpoint(endpoint: str, family: int) -> tuple[str, int]:
-    """Normalize a numeric ss endpoint while preserving a valid IPv6 zone."""
+    """Normalize a numeric ss endpoint while preserving a valid IPv6 zone.
+
+    Args:
+        endpoint: Numeric local socket address and port.
+        family: IP version of the socket inventory.
+    """
     address, port = endpoint.rsplit(":", 1)
     address = address.removeprefix("[").removesuffix("]")
     if address == "*":
@@ -88,7 +99,13 @@ def listener_endpoint(endpoint: str, family: int) -> tuple[str, int]:
 
 
 def socket_unit(pid: str, fd: str, inode: str) -> str | None:
-    """Verify the observed socket still belongs to the same systemd cgroup."""
+    """Verify the observed socket still belongs to the same systemd cgroup.
+
+    Args:
+        pid: Process identifier reported by the socket inventory.
+        fd: File descriptor reported for the socket.
+        inode: Expected kernel socket inode.
+    """
     process = Path("/proc") / pid
     try:
         first = (process / "cgroup").read_text(encoding="utf-8")

@@ -38533,7 +38533,12 @@ def _handle_appliance_update_locked(action: str, args: list[str]) -> int:
 
 
 def _handle_monitor_listeners(args: list[str], *, real_apply: bool) -> int:
-    """Observe only the packaged service listeners using the installed collector."""
+    """Observe only the packaged service listeners using the installed collector.
+
+    Args:
+        args: Expected empty argument list for this observation.
+        real_apply: Whether the helper was invoked for native observation.
+    """
     if args or not real_apply:
         return 2
     try:

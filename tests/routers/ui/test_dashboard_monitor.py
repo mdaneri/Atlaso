@@ -96,7 +96,11 @@ def test_monitor_data_and_server_time_keep_transport_contracts(client):
 
 
 def test_runtime_monitor_permissions_and_direct_links(client):
-    """Enforce monitoring and resource scopes on the browser page and data endpoints."""
+    """Enforce monitoring and resource scopes on the browser page and data endpoints.
+
+    Args:
+        client: Test client for the management interface.
+    """
     from atlaso.app.security import Identity, require_session_identity
 
     login(client)

@@ -71,11 +71,22 @@ def test_helper_rejects_incompatible_collector_evidence(monkeypatch, capsys):
 
 
 def test_monitor_listener_helper_admits_only_an_argument_free_installed_collector(monkeypatch, capsys):
-    """Restrict the privileged browser observation to the installed fixed collector."""
+    """Restrict the privileged browser observation to the installed fixed collector.
+
+    Args:
+        monkeypatch: Fixture that replaces the subprocess runner.
+        capsys: Fixture that captures the helper response.
+    """
     helper = load_helper_module()
     calls = []
 
     def run(argv, **kwargs):
+        """Record the privileged collector invocation.
+
+        Args:
+            argv: Command submitted to the subprocess runner.
+            **kwargs: Subprocess options used by the helper.
+        """
         calls.append((argv, kwargs))
         return SimpleNamespace(returncode=0, stdout=b'{"state":"ok","rows":[]}')
 

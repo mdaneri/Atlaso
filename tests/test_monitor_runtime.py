@@ -16,7 +16,12 @@ from atlaso.monitor_native import (
 
 @pytest.mark.parametrize("origin_status", ["complete", "incomplete", "timeout"])
 def test_network_projects_forwarding_domains_addresses_and_neighbors(monkeypatch, origin_status):
-    """Keep table identity, observed gateway states, and address origin distinct."""
+    """Keep table identity, observed gateway states, and address origin distinct.
+
+    Args:
+        monkeypatch: Fixture that substitutes native observations.
+        origin_status: Address-origin outcome to simulate.
+    """
     data = {
         ("-4", "route", "show", "table", "all"): [
             {"dst": "default", "table": "main", "gateway": "192.0.2.1", "dev": "eth0", "protocol": "16"},
@@ -43,10 +48,22 @@ def test_network_projects_forwarding_domains_addresses_and_neighbors(monkeypatch
     }
 
     def observe(argv, deadline):
+        """Return a fixture for the requested native operation.
+
+        Args:
+            argv: Native command and arguments.
+            deadline: Monotonic deadline for the read.
+        """
         assert argv[:4] == ["ip", "-N", "-j", "-details"]
         return 0, json.dumps(data[tuple(argv[4:])])
 
     def helper(_self, *, timeout_seconds):
+        """Return the selected address-status outcome.
+
+        Args:
+            _self: Adapter instance whose method was replaced.
+            timeout_seconds: Time budget for observing address origins.
+        """
         assert 0 < timeout_seconds <= 3
         if origin_status == "timeout":
             return AdapterResult([], False, returncode=124)
@@ -77,9 +94,38 @@ def test_network_projects_forwarding_domains_addresses_and_neighbors(monkeypatch
     assert payload["forwarding"]["rows"] == [{"family": 4, "enabled": False}, {"family": 6, "enabled": True}]
 
 
+def test_native_catch_all_rules_keep_dual_stack_observation_complete(monkeypatch):
+    """Preserve explicit zero-length catch-all selectors for both IP families.
+
+    Args:
+        monkeypatch: Fixture that supplies native rule output.
+    """
+    monkeypatch.setattr(runtime, "run_native", lambda *_args: (
+        0, '[{"priority": 100, "src": "all", "srclen": 0, "dst": "all", "dstlen": 0, "table": "100"}]',
+    ))
+
+    result = runtime._dual_stack(["rule", "show"], runtime._rule, time.monotonic() + 3)
+
+    assert result["state"] == "ok"
+    assert [(row["family"], row["source"], row["destination"]) for row in result["rows"]] == [
+        (4, "all", "all"),
+        (6, "all", "all"),
+    ]
+
+
 def test_partial_native_families_do_not_claim_empty(monkeypatch):
-    """A timed-out family leaves the remaining route data explicitly partial."""
+    """A timed-out family leaves the remaining route data explicitly partial.
+
+    Args:
+        monkeypatch: Fixture that substitutes native observations.
+    """
     def observe(argv, _deadline):
+        """Return IPv4 data and simulate an IPv6 timeout.
+
+        Args:
+            argv: Native command and arguments.
+            _deadline: Unused monotonic deadline.
+        """
         if "-6" in argv:
             raise ObservationUnavailable
         return 0, '[{"dst":"192.0.2.0/24","dev":"eth0"}]'
@@ -91,12 +137,23 @@ def test_partial_native_families_do_not_claim_empty(monkeypatch):
 
 
 def test_route_lookup_passes_only_numeric_destinations_and_validated_selectors(monkeypatch):
-    """Exercise local and forwarded kernel lookup arguments and negative outcomes."""
+    """Exercise local and forwarded kernel lookup arguments and negative outcomes.
+
+    Args:
+        monkeypatch: Fixture that substitutes the kernel lookup.
+    """
 
     monkeypatch.setattr(runtime, "SystemAdapter", lambda: SystemAdapter(dry_run=False))
     calls = []
 
     def observe(argv, _deadline, *, input_data):
+        """Return the result associated with the fixed lookup command.
+
+        Args:
+            argv: Native command and arguments.
+            _deadline: Unused monotonic deadline.
+            input_data: Validated lookup line passed to the command.
+        """
         calls.append((argv, input_data))
         if input_data == b"route get fibmatch 203.0.113.1\n":
             return 2, "RTNETLINK answers: Network is unreachable"
@@ -121,7 +178,11 @@ def test_route_lookup_passes_only_numeric_destinations_and_validated_selectors(m
 
 
 def test_services_and_clock_keep_incomplete_listener_and_pending_clock_evidence(monkeypatch):
-    """Observe inactive services without inferring listeners or clock synchronization."""
+    """Observe inactive services without inferring listeners or clock synchronization.
+
+    Args:
+        monkeypatch: Fixture that substitutes service and clock observations.
+    """
 
     adapter = SystemAdapter(dry_run=False)
     monkeypatch.setattr(runtime, "SystemAdapter", lambda: adapter)
@@ -147,10 +208,20 @@ def test_services_and_clock_keep_incomplete_listener_and_pending_clock_evidence(
 
 
 def test_listener_capture_requires_socket_and_cgroup_ownership(monkeypatch):
-    """Expose attribution only for an exact kernel-owned socket in a packaged unit."""
+    """Expose attribution only for an exact kernel-owned socket in a packaged unit.
+
+    Args:
+        monkeypatch: Fixture that substitutes socket and ownership observations.
+    """
     from atlaso import monitor_native
 
     def observe(args, _deadline):
+        """Return IPv4 socket records for the ownership check.
+
+        Args:
+            args: Native socket inventory command and arguments.
+            _deadline: Unused monotonic deadline.
+        """
         if "-4" in args:
             return 0, (
                 'tcp LISTEN 0 128 127.0.0.1:8000 0.0.0.0:* users:(("python",pid=12,fd=4)) ino:42\n'

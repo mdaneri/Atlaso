@@ -276,7 +276,7 @@ def test_dns_and_dhcp_pages_render(client):
     assert "Review appliance changes" in dns.text
     assert "Save desired state" not in dns.text
     assert "Save DNS" not in dns.text
-    app_css = client.get("/static/app.css").text
+    app_css = client.get("/static/app.css").text.replace("\r\n", "\n")
     assert ".dns-zone-tools-head {" in app_css
     assert ".dns-authority-summary-head > strong {\n  font-size: 12px;" in app_css
     assert ".dns-authority-records code {" in app_css
@@ -365,7 +365,10 @@ def test_dns_and_dhcp_pages_render(client):
     assert "scheduleApplianceApplySidebarRefresh" in app_js.text
     assert 'fetch(managementUiPath("/appliance-apply/status")' in app_js.text
     assert "function updateServerTime" in app_js.text
-    assert "window.setInterval(load, 5000)" in app_js.text
+    assert (
+        "window.setInterval(() => {\n    if (overviewIsActive()) load();\n  }, 5000)"
+        in app_js.text.replace("\r\n", "\n")
+    )
     assert "initializeApplianceApplyProgress" in app_js.text
     assert "Submit appliance changes" in app_js.text
     assert "openApplianceApplyReview" in app_js.text
@@ -448,15 +451,16 @@ def test_dns_and_dhcp_pages_render(client):
     assert "initializeServiceBindEditors" in app_js.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
-    assert ".tab-panel {\n  min-width: 0;\n}" in app_css.text
+    css_text = app_css.text.replace("\r\n", "\n")
+    assert ".tab-panel {\n  min-width: 0;\n}" in css_text
     assert (
         ".dns-records-table {\n  height: clamp(280px, 42vh, 420px);\n"
         "  width: 100%;\n  max-width: 100%;"
-        in app_css.text
+        in css_text
     )
     assert (
         ".dns-records-table .tabulator-tableholder {\n  overflow-x: auto;"
-        in app_css.text
+        in css_text
     )
     assert "data-tag-single" in app_js.text
     assert "X-Atlaso-Autosave" in app_js.text

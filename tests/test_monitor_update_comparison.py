@@ -22,6 +22,11 @@ from atlaso.app.ui import _task_row
 
 
 def test_capture_comparison_projects_and_classifies_network_changes(monkeypatch):
+    """Verify capture persistence and projected network changes.
+
+    Args:
+        monkeypatch: Fixture that supplies deterministic before and after captures.
+    """
     before = {
         "captured_at": "2026-11-18T10:00:00+00:00",
         "sections": {
@@ -157,9 +162,19 @@ def test_comparison_requires_an_install_task_and_matching_transaction():
 
 
 def test_native_capture_failure_is_retained_as_unavailable(monkeypatch):
+    """Record native capture failure without failing the update.
+
+    Args:
+        monkeypatch: Fixture that substitutes a failing native capture.
+    """
     module = ModuleType("atlaso.app.services.monitor_runtime")
 
     def fail_capture(*, include_neighbors):
+        """Simulate native collection failure.
+
+        Args:
+            include_neighbors: Whether the capture requested gateway neighbors.
+        """
         assert include_neighbors is False
         raise RuntimeError("native output is deliberately omitted")
 

@@ -1454,7 +1454,12 @@ def _complete_appliance_update_step(
 
 
 def _capture_appliance_update_network_snapshot(job_id: str, phase: str) -> None:
-    """Persist an update network snapshot without changing the task outcome."""
+    """Persist an update network snapshot without changing the task outcome.
+
+    Args:
+        job_id: Appliance Update task identifier.
+        phase: Before or after the update.
+    """
     try:
         from atlaso.app.services.monitor_update_comparison import capture_snapshot
 
