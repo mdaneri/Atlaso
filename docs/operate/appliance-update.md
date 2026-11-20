@@ -93,6 +93,17 @@ cleanup before it can terminalize the interrupted hierarchy. The persisted task 
 identify the same credential owner across restarts; a failed cleanup deliberately retains
 ownership and the queue hold until a later recovery attempt verifies both steps.
 
+## Compare network state around an update
+
+After an installation task reaches its terminal result and any required worker or service
+restart is verified, open its network comparison in **Monitor → Network**. The comparison
+shows capture times and added, removed, or changed IPv4 and IPv6 routes, policy rules,
+interface addresses, and forwarding state. This can reveal a missing WAN default in
+`main` or the lab routing table after an update. A partial or unavailable capture is labeled
+by section. Tasks predating this feature report **No comparison recorded**. The live
+Network view also shows current routes, forwarding, gateway neighbors, interfaces and
+address origin. Its route lookup does not send traffic.
+
 ## Update-only browser surface
 
 Task polling recognizes the update-mode response and opens the status page automatically. Its refresh URL retains the

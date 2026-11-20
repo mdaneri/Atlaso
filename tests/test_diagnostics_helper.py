@@ -68,3 +68,35 @@ def test_helper_rejects_incompatible_collector_evidence(monkeypatch, capsys):
     ])
     assert status == 1
     assert capsys.readouterr().out == ""
+
+
+def test_monitor_listener_helper_admits_only_an_argument_free_installed_collector(monkeypatch, capsys):
+    """Restrict the privileged browser observation to the installed fixed collector.
+
+    Args:
+        monkeypatch: Fixture that replaces the subprocess runner.
+        capsys: Fixture that captures the helper response.
+    """
+    helper = load_helper_module()
+    calls = []
+
+    def run(argv, **kwargs):
+        """Record the privileged collector invocation.
+
+        Args:
+            argv: Command submitted to the subprocess runner.
+            **kwargs: Subprocess options used by the helper.
+        """
+        calls.append((argv, kwargs))
+        return SimpleNamespace(returncode=0, stdout=b'{"state":"ok","rows":[]}')
+
+    monkeypatch.setattr(helper.subprocess, "run", run)
+    assert helper.main(["atlaso-helper", "diagnostics", "listeners"]) == 2
+    assert helper.main(["atlaso-helper", "diagnostics", "listeners", "--real", "nginx.service"]) == 2
+    assert calls == []
+    assert helper.main(["atlaso-helper", "diagnostics", "listeners", "--real"]) == 0
+    argv, kwargs = calls[0]
+    assert argv == ["/opt/atlaso/.venv/bin/python", "-I", "-m", "atlaso.monitor_native"]
+    assert kwargs["timeout"] == 5
+    assert kwargs["stderr"] == helper.subprocess.DEVNULL
+    assert json.loads(capsys.readouterr().out) == {"state": "ok", "rows": []}

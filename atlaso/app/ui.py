@@ -9492,6 +9492,19 @@ def _task_row(job: Job, identity: Identity | None = None) -> dict[str, Any]:
         management_restart_window = appliance_apply_management_restart_window(job)
         if management_restart_window is not None:
             row["management_restart_window"] = management_restart_window
+    if job.type == "appliance-update" and identity is not None:
+        try:
+            task_config = json.loads(job.task_config_json or "{}")
+        except (json.JSONDecodeError, TypeError):
+            task_config = {}
+        if (
+            isinstance(task_config, dict)
+            and task_config.get("mode") == "run"
+            and status_value in {JobStatus.SUCCEEDED.value, JobStatus.FAILED.value}
+            and identity.can("read:monitoring")
+            and identity.can("read:routes")
+        ):
+            row["network_comparison_available"] = True
     if steps:
         row["_children"] = [_job_step_row(step) for step in steps]
     return row
@@ -20258,7 +20271,8 @@ def _submit_appliance_apply(
         # A voluntary subset must keep offering the valid setup units it
         # omitted. Invalid units retain the normal desired-state review rules.
         deferred_initial_setup = any(
-            unit["valid"] and unit["id"] in unfinished_initial_units and unit["id"] not in selected_ids
+            unit["id"] in unfinished_initial_units and unit["id"] not in selected_ids
+            and not unit["validation_errors"]
             for unit in units
         )
         job_result = {

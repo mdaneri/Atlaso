@@ -11,7 +11,13 @@ from tests.routers.ui.helpers import login, submit_reviewed_appliance_apply
 
 @pytest.mark.parametrize("ntp_succeeded", [False, True])
 def test_initial_apply_retry_selects_unfinished_components_and_new_edits(client, monkeypatch, ntp_succeeded):
-    """Resume a partial initial Apply without replaying completed components."""
+    """Resume a partial initial Apply without replaying completed components.
+
+    Args:
+        client: Authenticated UI test client after login.
+        monkeypatch: Fixture for isolating Apply planning and execution.
+        ntp_succeeded: Whether the initial task successfully applied NTP.
+    """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus, JobStep

@@ -32,7 +32,8 @@ def _log_helper_outcome(group: str, action: str, result: "AdapterResult") -> Non
     stage = "validation" if action.startswith("validate") else "recovery" if action.startswith("recover") else "cleanup" if action in {"cleanup", "reset-tool"} else "execution"
     observing = action in {"status", "logs", "leases", "access-logs", "error-logs", "source", "read-log", "check",
                            "page", "inventory", "address-status", "dhcp-dns", "capabilities", "verify-pool",
-                           "read-software-depot-id", "status-inspect", "restart-inspect", "reverse-proxy-status", "listener-status"}
+                           "read-software-depot-id", "status-inspect", "restart-inspect", "reverse-proxy-status", "listener-status",
+                           "listeners"}
     reason = failure_reason(result.stderr, result.returncode) if result.returncode else "none"
     if stage == "validation" and reason == "helper_failed":
         reason = "validation_rejected"
@@ -703,6 +704,13 @@ class SystemAdapter:
             The validate ntpd config result.
         """
         return self._helper_result("ntpd", "validate", config_path, dry_run_message="dry-run: NTPsec validation command recorded")
+
+    def read_monitor_listeners(self) -> AdapterResult:
+        """Read fixed managed-service listeners from the installed privileged collector."""
+        return self._helper_result(
+            "diagnostics", "listeners", timeout_seconds=6,
+            dry_run_message='{"state":"unavailable","rows":[]}',
+        )
 
     def read_ntpd_status(self) -> AdapterResult:
         """Return ntpd status."""

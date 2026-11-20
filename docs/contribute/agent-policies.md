@@ -332,8 +332,15 @@ preserved with their affected subsystem below. Keep new requirements at their to
 
 ## Monitor Operations UX
 
-- Keep `/ui/management/monitor` read-only and focused on appliance runtime health: CPU, memory pressure, network throughput,
-  unique-device disk activity, interface state, and virtual-machine context.
+- Keep `/ui/management/monitor` read-only and focused on appliance runtime health. Overview reports CPU, memory pressure,
+  network throughput, unique-device disk activity, interface state, and virtual-machine context. Network reports live
+  IPv4/IPv6 routes and ordered policy rules across kernel tables, observed interface addresses/link/error state,
+  forwarding, neighbors, and a bounded no-packet kernel route lookup. Services & Clock reports observed service state,
+  activation age, restart count, verified TCP/UDP listener ownership, and the effective time source and synchronization
+  status. Keep each observation bounded, timestamped, projected, and visibly partial/unavailable when native reads fail.
+  Require `read:monitoring` plus the relevant `read:routes` or `read:services` scope. Completed installation tasks may
+  link to immutable before/after snapshots of routes, rules, interface addresses, and forwarding; keep incomplete
+  snapshots explicit and separate from the update outcome.
 - Do not restore per-mount capacity presentation on the Monitor page, including the top-level Disks metric, Disk Usage
   chart, or capacity table. Filesystem usage may remain in monitor samples and APIs for compatibility and other
   consumers, but it is intentionally omitted from this page because the mount-level view was not operationally useful.
