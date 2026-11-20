@@ -59,6 +59,47 @@ when the required native tools are already available on Windows `PATH`. Plans st
 the pre-existing tool environment; it is not evidence that the native tool pipeline has run successfully.
 Use the phase's recorded result and evidence to assess each actual run.
 
+### Use a prepared Photon VM for native tools
+
+An existing Linux tool VM can replace the Windows/WSL RPM tools. It must already provide Python 3.11 or newer,
+`/usr/bin/rpm`, `rpmkeys`, `createrepo_c`, GNU `timeout`, and SSH on port 22. This selector does not install tools,
+change networking, or create, adopt, stop or delete the VM. The canonical capture builder and installer validation
+VM retain their separate original ownership and acceptance requirements.
+
+Observe the VM's Ed25519 host-key fingerprint through its independently verified console before creating the plan.
+Put its account password in one concealed variable in the exact `Atlaso` 1Password Environment. Prepare the
+task-local DPAPI service-account configuration through the existing
+[credential reuse procedure](vmware-workstation-lifecycle-testing.md#reuse-primary-checkout-configuration-in-a-task-worktree).
+The SSH provider requires that explicit unattended configuration and never falls back to desktop prompts.
+
+Add all four selectors to `create-plan`, omitting `--native-distribution`:
+
+```text
+--native-ssh-host 192.168.56.20 --native-ssh-user root
+--native-ssh-host-key-sha256 <CONSOLE-OBSERVED-SHA256-FINGERPRINT>
+--native-ssh-password-variable <CONCEALED-ATLASO-VARIABLE-NAME>
+```
+
+The address must be a canonical RFC 1918 IPv4 address. Plans bind the address, account, fingerprint and variable
+**name**, never a password. The optional `native_ssh` object contains `host`, `user`, `host_key_sha256` and
+`password_variable`; it cannot coexist with a WSL selector. Existing plans without this object retain their
+canonical representation and digest.
+
+The credential consumer runs inside the original non-breakaway Windows refresh job, using the locked SDK runtime.
+It verifies the host key before retrieving the selected secret. Each consumer creates a new private directory under
+`/var/tmp/atlaso-rpm-<session-id>-<phase>` and publishes its original filesystem identity, boot identity and task/source
+binding before staging data. Only plan-admitted public inputs are mirrored; links, hard links, credential directories,
+path escapes and changed input digests are refused. The VM clock must match the host within five seconds so native
+deadlines remain meaningful; establish normal time synchronization separately, without manually changing either clock.
+
+Each RPM command still waits behind the existing durable Linux process-receipt/release barrier. Its independent
+Linux timeout and complete process-group quiescence proof remain mandatory. RPM databases stay inside the private
+remote session; only newly generated repository metadata returns to its original empty Windows output directory.
+On normal consumer completion the owner verifies and removes only its original private workspace. A changed root,
+unknown entry, missing completion record or interrupted transport leaves retained evidence and refuses successful
+phase completion. Preserve that workspace and its `*-ssh-context.json` / `*-ssh-original.json` evidence for maintainer
+reconciliation; do not adopt it into a new operation or delete a directory selected only by its name.
+
 When drift reports `requires_review`, `compare` can produce a bounded old-versus-new RPM diagnostic:
 
 ```powershell
@@ -159,7 +200,9 @@ validation budgets from another task.
    Preserve the complete result and any failed builder artifacts for the owning cleanup path. Do not
    restart or repurpose a failed or completed builder. The canonical build wrapper's `-CleanupOnly` path
    handles its exact retained sensitive staging, not the builder VM or all reservations. Keep failed
-   resources for their owning diagnosis and cleanup procedure.
+   resources for their owning diagnosis and cleanup procedure. If the in-guest repository probe fails, use its
+   reported curl exit code and HTTP status to distinguish transport failures from server responses. The diagnostic
+   omits the raw curl error and response body.
 3. **Admit.** Run `admit` after drift and, when required, capture. It repeats early drift admission and
    verifies current official package metadata, signatures, every selected identity, full RPM closure and
    transaction, and the reviewed runtime-profile digests. A canonical capture also contains a separate

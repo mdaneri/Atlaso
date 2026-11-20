@@ -16,32 +16,32 @@ from scripts.installation.layout import PROFILE
 
 KINDS = ("assets", "python", "powercli", "rpm", "notices")
 PHOTON_FILESYSTEM_SHA256 = "7f5bba3e84f6eb50f6e5e311325089bc642549469d83793e0ba5f40d74ec6024"
-PHOTON_SYSTEMD_SHA256 = "3f31b4ae0bdcdc410909907dcb0e7bfd09f46259a97cceae0d55195ece4e49ba"
+PHOTON_SYSTEMD_SHA256 = "3a167b0ffd6f92d5228e0aa7124bc762d1ef05e6989730b9e3715f21d986302d"
 PHOTON_LAYOUT_HELPER_SHA256 = "1feb571697f3a1e592e3839bc303cd4c20cd8d40f7acd4e3d7df93449de99608"
 PHOTON_GRUB_EFI_SHA256 = "516e63a3c609abecf4a4bf3ef2661d4f1bed26729a612f73e0bfcb530727e91f"
 PHOTON_SHIM_SHA256 = "e41e6109d7be89ae83da63ef8021ef9a0e053ecd4fe1f47ae73dd79270d688c7"
 PHOTON_RPCBIND_SHA256 = "2c3d001aca71e6c6c81377a7bfc7ec9c3d26ee7a9891b4a706a8205657bc31ba"
 PHOTON_OPENLDAP_SHA256 = "11b4af044b7418ba9af5cf6762e2cbe5add5b3463774d20f6be89b8ff98c47dc"
-# Reviewed openssh-server-10.6p1-2.ph5 retains the native root:sys 0711 directory policy.
-PHOTON_OPENSSH_SHA256 = "8701947e3a0ca692ad4dc19b51432e2030e04b54d1a3f124276c43ccbd016dc3"
+# Reviewed openssh-server-10.6p2-1.ph5 retains the native root:sys 0711 directory policy.
+PHOTON_OPENSSH_SHA256 = "5c29107c8f319168053189a81bcc51711e7a0371494f5575270226cba84c8474"
 PHOTON_AUDIT_SHA256 = "e55fac7b24b2f7546485f0b8b37fb7b105be764436dd4b139ccaa88e6c3e374f"
 # The original native pip RPM requires setuptools. Shared provisioning removes
 # setuptools after creating the protected application venv, so tdnf also erases
 # system pip. Admit that bootstrap-only transition only for these reviewed bytes.
 PHOTON_BOOTSTRAP_PIP_RPMS = {
-    "python3-pip": "758f649ebad0db9c591278ee7d4a0f69ca8e0c368388c314f1f9adde447df039",
+    "python3-pip": "55b1371bb5b17c0f5d590e5a3b21a00c755248f7f49a1792f212d5ea1987c9fa",
     "python3-setuptools": "b0adce2fba217f99ee6c97ac74d20f6f2e52029c323037e901c2aba5e3c0dab0",
 }
 PHOTON_MODULE_RPMS = {
-    "linux": "8f7a626f72355c6ccf22bee6f3c346343540d0f891ceae4136cce2a98f436aa1",
+    "linux": "82f4fa46cd8059013ab94e0f8bae467c390b37e9277fb446ed4011d56f534d71",
     "kmod": "b7614a76f7a17b832e2158fe90413cf2af719b1d1e9d85bfae7195e4905a7850",
     "kmod-binary": "ee872a0ddff939b69e87beec32090dc98d1882e9028f4bd5729b9a2b858aaaeb",
 }
 # Public-name diagnostics only, never RPM acceptance exceptions. These names
 # come from filesystem-1.1-11.ph5.x86_64.rpm, SHA-256
 # 7f5bba3e84f6eb50f6e5e311325089bc642549469d83793e0ba5f40d74ec6024.
-# The journal directories are from systemd-257.13-6.1.ph5,
-# SHA-256 3f31b4ae0bdcdc410909907dcb0e7bfd09f46259a97cceae0d55195ece4e49ba.
+# The journal directories are from systemd-257.13-6.2.ph5,
+# SHA-256 3a167b0ffd6f92d5228e0aa7124bc762d1ef05e6989730b9e3715f21d986302d.
 # The audit log directory is from audit-4.1.3-3.ph5, SHA-256
 # e55fac7b24b2f7546485f0b8b37fb7b105be764436dd4b139ccaa88e6c3e374f.
 # The rpcbind state directory is from rpcbind-1.2.6-6.ph5, SHA-256
@@ -50,8 +50,8 @@ PHOTON_MODULE_RPMS = {
 # e41e6109d7be89ae83da63ef8021ef9a0e053ecd4fe1f47ae73dd79270d688c7.
 # The LDAP directories and unit are from openldap-servers-2.6.4-6.ph5,
 # SHA-256 11b4af044b7418ba9af5cf6762e2cbe5add5b3463774d20f6be89b8ff98c47dc.
-# The kernel boot configuration and module alias index are from linux-6.12.115-2.ph5, SHA-256
-# 8f7a626f72355c6ccf22bee6f3c346343540d0f891ceae4136cce2a98f436aa1.
+# The kernel boot configuration and module alias index are from linux-6.12.116-3.ph5, SHA-256
+# 82f4fa46cd8059013ab94e0f8bae467c390b37e9277fb446ed4011d56f534d71.
 RPM_DIAGNOSTIC_PATHS = (
     "/bin",
     "/boot",
@@ -176,8 +176,8 @@ RPM_DIAGNOSTIC_PATHS = (
     "/usr/lib/systemd/system/slapd.service",
     "/var/lib/openldap",
     "/var/run/openldap",
-    "/boot/linux-6.12.115-2.ph5.cfg",
-    "/lib/modules/6.12.115-2.ph5/modules.alias",
+    "/boot/linux-6.12.116-3.ph5.cfg",
+    "/lib/modules/6.12.116-3.ph5/modules.alias",
 )
 SOURCE_MEMBERS = (
     "source/image/common/scripts/provision-atlaso.sh",
