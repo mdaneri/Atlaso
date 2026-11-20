@@ -115,7 +115,11 @@ try {
     $creationPins = $null
     $capturePin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($captureRoot, $true)
     if ([Atlaso.WorkstationFileIdentity]::Get($captureRoot) -cne $creationIdentity.Value) { throw 'Original capture root changed before use.' }
-    & (Join-Path $PSScriptRoot 'build-photon-image.ps1') -PullRequestNumber ([int]$planValue.pull_request_number) `
+    $builderOptions = @{}
+    if ($planValue.ContainsKey('builder_dns')) {
+        $builderOptions.BuilderStaticDns = @([string]$planValue.builder_dns)
+    }
+    & (Join-Path $PSScriptRoot 'build-photon-image.ps1') @builderOptions -PullRequestNumber ([int]$planValue.pull_request_number) `
         -CollisionSuffix ([string]$planValue.operation_id) -CaptureInstallationRpms `
         -InstallationCaptureDirectory $captureRoot -InstallationCaptureRootIdentity $creationIdentity.Value `
         -OutputDirectory $builderOutput -BuildStateRoot (Join-Path $outputRoot 'build-state') `

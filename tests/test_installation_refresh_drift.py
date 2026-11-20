@@ -84,7 +84,7 @@ def test_capture_report_distinguishes_missing_capture_from_stale_metadata() -> N
 
 def test_capture_report_blocks_capture_when_official_runtime_pin_is_unavailable() -> None:
     expected = content_inspection.PHOTON_OPENSSH_SHA256
-    captured = [_record("openssh-server", "0:10.6p1-2.ph5", expected)]
+    captured = [_record("openssh-server", "0:10.6p2-1.ph5", expected)]
     current = [_record("openssh-server", "0:10.7p1-1.ph5", "d" * 64)]
 
     report = refresh_drift.capture_drift_report(captured, current, ["openssh-server"])
@@ -97,8 +97,8 @@ def test_capture_report_blocks_capture_when_official_runtime_pin_is_unavailable(
 
 def test_profile_digest_drift_requires_review_and_unknown_profile_refuses() -> None:
     expected = content_inspection.PHOTON_OPENSSH_SHA256
-    captured = [_record("openssh-server", "0:10.6p1-2.ph5", "c" * 64)]
-    current = [_record("openssh-server", "0:10.6p1-2.ph5", "c" * 64)]
+    captured = [_record("openssh-server", "0:10.6p2-1.ph5", "c" * 64)]
+    current = [_record("openssh-server", "0:10.6p2-1.ph5", "c" * 64)]
 
     report = refresh_drift.capture_drift_report(captured, current, ["openssh-server"])
 

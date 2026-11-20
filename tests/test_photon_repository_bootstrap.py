@@ -230,6 +230,30 @@ def test_unreachable_canonical_metadata_fails_before_repository_rewrite(
     assert repository.read_bytes() == original
 
 
+@pytest.mark.parametrize(("returncode", "status"), [(6, "000"), (22, "503")])
+def test_failed_probe_reports_status_without_output_file(
+    returncode: int, status: str,
+) -> None:
+    """Keep safe diagnostics when curl fails before creating its output.
+
+    Args:
+        returncode: Curl process exit code.
+        status: First line of the bounded HTTP status information.
+    """
+    configurator = load_configurator()
+    private_marker = "synthetic private stderr"
+    result = subprocess.CompletedProcess(
+        ["curl"], returncode, stdout=f"{status}\n", stderr=private_marker
+    )
+
+    with pytest.raises(configurator.PhotonRepositoryError) as caught:
+        configurator.probe_repository_metadata(lambda *_args, **_kwargs: result)
+
+    assert f"curl exit {returncode}" in str(caught.value)
+    assert f"HTTP {status}" in str(caught.value)
+    assert private_marker not in str(caught.value)
+
+
 def test_oversized_metadata_fails_before_payload_read(tmp_path: Path) -> None:
     """Reject an unknown-length payload independently of curl's size support.
 
