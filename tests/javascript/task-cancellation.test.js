@@ -117,3 +117,33 @@ for (const open of [false, true]) {
     });
   }
 }
+
+// The href is owned by the task-detail template, so response data may only
+// appear as a single encoded task identifier in its query.
+test("network comparison uses the template destination and encodes the task identifier", () => {
+  class Element {}
+  const link = new URL("/ui/management/monitor?view=network", "https://atlaso.example");
+  link.classList = { toggle(name, hidden) { assert.equal(name, "hidden"); link.hidden = hidden; } };
+  class Dialog {
+    querySelector(selector) {
+      return selector === "[data-task-detail-network-comparison]" ? link : null;
+    }
+  }
+  const context = vm.createContext({
+    HTMLElement: Element, HTMLDialogElement: Dialog, HTMLDetailsElement: Element, HTMLButtonElement: Element,
+    document: { getElementById: () => new Dialog() }, URLSearchParams,
+    atlasoTaskDetail: null, atlasoSelectedTaskId: "",
+  });
+  const render = source.slice(source.indexOf("function renderTaskDetail("), source.indexOf("function openTaskDetail("));
+  vm.runInContext(render, context);
+  const id = "job one&view=services";
+  context.renderTaskDetail({ id, network_comparison_available: true });
+  assert.equal(link.origin, "https://atlaso.example");
+  assert.equal(link.pathname, "/ui/management/monitor");
+  assert.equal(link.searchParams.get("view"), "network");
+  assert.equal(link.searchParams.get("update"), id);
+  assert.equal(link.hidden, false);
+  context.renderTaskDetail({ id });
+  assert.equal(link.searchParams.has("update"), false);
+  assert.equal(link.hidden, true);
+});
