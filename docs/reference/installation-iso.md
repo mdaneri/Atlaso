@@ -561,7 +561,7 @@ or change installed content. RPM configuration files and ghost entries are outsi
 or dependency equality alone does not prove whole-system equality. Keep the five results with the original VM receipts.
 
 Required installed RPMs reflect shared provisioning's final cleanup. The checksum-pinned native
-`python3-pip-26.2.1-1.ph5` requires `python3-setuptools-80.9.0-5.ph5`; removing that build package also removes system pip.
+`python3-pip-26.2.2-1.ph5` requires `python3-setuptools-80.9.0-5.ph5`; removing that build package also removes system pip.
 The adapter excludes system pip from the required installed set only when the original cleanup explicitly removes
 setuptools and both admitted RPM checksums match this reviewed pair. A different pair fails preparation pending review.
 Both RPMs remain in the admitted media inventory. The protected application Python environment, installed RPM
@@ -591,14 +591,19 @@ mode `0644`. Before and after package verification, `/var/log/journal` must be a
 `systemd-journal`, with mode `2755`, exactly as the native tmpfiles rule specifies. Only mode and group discrepancies
 for that directory are reconciled after this proof. Missing entries, owner or digest changes, descendants, other
 verification flags and different policy bytes still fail. Journal contents remain private and are not inspected.
-The current profile admits Photon `systemd-257.13-6.1.ph5` (SHA-256
-`3f31b4ae0bdcdc410909907dcb0e7bfd09f46259a97cceae0d55195ece4e49ba`). Review of the signed RPMs found
-payload changes from `257.13-6.ph5`, with matching file paths, packaged ownership and modes, scriptlets, triggers
+The current profile admits Photon `systemd-257.13-6.2.ph5` (SHA-256
+`3a167b0ffd6f92d5228e0aa7124bc762d1ef05e6989730b9e3715f21d986302d`). Review of the signed RPMs found
+payload changes from `257.13-6.1.ph5`, with matching file paths, packaged ownership and modes, scriptlets, triggers
 and journal policy bytes. The native policy checksum remains
 `68e4c097e33b30c731a359cb3af86693e5f854c53d3d6bb5ec9eb7d17f04e585`.
 The [upstream change in `257.13-6.ph5`](https://github.com/vmware/photon/commit/682001eb08d91802bfdda61fcef5b7cc0a89576b)
 introduced transaction file triggers for native service reload/restart and system metadata maintenance. Inspect them
 with `rpm -qp --filetriggers` during review because `rpm --scripts` omits them.
+The signed `openssh-server-10.6p2-1.ph5` RPM retains the initial-install `root:sys` ownership change for
+`/usr/share/empty.sshd`; its packaged mode remains `0711`. The signed `python3-pip-26.2.2-1.ph5` RPM
+still requires setuptools and declares no scriptlets or triggers. These reviews update the exact profile pins;
+they do not establish complete capture or installed-system acceptance.
+
 The exact package pin establishes this journal metadata profile. A new complete capture, signature and transaction
 admission, ISO readback and installed-content verification still establish acceptance for each refreshed image.
 The audit-directory profile similarly requires the exact admitted audit RPM and its native
@@ -626,8 +631,10 @@ private child, or other verification flag fails this initial-installation profil
 The kernel-index profile binds the exact Linux, kmod and kmod-binary RPMs. It first admits the complete public module
 namespace from original package metadata before reading file contents, then compares all 1,235 immutable directory
 and file records through retained, no-follow descriptors. Missing, extra, linked or changed inputs fail.
-The current profile pins Linux `6.12.115-2.ph5`, with 37,990,052 immutable input bytes. Its complete native RPM-header
-audit retains the same 1,235 records and eleven generated index paths; kmod and kmod-binary inputs are unchanged.
+The current profile pins Linux `6.12.116-3.ph5`, with 37,927,808 immutable input bytes. Its complete signed native RPM-header
+audit found 1,235 immutable records and the same eleven generated index paths. The kmod and kmod-binary inputs are unchanged.
+The shared no-follow snapshot verifier also passed against the authenticated, extracted Linux RPM inputs on Photon 5.0,
+matching all 37,927,808 immutable bytes. This extraction check does not establish boot or complete installation acceptance.
 After ordinary RPM file verification, the profile invokes the authenticated `kmod` executable as `depmod`, selecting
 its native compatibility entry point with explicit input, configuration and output selectors. It writes only to
 private, descriptor-pinned scratch directories on verified
@@ -693,7 +700,7 @@ boot file or relax the RPM comparison.
 The admitted OpenLDAP server package contributes only its public service unit and two declared directories to this
 registry. Their fixed indices can identify missing entries, modes and verification flags. LDAP databases, configuration
 values and private children are never read or emitted, and the diagnostic does not accept a discrepancy.
-The pinned Linux package's `/boot/linux-6.12.115-2.ph5.cfg` and `/lib/modules/6.12.115-2.ph5/modules.alias` are also
+The pinned Linux package's `/boot/linux-6.12.116-3.ph5.cfg` and `/lib/modules/6.12.116-3.ph5/modules.alias` are also
 fixed public diagnostic entries. Only their indices, types, modes and RPM verification flags can be reported;
 contents stay private and any discrepancy still fails. The native kernel install script runs `depmod`; the diagnostic
 does not treat that fact alone as proof of correct generated indexes.

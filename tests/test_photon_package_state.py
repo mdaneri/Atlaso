@@ -1102,8 +1102,8 @@ def test_installation_journal_metadata_rejects_superseded_systemd_before_runtime
         monkeypatch: Replace policy and path reads with boundaries that must stay unused.
     """
     verifier = load_verifier()
-    superseded_sha256 = "2ef0275f25c9b782e7f3cbbaaa5bf0d9037149b5253630c6db27e155c461618f"
-    admitted_sha256 = "3f31b4ae0bdcdc410909907dcb0e7bfd09f46259a97cceae0d55195ece4e49ba"
+    superseded_sha256 = "3f31b4ae0bdcdc410909907dcb0e7bfd09f46259a97cceae0d55195ece4e49ba"
+    admitted_sha256 = "3a167b0ffd6f92d5228e0aa7124bc762d1ef05e6989730b9e3715f21d986302d"
     assert verifier.INSTALLATION_SYSTEMD_SHA256 == admitted_sha256
     reads: list[str] = []
 

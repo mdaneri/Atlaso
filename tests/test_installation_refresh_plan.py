@@ -108,6 +108,28 @@ def test_valid_plan_and_canonical_digest() -> None:
     )
 
 
+def test_fresh_capture_dns_is_optional_and_changes_the_plan_digest() -> None:
+    default = plan(fresh_capture=True)
+    override = {**default, "builder_dns": "192.168.56.2"}
+
+    assert validate_plan(default) == default
+    assert validate_plan(override) == override
+    assert canonical_plan_sha256(default) != canonical_plan_sha256(override)
+    with pytest.raises(ValueError, match="builder DNS requires a fresh capture"):
+        validate_plan({**plan(), "builder_dns": override["builder_dns"]})
+
+
+@pytest.mark.parametrize("resolver", [None, ["192.168.56.2"], "192.168.056.2", "8.8.8.8", "127.0.0.1"])
+def test_fresh_capture_rejects_invalid_dns_selectors(resolver: object) -> None:
+    """Reject invalid resolver addresses in fresh VMware capture plans.
+
+    Args:
+        resolver: Candidate value supplied by the parametrized test case.
+    """
+    with pytest.raises(ValueError, match="builder DNS requires a canonical RFC1918"):
+        validate_plan({**plan(fresh_capture=True), "builder_dns": resolver})
+
+
 def test_fresh_capture_paths_must_be_retained_outside_worktree_and_have_no_receipt_yet() -> None:
     value = plan(fresh_capture=True)
 
