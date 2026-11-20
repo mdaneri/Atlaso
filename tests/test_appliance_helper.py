@@ -1880,7 +1880,12 @@ def test_management_handoff_rollback_restores_absent_firewall(monkeypatch, tmp_p
 
 
 def test_management_handoff_rollback_recovers_defaults_after_links(monkeypatch, tmp_path):
-    """Restore the captured defaults after restoring the prior links and sources."""
+    """Restore the captured defaults after restoring the prior links and sources.
+
+    Args:
+        monkeypatch: Pytest fixture used to record the rollback operations.
+        tmp_path: Temporary directory for network configuration paths.
+    """
     helper = load_helper_module()
     calls = []
     defaults = {"eth0": [[4, 254, "192.0.2.1", 100], [4, 200, "192.0.2.1", 100]]}
@@ -4528,6 +4533,12 @@ def test_management_handoff_candidate_durability_gates_ack(
     }
     if not wan_included:
         def restore_defaults(captured, *, candidate):
+            """Verify the captured defaults reach candidate recovery.
+
+            Args:
+                captured: Management handoff state with the two saved defaults.
+                candidate: Whether recovery targets the candidate network.
+            """
             assert captured is state and candidate is True
             assert len(captured["previous_wan_defaults"]["eth1"]) == 2
             retirement_operations.append("preserved-defaults")
@@ -4876,7 +4887,13 @@ def test_management_handoff_candidate_durability_gates_ack(
 
 
 def test_management_handoff_preserves_defaults_after_retirement(monkeypatch, tmp_path, capsys):
-    """Recover captured defaults after the final reconfigure without a WAN Apply."""
+    """Recover captured defaults after the final reconfigure without a WAN Apply.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace native handoff operations.
+        tmp_path: Temporary directory for handoff files.
+        capsys: Pytest fixture used to inspect the handoff result.
+    """
     test_management_handoff_candidate_durability_gates_ack(
         monkeypatch, tmp_path, capsys, False, False, "unchanged", True, 443, wan_included=False,
     )
