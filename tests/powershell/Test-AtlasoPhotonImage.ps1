@@ -61,21 +61,32 @@ function Invoke-PackerValidateFixture {
     $startInfo.CreateNoWindow = $true
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
+    # Keep this syntax-only fixture independent of HashiCorp's update service.
+    $startInfo.Environment['CHECKPOINT_DISABLE'] = '1'
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
+    $deadline = [System.Diagnostics.Stopwatch]::StartNew()
     try {
         if (-not $process.Start()) {
             throw 'Packer validation fixture did not start.'
         }
-        if (-not $process.WaitForExit(30000)) {
+        # Drain both pipes while Packer runs so pipe capacity cannot stall the child.
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        $remaining = [Math]::Max(0, 30000 - [int]$deadline.ElapsedMilliseconds)
+        if (-not $process.WaitForExit($remaining)) {
             $process.Kill($true)
-            $process.WaitForExit()
+            [void]$process.WaitForExit(1000)
             throw 'Packer validation fixture exceeded its 30-second deadline.'
+        }
+        $remaining = [Math]::Max(0, 30000 - [int]$deadline.ElapsedMilliseconds)
+        if (-not [System.Threading.Tasks.Task]::WaitAll(@($stdout, $stderr), $remaining)) {
+            throw 'Packer validation fixture output did not close within its 30-second deadline.'
         }
         return [pscustomobject]@{
             ExitCode = $process.ExitCode
-            Output   = $process.StandardOutput.ReadToEnd()
-            Error    = $process.StandardError.ReadToEnd()
+            Output   = $stdout.GetAwaiter().GetResult()
+            Error    = $stderr.GetAwaiter().GetResult()
         }
     }
     finally {
