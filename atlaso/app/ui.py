@@ -13274,30 +13274,47 @@ def unfinished_initial_appliance_apply_units(db: Session, unit_ids: set[str]) ->
         # Older appliances used the first successful task to finish setup.
         return set()
 
+    applied_jobs: dict[str, str] = {}
+    legacy_apply_times: dict[str, datetime] = {}
+    baselines = load_appliance_apply_baselines(db)
+    for unit_id in unit_ids:
+        baseline = baselines.get(unit_id, {})
+        if "applied_job_id" in baseline:
+            job_id = baseline["applied_job_id"]
+            if isinstance(job_id, str) and job_id:
+                applied_jobs[unit_id] = job_id
+            continue
+        applied_at = baseline.get("applied_at")
+        if isinstance(applied_at, str):
+            # Baselines written before provenance was recorded retain the
+            # historical comparison against the successful task's creation.
+            try:
+                legacy_apply_times[unit_id] = ensure_aware(datetime.fromisoformat(applied_at))
+            except ValueError:
+                continue
+
+    unfinished = unit_ids.copy()
+    if not applied_jobs and not legacy_apply_times:
+        return unfinished
     successful_steps = db.execute(
-        select(JobStep.component_key, func.min(Job.created_at))
+        select(JobStep.component_key, Job.id, Job.created_at)
         .join(Job, JobStep.job_id == Job.id)
         .where(
             Job.type == "appliance-apply",
             Job.status.in_([JobStatus.SUCCEEDED.value, JobStatus.FAILED.value, JobStatus.CANCELLED.value]),
             JobStep.status == JobStatus.SUCCEEDED.value,
-            JobStep.component_key.in_(unit_ids),
+            or_(
+                JobStep.component_key.in_(legacy_apply_times),
+                Job.id.in_(set(applied_jobs.values())),
+            ),
         )
-        .group_by(JobStep.component_key)
-    ).all()
-    unfinished = unit_ids.copy()
-    baselines = load_appliance_apply_baselines(db)
-    for unit_id, started_after in successful_steps:
-        applied_at = baselines.get(unit_id, {}).get("applied_at")
-        if isinstance(applied_at, str):
-            try:
-                applied = datetime.fromisoformat(applied_at)
-            except ValueError:
-                continue
-            # Factory comparisons predate the task. Require an applied baseline
-            # so interrupted execution and native dry runs do not count.
-            if ensure_aware(applied) >= ensure_aware(started_after):
-                unfinished.discard(unit_id)
+    )
+    for unit_id, job_id, created_at in successful_steps:
+        legacy_applied_at = legacy_apply_times.get(unit_id)
+        if applied_jobs.get(unit_id) == job_id or (
+            legacy_applied_at is not None and legacy_applied_at >= ensure_aware(created_at)
+        ):
+            unfinished.discard(unit_id)
     return unfinished
 
 
@@ -15835,7 +15852,7 @@ def execute_traffic_publishing_pair(
         if succeeded:
             # Never refresh desired state here: edits made during native publication
             # belong to the next Apply, not to this pair's committed baselines.
-            update_appliance_apply_baselines(db, units, set(by_id), dry_run=adapter.dry_run)
+            update_appliance_apply_baselines(db, units, set(by_id), dry_run=adapter.dry_run, job_id=job.id)
             if has_wan and not adapter.dry_run:
                 synchronize_routing_service_runtime(
                     db, routing_enabled=by_id["wan"]["context"]["routes_wan_settings"].routing_enabled,
@@ -16985,7 +17002,12 @@ def project_selected_handoff_listener_units(
 
 
 def update_appliance_apply_baselines(
-    db: Session, units: list[dict[str, Any]], selected_ids: set[str], *, dry_run: bool = False,
+    db: Session,
+    units: list[dict[str, Any]],
+    selected_ids: set[str],
+    *,
+    dry_run: bool = False,
+    job_id: str | None = None,
 ) -> None:
     """Update appliance apply baselines.
 
@@ -16994,6 +17016,7 @@ def update_appliance_apply_baselines(
         units: Units supplied by the caller.
         selected_ids: Selected ids supplied by the caller.
         dry_run: Simulated execution, which cannot advance native appliance baselines.
+        job_id: Apply task whose execution produced these baselines, if any.
     """
     if dry_run and get_settings().environment == "appliance":
         return
@@ -17013,6 +17036,7 @@ def update_appliance_apply_baselines(
             "config_preview": unit["config_preview"],
             "summary": unit["summary"],
             "applied_at": applied_at,
+            "applied_job_id": job_id,
         }
         if unit["id"] in {"ntpd", "ldap", "kms", "vcf_offline_depot"}:
             baseline["applied_listener_interface"] = str(unit.get("applied_listener_interface") or "")
@@ -18693,6 +18717,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                             applied,
                             applied_ids,
                             dry_run=bool(group_result.get("dry_run")),
+                            job_id=job.id,
                         )
                         if not group_result.get("dry_run") and group_result.get("listener_baselines"):
                             updated_baselines = load_appliance_apply_baselines(db)
@@ -18919,7 +18944,9 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                     # The helper's restart timer is running. Persist the exact executed
                     # baseline with the transition before releasing publication admission.
                     if result["success"]:
-                        update_appliance_apply_baselines(db, [unit], {"appliance_settings"}, dry_run=bool(result.get("dry_run")))
+                        update_appliance_apply_baselines(
+                            db, [unit], {"appliance_settings"}, dry_run=bool(result.get("dry_run")), job_id=job.id,
+                        )
                         settings_baseline_recorded = True
                     db.commit()
                 prune_network_boot_media = False
@@ -18995,12 +19022,16 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         if unit["id"] == "ca" and not result.get("dry_run"):
                             guard_ca_apply_publication(db, applied_unit)
                         if not settings_baseline_recorded:
-                            update_appliance_apply_baselines(db, [applied_unit], {unit["id"]}, dry_run=bool(result.get("dry_run")))
+                            update_appliance_apply_baselines(
+                                db, [applied_unit], {unit["id"]}, dry_run=bool(result.get("dry_run")), job_id=job.id,
+                            )
                         ca_reload_units.discard(unit["id"])
                         if deferred_ca_baseline is not None and not ca_reload_units:
                             if not result.get("dry_run"):
                                 guard_ca_apply_publication(db, deferred_ca_baseline)
-                            update_appliance_apply_baselines(db, [deferred_ca_baseline], {"ca"}, dry_run=bool(result.get("dry_run")))
+                            update_appliance_apply_baselines(
+                                db, [deferred_ca_baseline], {"ca"}, dry_run=bool(result.get("dry_run")), job_id=job.id,
+                            )
                             deferred_ca_baseline = None
                 else:
                     failed = True

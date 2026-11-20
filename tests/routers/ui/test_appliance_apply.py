@@ -9,14 +9,17 @@ import pytest
 from tests.routers.ui.helpers import login, submit_reviewed_appliance_apply
 
 
-@pytest.mark.parametrize("ntp_succeeded", [False, True])
-def test_initial_apply_retry_selects_unfinished_components_and_new_edits(client, monkeypatch, ntp_succeeded):
+@pytest.mark.parametrize(("ntp_succeeded", "legacy_baselines"), [(False, False), (True, False), (True, True)])
+def test_initial_apply_retry_selects_unfinished_components_and_new_edits(
+    client, monkeypatch, ntp_succeeded, legacy_baselines,
+):
     """Resume a partial initial Apply without replaying completed components.
 
     Args:
         client: Authenticated UI test client after login.
         monkeypatch: Fixture for isolating Apply planning and execution.
         ntp_succeeded: Whether the initial task successfully applied NTP.
+        legacy_baselines: Whether the task predates baseline provenance.
     """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
@@ -25,19 +28,25 @@ def test_initial_apply_retry_selects_unfinished_components_and_new_edits(client,
     login(client)
     page = client.get("/dashboard")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    before = datetime.now(timezone.utc) - timedelta(minutes=5)
+    # New records model a task created before NTP corrected an ahead-of-time clock.
+    created_at = datetime.now(timezone.utc) + timedelta(minutes=-5 if legacy_baselines else 5)
     with SessionLocal() as db:
         units = ui.appliance_apply_units(db)
         monkeypatch.setattr(ui, "appliance_apply_units", lambda _db, **_kwargs: units)
         monkeypatch.setattr(ui, "network_listener_handoff_required", lambda *_args: False)
         monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
         failed_job = Job(id="initial-partial", type="appliance-apply", status=JobStatus.FAILED.value,
-                         created_at=before, created_by="admin", result="{}")
+                         created_at=created_at, created_by="admin", result="{}")
         db.add(failed_job)
         completed = {unit["id"] for unit in units} - {"vcf_private_registry", "ntpd"}
         if ntp_succeeded:
             completed.add("ntpd")
-        ui.update_appliance_apply_baselines(db, units, completed)
+        ui.update_appliance_apply_baselines(db, units, completed, job_id=failed_job.id)
+        if legacy_baselines:
+            baselines = ui.load_appliance_apply_baselines(db)
+            for unit_id in completed:
+                baselines[unit_id].pop("applied_job_id")
+            ui.save_appliance_apply_baselines(db, baselines)
         for index, unit in enumerate(units):
             unit_id = unit["id"]
             unit["changed"] = unit_id == "network"
@@ -71,6 +80,34 @@ def test_initial_apply_retry_selects_unfinished_components_and_new_edits(client,
         db.commit()
 
     assert client.get("/appliance-apply/review").json()["initial_apply_required"] is True
+
+
+@pytest.mark.parametrize("baseline_job_id", [None, "unrelated-apply"])
+def test_initial_apply_requires_baseline_from_the_successful_step(client, baseline_job_id):
+    """Keep setup pending when a successful step has no matching committed baseline.
+
+    Args:
+        client: Test client that initializes the appliance database.
+        baseline_job_id: Unattributed factory comparison or a different Apply task.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, JobStep
+
+    with SessionLocal() as db:
+        units = ui.appliance_apply_units(db)
+        job = Job(
+            id="failed-initial-apply", type="appliance-apply", status=JobStatus.FAILED.value,
+            created_at=datetime.now(timezone.utc) - timedelta(minutes=5), created_by="admin",
+        )
+        db.add(JobStep(
+            id=f"{job.id}:ntpd", job=job, component_key="ntpd", label="NTP / NTS",
+            position=1, status=JobStatus.SUCCEEDED.value,
+        ))
+        ui.update_appliance_apply_baselines(db, units, {"ntpd"}, job_id=baseline_job_id)
+        db.commit()
+
+        assert ui.unfinished_initial_appliance_apply_units(db, {"ntpd"}) == {"ntpd"}
 
 
 @pytest.mark.parametrize("baseline_kind", ["missing", "legacy", "modern"])
@@ -3135,7 +3172,7 @@ def test_appliance_apply_job_persists_helper_confirmed_transition(client, monkey
                 "status": JobStatus.SUCCEEDED.value, "dry_run": False,
                 "commands": [], "management_status_transition": transition}
 
-    def baseline(db, units, selected_ids, *, dry_run=False):
+    def baseline(db, units, selected_ids, *, dry_run=False, job_id=None):
         """The runner retains publication admission through exactly one baseline write.
 
         Args:
@@ -3143,11 +3180,13 @@ def test_appliance_apply_job_persists_helper_confirmed_transition(client, monkey
             units: Captured appliance units supplied by the caller.
             selected_ids: Identifiers of the executed units whose baselines are committed.
             dry_run: Whether the execution was simulated rather than native.
+            job_id: The Apply task whose baselines are being saved.
         """
+        assert job_id == "job_confirmed_management_restart"
         assert db.get_transaction() is publication_transaction["value"]
         assert not admitted.is_set()
         baseline_updates.append(selected_ids)
-        return update_baselines(db, units, selected_ids, dry_run=dry_run)
+        return update_baselines(db, units, selected_ids, dry_run=dry_run, job_id=job_id)
 
     monkeypatch.setattr(ui, "execute_appliance_apply_unit", execute)
     monkeypatch.setattr(ui, "update_appliance_apply_baselines", baseline)
