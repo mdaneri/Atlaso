@@ -6,7 +6,6 @@ import argparse
 import json
 import os
 import re
-import secrets
 import shutil
 import socket
 import subprocess
@@ -430,22 +429,42 @@ def installed_login_prompt(text: str) -> bool:
     return re.search(r"\btty2\b", text, re.I) is not None and re.search(r"(?im)^[ \t]*[\w.-]+ login:[ \t]*$", text) is not None
 
 
-def installed_probe(version: str, commit: str, first: int, second: int) -> str:
-    """Build a read-only guest probe whose success line cannot come from shell echo."""
-    program = (
-        "import atlaso as a; "
-        f"assert a.__version__ == '{version}' and a.__build_git_commit__ == '{commit}'; "
-        f"print('ATLASO VERIFIED', {first}+{second})"
-    )
-    checks = (
-        "systemctl is-active --quiet atlaso.service && "
-        "systemctl is-active --quiet atlaso-worker.service"
-    )
-    return (
-        f"for i in $(seq 60); do if {checks}; then break; fi; sleep 2; done; "
-        f'if {checks}; then /opt/atlaso/.venv/bin/python -B -I -c "{program}"; '
-        "else echo ATLASO SERVICES UNAVAILABLE; fi"
-    )
+def run_console_command(qmp: Qmp, command: str) -> None:
+    """Clear the authenticated shell frame before each independently checked command."""
+    qmp.send_key("ctrl", "l")
+    type_text(qmp, command)
+
+
+def installed_identity_command(attribute: str, expected_name: str) -> str:
+    """Compare the release identity inside the guest to avoid OCR of a full source SHA."""
+    return f"$P -BI -c 'import atlaso as a,os;print(a.{attribute}==os.getenv(\"{expected_name}\"))'"
+
+
+def check_installed_application(qmp: Qmp, output: Path, version: str, commit: str) -> None:
+    """Verify installed build metadata and both service states in the authenticated shell."""
+    for setup in ("P=/opt/atlaso/.venv/bin/python", f"export V={version}", f"export C={commit}"):
+        run_console_command(qmp, setup)
+    for attribute, expected_name, label in (
+        ("__version__", "V", "installed Atlaso version"),
+        ("__build_git_commit__", "C", "installed Atlaso source commit"),
+    ):
+        run_console_command(qmp, installed_identity_command(attribute, expected_name))
+        result = wait_screen(qmp, output, lambda text: re.search(r"(?im)^[ \t]*(true|false)[ \t]*$", text), label, 30)
+        if not re.search(r"(?im)^[ \t]*true[ \t]*$", result):
+            raise AcceptanceError(f"the {label} differs from the verified release")
+
+    status_pattern = re.compile(r"(?im)^[ \t]*(active|inactive|activating|deactivating|failed|unknown)[ \t]*$")
+    for service in ("atlaso.service", "atlaso-worker.service"):
+        deadline = time.monotonic() + 150
+        while time.monotonic() < deadline:
+            run_console_command(qmp, f"systemctl is-active {service}")
+            result = wait_screen(qmp, output, status_pattern.search, f"{service} state", 25)
+            if [status.casefold() for status in status_pattern.findall(result)] == ["active"]:
+                break
+            time.sleep(5)
+        else:
+            raise AcceptanceError(f"{service} did not become active in the media-free boot")
+    print("The installed version, source commit and both Atlaso services verified.", flush=True)
 
 
 def verify_installed(qmp: Qmp, output: Path, version: str, commit: str, password: str) -> None:
@@ -464,16 +483,7 @@ def verify_installed(qmp: Qmp, output: Path, version: str, commit: str, password
         qmp, output, lambda text: re.search(r"(?m)^[ \t]*root@[^\r\n]{1,90}#[ \t]*$", text),
         "authenticated root shell", 45,
     )
-    first = 1000 + secrets.randbelow(9000)
-    second = 1000 + secrets.randbelow(9000)
-    type_text(qmp, installed_probe(version, commit, first, second))
-    marker = re.compile(rf"(?im)^[ \t]*atlaso verified {first + second}[ \t]*$")
-    failure = re.compile(r"(?im)^[ \t]*atlaso services unavailable[ \t]*$")
-    result = wait_screen(qmp, output, lambda text: marker.search(text) or failure.search(text),
-                         "installed application verification result", 150)
-    if not marker.search(result):
-        raise AcceptanceError("Atlaso services did not become active in the media-free boot")
-    print("The installed version, source commit and both Atlaso services verified.", flush=True)
+    check_installed_application(qmp, output, version, commit)
     type_text(qmp, "exit")
 
 

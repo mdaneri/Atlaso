@@ -57,18 +57,16 @@ def test_concealed_credential_prompt_matches_the_expected_account_and_step():
     assert not vm_acceptance.is_credential_prompt("Confirm admin password", "admin", False)
 
 
-def test_media_free_probe_requires_the_native_console_and_an_untyped_success_marker():
+def test_media_free_probe_verifies_the_native_console_and_installed_metadata():
     assert vm_acceptance.installed_console_ready("Atlaso Appliance 1.0.0\n<F4> Console")
     assert vm_acceptance.installed_console_ready("Manage this appliance at:")
     assert not vm_acceptance.installed_console_ready("Atlaso Appliance Powered by Photon OS")
     login = "Welcome to Photon 5.0 (x86_64) (tty2)\natlaso login:"
     assert vm_acceptance.installed_login_prompt(login)
     assert not vm_acceptance.installed_login_prompt(login.replace("tty2", "tty1"))
-    command = vm_acceptance.installed_probe("1.0.0", "a" * 40, 2345, 6789)
-    assert "ATLASO VERIFIED 9134" not in command
-    assert "2345+6789" in command
-    assert "a.__build_git_commit__" in command
-    assert "systemctl is-active --quiet atlaso-worker.service" in command
+    command = vm_acceptance.installed_identity_command("__build_git_commit__", "C")
+    assert "a.__build_git_commit__==os.getenv" in command
+    assert "True" not in command
 
 
 @pytest.mark.parametrize("guest,reason,accepted", [(True, "guest-reset", True), (True, "guest-panic", False), (False, "host-signal", False)])
