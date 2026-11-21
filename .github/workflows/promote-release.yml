@@ -60,12 +60,10 @@ jobs:
             case "$ROLE" in admin|maintain) ;; *) echo '::error::Stable promotion requires a repository maintainer.'; exit 1 ;; esac
           fi
       - name: Set up Python
-        if: inputs.channel == 'stable'
         uses: actions/setup-python@v7
         with:
           python-version: '3.14'
       - name: Install locked release tooling
-        if: inputs.channel == 'stable'
         env:
           PIP_CONFIG_FILE: /dev/null
         run: python -m pip install --require-hashes --requirement requirements-release-tools.lock

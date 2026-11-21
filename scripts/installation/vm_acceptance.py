@@ -20,9 +20,9 @@ from typing import Any
 VERSION = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\Z")
 COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
-DISK_ROW = re.compile(r"(?m)^\s*(64|4)\s*GiB\s*@\s*/dev/sd[a-z]\b")
-REVIEW_TARGET = re.compile(r"(?m)^\s*/dev/sd[a-z]: [ -~]{1,48} 64 GiB\s*$")
-REVIEW_DECOY = re.compile(r"(?m)^\s*/dev/sd[a-z]: [ -~]{1,48} 4 GiB\s*$")
+DISK_ROW = re.compile(r"(?im)^\s*.*?\b(64|4)\s*GiB\s*@\s*/d(?:ev|eu)/sd[a-z]\b")
+REVIEW_TARGET = re.compile(r"(?im)^\s*/d(?:ev|eu)/sd[a-z]: .{1,72}(?<!\d)64\s*GiB\s*$")
+REVIEW_DECOY = re.compile(r"(?im)^\s*/d(?:ev|eu)/sd[a-z]: .{1,72}(?<!\d)4\s*GiB\s*$")
 CHECKS = [
     "disconnected_uefi_install",
     "selected_64g_target",
@@ -204,6 +204,7 @@ def key_events(text: str) -> list[list[str]]:
         "~": "grave_accent", "<": "comma", ">": "dot", "?": "slash",
     }
     plain = {
+        " ": "spc",
         "-": "minus", "=": "equal", "[": "bracket_left", "]": "bracket_right",
         "\\": "backslash", ";": "semicolon", "'": "apostrophe", "`": "grave_accent",
         ",": "comma", ".": "dot", "/": "slash",
@@ -229,13 +230,74 @@ def type_text(qmp: Qmp, value: str) -> None:
     qmp.send_key("ret")
 
 
+def preprocess_ppm(raw: bytes) -> tuple[bytes, bool]:
+    """Crop the neutral-gray Photon dialog and enlarge it for reliable OCR.
+
+    Full-frame QEMU screenshots are mostly blue background. The installer window
+    uses a broad, low-chroma gray fill, so its rows and columns provide a stable
+    crop even when the selected row changes color. Frames without that panel,
+    such as the GRUB menu, retain the full image and use sparse-text OCR.
+    """
+    header = re.match(rb"P6\s+(\d+)\s+(\d+)\s+255\s", raw)
+    if header is None:
+        raise AcceptanceError("QEMU screenshot is not a supported RGB PPM image")
+    width, height = (int(header.group(1)), int(header.group(2)))
+    pixels = raw[header.end():]
+    if not (0 < width <= 4096 and 0 < height <= 4096) or len(pixels) != width * height * 3:
+        raise AcceptanceError("QEMU screenshot dimensions or RGB data are invalid")
+
+    row_threshold = max(12, width // 5)
+    column_threshold = max(12, height // 8)
+    row_counts = [0] * height
+    column_counts = [0] * width
+    for index in range(width * height):
+        offset = index * 3
+        red, green, blue = pixels[offset], pixels[offset + 1], pixels[offset + 2]
+        if 128 <= red <= 224 and 128 <= green <= 224 and 128 <= blue <= 224 and max(red, green, blue) - min(red, green, blue) <= 16:
+            row_counts[index // width] += 1
+            column_counts[index % width] += 1
+
+    active_rows = [index for index, count in enumerate(row_counts) if count >= row_threshold]
+    active_columns = [index for index, count in enumerate(column_counts) if count >= column_threshold]
+    cropped = bool(active_rows and active_columns)
+    if cropped:
+        left, right = max(0, active_columns[0] - 12), min(width, active_columns[-1] + 13)
+        top, bottom = max(0, active_rows[0] - 12), min(height, active_rows[-1] + 13)
+    else:
+        left, top, right, bottom = 0, 0, width, height
+
+    scale = 3 if cropped else 2
+    crop_width, crop_height = right - left, bottom - top
+    enlarged_width, enlarged_height = crop_width * scale, crop_height * scale
+    enlarged = bytearray(enlarged_width * enlarged_height * 3)
+    for y in range(crop_height):
+        source = ((top + y) * width + left) * 3
+        line = pixels[source:source + crop_width * 3]
+        if cropped:
+            expanded = b"".join(
+                (b"\0\0\0" if max(line[index:index + 3]) <= 96 else b"\xff\xff\xff") * scale
+                for index in range(0, len(line), 3)
+            )
+        else:
+            expanded = b"".join(line[index:index + 3] * scale for index in range(0, len(line), 3))
+        row_start = y * scale * enlarged_width * 3
+        for repeat in range(scale):
+            start = row_start + repeat * enlarged_width * 3
+            enlarged[start:start + len(expanded)] = expanded
+    ppm = f"P6\n{enlarged_width} {enlarged_height}\n255\n".encode("ascii") + enlarged
+    return ppm, cropped
+
+
 def screen_text(qmp: Qmp, directory: Path) -> str:
     """OCR one transient QMP frame without retaining or logging guest pixels."""
     image = directory / f"frame-{uuid.uuid4().hex}.ppm"
+    prepared = directory / f"frame-{uuid.uuid4().hex}-ocr.ppm"
     try:
         qmp.execute("screendump", {"filename": str(image), "format": "ppm"})
+        prepared_bytes, cropped = preprocess_ppm(image.read_bytes())
+        prepared.write_bytes(prepared_bytes)
         result = subprocess.run(
-            ["tesseract", str(image), "stdout", "--psm", "6"],
+            ["tesseract", str(prepared), "stdout", "--psm", "6" if cropped else "11"],
             check=True,
             capture_output=True,
             text=True,
@@ -248,6 +310,7 @@ def screen_text(qmp: Qmp, directory: Path) -> str:
         raise AcceptanceError("the bounded guest screen observer failed") from error
     finally:
         image.unlink(missing_ok=True)
+        prepared.unlink(missing_ok=True)
 
 
 def wait_screen(qmp: Qmp, directory: Path, predicate, label: str, seconds: int) -> str:
@@ -261,6 +324,11 @@ def wait_screen(qmp: Qmp, directory: Path, predicate, label: str, seconds: int) 
             return text
         time.sleep(2)
     raise AcceptanceError(f"guest did not reach the expected {label} screen")
+
+
+def is_disk_selection_screen(text: str) -> bool:
+    """Recognize the case-insensitive, OCR-rendered native selector heading."""
+    return "select a disk" in text.casefold()
 
 
 def start_qemu(
@@ -326,7 +394,7 @@ def start_qemu(
                 process.kill()
                 process.wait(timeout=20)
         raise
-    return process, qmp, qga_name
+    return process, qmp, qga_address if not iso else qga_name
 
 
 def stop_qemu(process: subprocess.Popen[bytes], qmp: Qmp) -> None:
@@ -407,13 +475,13 @@ def install(iso: Path, output: Path, args: argparse.Namespace, passwords: dict[s
         timeout = time.monotonic() + INSTALL_SECONDS
         screen = wait_screen(qmp, output, lambda text: "Install Atlaso offline" in text, "UEFI installer menu", 180)
         qmp.send_key("ret")
-        screen = wait_screen(qmp, output, lambda text: "Select a disk" in text, "native disk selection", 600)
+        screen = wait_screen(qmp, output, is_disk_selection_screen, "native disk selection", 600)
         rows = list(DISK_ROW.finditer(screen))
         sizes = [row.group(1) for row in rows]
         if sizes.count("64") != 1 or sizes.count("4") != 1:
             raise AcceptanceError("native Photon menu did not expose one 64 GiB target and one 4 GiB decoy")
         target_index = sizes.index("64")
-        for key in ("esc", "up", "up", *("down" for _ in range(target_index)), "ret"):
+        for key in ("up", "up", *("down" for _ in range(target_index)), "ret"):
             qmp.send_key(key)
         for title in ("SFTP backup storage", "VCFDT depot storage"):
             wait_screen(qmp, output, lambda text, title=title: title in text, title, 180)
@@ -421,8 +489,7 @@ def install(iso: Path, output: Path, args: argparse.Namespace, passwords: dict[s
         review = wait_screen(qmp, output, lambda text: "Erase selected disks?" in text, "destructive layout review", 90)
         if len(REVIEW_TARGET.findall(review)) != 1 or REVIEW_DECOY.search(review):
             raise AcceptanceError("destructive review did not identify only the intended 64 GiB target")
-        qmp.send_key("esc")
-        qmp.send_key("right")
+        qmp.send_key("left")
         qmp.send_key("ret")
         for account in ("admin", "root"):
             secret = passwords[account]
@@ -448,8 +515,10 @@ def install(iso: Path, output: Path, args: argparse.Namespace, passwords: dict[s
             raise AcceptanceError("installed application version or source commit differs from the release")
         services = guest_command(stream, [
             "/bin/sh", "-c",
-            "for attempt in $(seq 1 60); do output=$(/bin/systemctl is-active atlaso.service atlaso-worker.service 2>/dev/null) && "
-            "if [ \"$output\" = \"active\\nactive\" ]; then printf '%s\\n' active active; exit 0; fi; sleep 2; done; exit 1",
+            "for attempt in $(seq 1 60); do "
+            "if /bin/systemctl is-active --quiet atlaso.service && "
+            "/bin/systemctl is-active --quiet atlaso-worker.service; then "
+            "printf '%s\\n' active active; exit 0; fi; sleep 2; done; exit 1",
         ], time.monotonic() + 150)
         if services.splitlines() != ["active", "active"]:
             raise AcceptanceError("Atlaso application services are not both active after the media-free boot")
