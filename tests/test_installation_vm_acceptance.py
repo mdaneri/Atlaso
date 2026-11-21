@@ -1,0 +1,75 @@
+"""Focused unit checks for release VM acceptance evidence and controls."""
+
+import json
+import os
+from pathlib import Path
+
+import pytest
+
+from scripts.installation import vm_acceptance
+
+
+def test_receipt_uses_the_ordered_prerelease_vm_check_contract():
+    assert vm_acceptance.CHECKS == [
+        "disconnected_uefi_install",
+        "selected_64g_target",
+        "media_free_boot",
+        "atlaso_services_active",
+        "installed_application_version",
+        "installed_application_commit",
+        "unselected_4g_disk_unchanged",
+    ]
+
+
+def test_credential_key_events_cover_shifted_and_unshifted_ascii():
+    assert vm_acceptance.key_events("Atlaso-42!") == [
+        ["shift", "a"], ["t"], ["l"], ["a"], ["s"], ["o"], ["minus"],
+        ["4"], ["2"], ["shift", "1"],
+    ]
+
+
+def test_credential_key_events_refuse_unrepresentable_text():
+    with pytest.raises(vm_acceptance.AcceptanceError):
+        vm_acceptance.key_events("password-é")
+
+
+def test_native_review_requires_exact_selected_disk_line_and_rejects_4g_suffix():
+    assert vm_acceptance.REVIEW_TARGET.search("/dev/sda: QEMU Hard Disk 64 GiB")
+    assert not vm_acceptance.REVIEW_TARGET.search("/dev/sda: QEMU Hard Disk 4 GiB")
+    assert vm_acceptance.REVIEW_DECOY.search("/dev/sdb: QEMU Hard Disk 4 GiB")
+
+
+def test_fixture_intent_binds_a_new_output_directory_to_release(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    output = tmp_path / "new-vm"
+    output.mkdir()
+    receipt = tmp_path / "receipt.json"
+    monkeypatch.setenv("GITHUB_REPOSITORY", "mdaneri/Atlaso")
+
+    intent = vm_acceptance.fixture_intent(output, receipt, "1.0.0", "a" * 40, "b" * 64)
+
+    assert intent["repository"] == "mdaneri/Atlaso"
+    assert intent["commit"] == "a" * 40
+    assert intent["iso_sha256"] == "b" * 64
+    assert intent["output_identity"] == {
+        "device": output.stat().st_dev,
+        "inode": output.stat().st_ino,
+    }
+    assert intent["receipt"] == str(receipt)
+
+
+def test_final_receipt_is_new_and_contains_only_public_acceptance_fields(tmp_path: Path):
+    receipt = tmp_path / "receipt.json"
+    value = {
+        "schema": 1,
+        "version": "1.0.0",
+        "commit": "a" * 40,
+        "iso_sha256": "b" * 64,
+        "checks": vm_acceptance.CHECKS,
+    }
+
+    vm_acceptance.write_new_json(receipt, value)
+
+    assert json.loads(receipt.read_text()) == value
+    assert receipt.stat().st_mode & 0o777 == 0o600 if os.name != "nt" else True
+    with pytest.raises(FileExistsError):
+        vm_acceptance.write_new_json(receipt, value)

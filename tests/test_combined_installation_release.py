@@ -137,41 +137,29 @@ def test_partial_draft_stops_before_downloading_or_replacing_assets(
 
 
 @pytest.mark.parametrize(
-    ("highest", "latest"), [((0, 9, 505), "true"), ((0, 9, 507), "false")]
+    ("tag", "commit", "allowed"),
+    [
+        ("v1.0.0", COMMIT, True),
+        (*combined_release.EXISTING_INSTALLER, True),
+        ("v0.9.517", COMMIT, False),
+        ("v0.9.516", COMMIT, False),
+    ],
 )
-def test_publish_checks_exact_approval_and_order_and_is_idempotent(
-    monkeypatch, highest, latest
+def test_publication_requires_exact_vm_receipt_and_preserves_latest(
+    tmp_path, monkeypatch, tag, commit, allowed
 ):
-    """Publish checks exact approval and order and is idempotent.
-
-    Args:
-        monkeypatch: Pytest fixture for substituting external dependencies.
-        highest: Highest software version already published.
-        latest: Expected make_latest value in the GitHub publication request.
-    """
+    """Publish the tested draft as a prerelease, without advancing Latest."""
     iso = "b" * 64
     state = {
         "id": 42,
         "draft": True,
         "prerelease": False,
-        "tag_name": TAG,
+        "tag_name": tag,
         "body": "Notes",
     }
     requests = []
 
     def gh(command, **kwargs):
-        """Return GitHub responses and record the publication request.
-
-        Args:
-            command: GitHub CLI arguments issued by the publication helper.
-            **kwargs: Optional subprocess inputs, including the publication request body.
-        """
-        if command[-1].endswith("/issues/comments/123"):
-            record = {
-                "issue_url": f"https://api.github.com/repos/{REPO}/issues/542",
-                "body": f"Accepted `{iso}`",
-            }
-            return subprocess.CompletedProcess(command, 0, json.dumps(record), "")
         if "--method" in command:
             update = json.loads(kwargs["input_text"])
             requests.append(update)
@@ -181,22 +169,33 @@ def test_publish_checks_exact_approval_and_order_and_is_idempotent(
     monkeypatch.setattr(combined_release, "run", gh)
     monkeypatch.setattr(combined_release, "require_tag", lambda *args: None)
     monkeypatch.setattr(combined_release, "get_release", lambda *args: dict(state))
-    monkeypatch.setattr(combined_release, "latest_version", lambda *args: highest)
     monkeypatch.setattr(combined_release, "asset_records", lambda *args: {})
-    for invalid in ("", "f" * 64):
-        with pytest.raises(ValueError, match="approval"):
-            combined_release.publish(
-                REPO, TAG, COMMIT, dict(state), {}, iso, invalid, EVIDENCE
-            )
-    with pytest.raises(ValueError, match="acceptance evidence"):
-        combined_release.publish(
-            REPO, TAG, COMMIT, dict(state), {}, iso, iso, "https://example.com"
-        )
+    receipt = tmp_path / "receipt.json"
+    outcome = {
+        "schema": 1,
+        "version": tag[1:],
+        "commit": commit,
+        "iso_sha256": iso,
+        "checks": combined_release.VM_CHECKS,
+    }
+    for invalid in ({"iso_sha256": "f" * 64}, {"commit": "c" * 40}, {"checks": []}):
+        receipt.write_text(json.dumps(outcome | invalid), encoding="utf-8")
+        with pytest.raises(ValueError, match="receipt differs"):
+            combined_release.publish(REPO, tag, commit, dict(state), {}, iso, receipt, "123", "1")
+    with pytest.raises(ValueError, match="requires exact ISO VM acceptance"):
+        combined_release.publish(REPO, tag, commit, dict(state), {}, iso, None, "123", "1")
     assert not requests
-    combined_release.publish(REPO, TAG, COMMIT, dict(state), {}, iso, iso, EVIDENCE)
-    assert requests[0]["make_latest"] == latest
-    assert EVIDENCE in requests[0]["body"]
-    combined_release.publish(REPO, TAG, COMMIT, dict(state), {}, iso, iso, EVIDENCE)
+    receipt.write_text(json.dumps(outcome), encoding="utf-8")
+    if not allowed:
+        with pytest.raises(ValueError, match="require version 1.0.0"):
+            combined_release.publish(REPO, tag, commit, dict(state), {}, iso, receipt, "123", "1")
+        assert not requests
+        return
+    combined_release.publish(REPO, tag, commit, dict(state), {}, iso, receipt, "123", "1")
+    assert requests[0]["prerelease"] is True
+    assert requests[0]["make_latest"] == "false"
+    assert f"https://github.com/{REPO}/actions/runs/123/attempts/1" in requests[0]["body"]
+    combined_release.publish(REPO, tag, commit, dict(state), {}, iso, receipt, "123", "2")
     assert len(requests) == 1
 
 
