@@ -182,7 +182,9 @@ retrying release publication. The signed installation artifact index records the
 
 GitHub Actions downloads the signed draft's ISO parts, verifies the signed index and reconstructs the exact installer.
 The QEMU/OVMF job checks disconnected UEFI installation to a 64 GiB disk, preservation of a second 4 GiB disk, boot
-without installation media, active Atlaso services and matching application version and source commit. Its receipt
+without installation media, active Atlaso services and matching application version and source commit. The runner reads
+the installed identity and service state through the appliance's authenticated native console. The disk-only boot uses
+isolated virtual DHCP with no forwarded ports. Its receipt
 binds all checkpoints to the ISO SHA-256 and the workflow attempt that ran them. A failed or incomplete run leaves
 the draft hidden. A passing run publishes the same draft as a prerelease and verifies the public assets before
 advancing `development`. To retry, dispatch **Publish appliance release** from `main` with the full `release_sha`.

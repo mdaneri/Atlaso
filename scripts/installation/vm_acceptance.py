@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import argparse
-import base64
 import json
 import os
 import re
+import secrets
 import shutil
 import socket
 import subprocess
@@ -92,10 +92,8 @@ def require_inputs(args: argparse.Namespace) -> tuple[Path, Path, Path, Path, di
         raise AcceptanceError("VM output, receipt, and ownership intent destinations must be absent")
     if receipt.parent == output or output == receipt or receipt.is_relative_to(output):
         raise AcceptanceError("durable VM receipt must be outside the disposable output root")
-    if not args.abstract_sockets and (
-        len(os.fsencode(output / "install-qmp.sock")) >= 100
-        or len(os.fsencode(output / "qga.sock")) >= 100
-    ):
+    socket_name = f"atlaso-{'0' * 32}-install-qmp.sock"
+    if not args.abstract_sockets and len(os.fsencode(output / socket_name)) >= 108:
         raise AcceptanceError("VM control sockets exceed the supported local path length")
     if output.resolve(strict=False) == iso or output.resolve(strict=False) in iso.parents:
         raise AcceptanceError("VM output root overlaps the verified ISO")
@@ -358,9 +356,8 @@ def start_qemu(
     *,
     abstract_sockets: bool,
     accelerator: str,
-    qga_name: str = "",
-) -> tuple[subprocess.Popen[bytes], Qmp, str]:
-    """Start a disconnected, UEFI QEMU fixture and connect its private QMP socket."""
+) -> tuple[subprocess.Popen[bytes], Qmp]:
+    """Start a UEFI fixture with an offline installer and isolated boot networking."""
     unique = f"atlaso-{uuid.uuid4().hex}-{socket_name}"
     control = unique if abstract_sockets else str(output / f"{unique}.sock")
     acceleration = accelerator
@@ -368,7 +365,8 @@ def start_qemu(
         acceleration = "kvm" if Path("/dev/kvm").exists() and os.access("/dev/kvm", os.R_OK | os.W_OK) else "tcg"
     command = [
         "qemu-system-x86_64", "-name", "atlaso-installation-acceptance", "-machine", f"q35,accel={acceleration}",
-        "-cpu", "host" if acceleration == "kvm" else "max", "-smp", "2", "-m", "4096", "-display", "none", "-vga", "std",
+        "-cpu", "host" if acceleration == "kvm" else "max", "-smp", "2", "-m", "4096", "-display", "none",
+        "-vga", "std" if iso is not None else "virtio",
         "-no-reboot", "-no-shutdown", "-rtc", "base=utc,clock=host",
         "-S", "-drive", f"if=pflash,format=raw,readonly=on,file={ovmf_code}",
         "-drive", f"if=pflash,format=raw,file={ovmf_vars}",
@@ -386,19 +384,11 @@ def start_qemu(
             "-drive", f"if=none,id=cdrom,media=cdrom,readonly=on,file={iso}",
             "-device", "scsi-cd,drive=cdrom,bus=scsi0.0,channel=0,scsi-id=2,lun=0",
         ])
-    else:
-        qga_name = f"atlaso-{uuid.uuid4().hex}-qga"
-        qga_address = qga_name if abstract_sockets else str(output / f"{qga_name}.sock")
-        qga_backend = f"socket,path={qga_address},abstract=on,server=on,wait=off,id=qga0" if abstract_sockets else f"socket,path={qga_address},server=on,wait=off,id=qga0"
-        command.extend([
-            "-chardev", qga_backend,
-            "-device", "virtio-serial-pci", "-device", "virtserialport,chardev=qga0,name=org.qemu.guest_agent.0",
-        ])
     process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
     qmp = None
     try:
         qmp = Qmp(control, process, abstract=abstract_sockets)
-        qmp.execute("set_link", {"name": "atlaso-eth0", "up": False})
+        qmp.execute("set_link", {"name": "atlaso-eth0", "up": iso is None})
         qmp.execute("cont")
     except Exception:
         if qmp is not None:
@@ -411,7 +401,7 @@ def start_qemu(
                 process.kill()
                 process.wait(timeout=20)
         raise
-    return process, qmp, qga_address if not iso else qga_name
+    return process, qmp
 
 
 def stop_qemu(process: subprocess.Popen[bytes], qmp: Qmp) -> None:
@@ -427,63 +417,64 @@ def stop_qemu(process: subprocess.Popen[bytes], qmp: Qmp) -> None:
         raise AcceptanceError("QEMU did not stop cleanly at the acceptance boundary")
 
 
-def qga_request(stream, request: dict[str, Any]) -> dict[str, Any]:
-    stream.write(json.dumps(request, separators=(",", ":")).encode() + b"\r\n")
-    raw = stream.readline(1024 * 1024)
-    if not raw:
-        raise EOFError("the guest-agent connection closed")
-    if len(raw) >= 1024 * 1024:
-        raise AcceptanceError("guest-agent response exceeded its bound")
-    result = json.loads(raw)
-    if "error" in result:
-        raise AcceptanceError("guest agent rejected an inspection command")
-    return result["return"]
+def installed_console_ready(text: str) -> bool:
+    """Recognize the appliance dashboard after the disk-only boot."""
+    text = text.casefold()
+    return "manage this appliance at" in text or (
+        "atlaso appliance" in text and re.search(r"\bf4[^\n]{0,14}console", text) is not None
+    )
 
 
-def guest_command(stream, command: list[str], deadline: float) -> str:
-    launched = qga_request(stream, {
-        "execute": "guest-exec",
-        "arguments": {"path": command[0], "arg": command[1:], "capture-output": True},
-    })
-    pid = launched["pid"]
-    while time.monotonic() < deadline:
-        result = qga_request(stream, {"execute": "guest-exec-status", "arguments": {"pid": pid}})
-        if result.get("exited"):
-            output = base64.b64decode(result.get("out-data", ""), validate=True).decode("utf-8", errors="strict")
-            if result.get("exitcode") != 0 or len(output) > 32768:
-                raise AcceptanceError("installed guest inspection returned an unsuccessful result")
-            return output
-        time.sleep(2)
-    raise AcceptanceError("installed guest inspection exceeded its fixed deadline")
+def installed_login_prompt(text: str) -> bool:
+    """Admit only the ordinary Photon login on the selected virtual terminal."""
+    return re.search(r"\btty2\b", text, re.I) is not None and re.search(r"(?im)^[ \t]*[\w.-]+ login:[ \t]*$", text) is not None
 
 
-def wait_for_guest_agent(address: str, process: subprocess.Popen[bytes], seconds: int, *, abstract: bool) -> Any:
-    deadline = time.monotonic() + seconds
-    while time.monotonic() < deadline:
-        if process.poll() is not None:
-            raise AcceptanceError("media-free QEMU guest exited before its agent became ready")
-        connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        stream = None
-        ready = False
-        try:
-            connection.settimeout(30)
-            connection.connect("\0" + address if abstract else address)
-            peer_pid = connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12)
-            if int.from_bytes(peer_pid[:4], byteorder=sys.byteorder, signed=True) != process.pid:
-                raise AcceptanceError("guest-agent socket peer differs from the exact QEMU process")
-            stream = connection.makefile("rwb", buffering=0)
-            qga_request(stream, {"execute": "guest-ping"})
-            ready = True
-            return connection, stream
-        except (OSError, EOFError):
-            pass
-        finally:
-            if not ready:
-                if stream is not None:
-                    stream.close()
-                connection.close()
-        time.sleep(2)
-    raise AcceptanceError("media-free Atlaso guest agent did not become available")
+def installed_probe(version: str, commit: str, first: int, second: int) -> str:
+    """Build a read-only guest probe whose success line cannot come from shell echo."""
+    program = (
+        "import atlaso as a; "
+        f"assert a.__version__ == '{version}' and a.__build_git_commit__ == '{commit}'; "
+        f"print('ATLASO VERIFIED', {first}+{second})"
+    )
+    checks = (
+        "systemctl is-active --quiet atlaso.service && "
+        "systemctl is-active --quiet atlaso-worker.service"
+    )
+    return (
+        f"for i in $(seq 60); do if {checks}; then break; fi; sleep 2; done; "
+        f'if {checks}; then /opt/atlaso/.venv/bin/python -B -I -c "{program}"; '
+        "else echo ATLASO SERVICES UNAVAILABLE; fi"
+    )
+
+
+def verify_installed(qmp: Qmp, output: Path, version: str, commit: str, password: str) -> None:
+    """Verify the production image through the ordinary authenticated native login."""
+    wait_screen(qmp, output, installed_console_ready, "media-free Atlaso appliance console", BOOT_SECONDS)
+    qmp.send_key("alt", "f2")
+    wait_screen(qmp, output, installed_login_prompt, "native Photon tty2 login", 60)
+    type_text(qmp, "root")
+    wait_screen(
+        qmp, output,
+        lambda text: re.search(r"(?im)^[ \t]*pass[wu]ord[ \t]*:[ \t]*$", text),
+        "concealed Photon root authentication", 45,
+    )
+    type_text(qmp, password)
+    wait_screen(
+        qmp, output, lambda text: re.search(r"(?m)^[ \t]*root@[^\r\n]{1,90}#[ \t]*$", text),
+        "authenticated root shell", 45,
+    )
+    first = 1000 + secrets.randbelow(9000)
+    second = 1000 + secrets.randbelow(9000)
+    type_text(qmp, installed_probe(version, commit, first, second))
+    marker = re.compile(rf"(?im)^[ \t]*atlaso verified {first + second}[ \t]*$")
+    failure = re.compile(r"(?im)^[ \t]*atlaso services unavailable[ \t]*$")
+    result = wait_screen(qmp, output, lambda text: marker.search(text) or failure.search(text),
+                         "installed application verification result", 150)
+    if not marker.search(result):
+        raise AcceptanceError("Atlaso services did not become active in the media-free boot")
+    print("The installed version, source commit and both Atlaso services verified.", flush=True)
+    type_text(qmp, "exit")
 
 
 def install(iso: Path, output: Path, args: argparse.Namespace, passwords: dict[str, str]) -> None:
@@ -496,7 +487,7 @@ def install(iso: Path, output: Path, args: argparse.Namespace, passwords: dict[s
     subprocess.run(["qemu-img", "create", "-f", "qcow2", str(decoy), "4G"], check=True, capture_output=True, timeout=30)
     shutil.copyfile(decoy, decoy_baseline)
 
-    process, qmp, _ = start_qemu(iso, output, disk, vars_copy, args._ovmf_code, "install-qmp",
+    process, qmp = start_qemu(iso, output, disk, vars_copy, args._ovmf_code, "install-qmp",
                                  abstract_sockets=args.abstract_sockets, accelerator=args.accelerator)
     try:
         timeout = time.monotonic() + INSTALL_SECONDS
@@ -531,30 +522,11 @@ def install(iso: Path, output: Path, args: argparse.Namespace, passwords: dict[s
     finally:
         stop_qemu(process, qmp)
 
-    process, qmp, agent_address = start_qemu(None, output, disk, vars_copy, args._ovmf_code, "boot-qmp",
-                                               abstract_sockets=args.abstract_sockets, accelerator=args.accelerator)
-    connection = None
+    process, qmp = start_qemu(None, output, disk, vars_copy, args._ovmf_code, "boot-qmp",
+                             abstract_sockets=args.abstract_sockets, accelerator=args.accelerator)
     try:
-        connection, stream = wait_for_guest_agent(agent_address, process, BOOT_SECONDS, abstract=args.abstract_sockets)
-        identity = json.loads(guest_command(stream, [
-            "/opt/atlaso/.venv/bin/python", "-B", "-I", "-c",
-            "import json,atlaso;print(json.dumps({'version':atlaso.__version__,'commit':atlaso.__build_git_commit__}))",
-        ], time.monotonic() + 60))
-        if identity != {"version": args.version, "commit": args.commit}:
-            raise AcceptanceError("installed application version or source commit differs from the release")
-        services = guest_command(stream, [
-            "/bin/sh", "-c",
-            "for attempt in $(seq 1 60); do "
-            "if /bin/systemctl is-active --quiet atlaso.service && "
-            "/bin/systemctl is-active --quiet atlaso-worker.service; then "
-            "printf '%s\\n' active active; exit 0; fi; sleep 2; done; exit 1",
-        ], time.monotonic() + 150)
-        if services.splitlines() != ["active", "active"]:
-            raise AcceptanceError("Atlaso application services are not both active after the media-free boot")
+        verify_installed(qmp, output, args.version, args.commit, passwords["root"])
     finally:
-        if connection is not None:
-            stream.close()
-            connection.close()
         stop_qemu(process, qmp)
 
     comparison = subprocess.run(
@@ -590,7 +562,7 @@ def main() -> int:
         write_new_json(receipt, value)
         print("Atlaso VM acceptance passed.")
         return 0
-    except (AcceptanceError, EOFError, OSError, ValueError, subprocess.SubprocessError) as error:
+    except (AcceptanceError, OSError, ValueError, subprocess.SubprocessError) as error:
         print(str(error), file=sys.stderr)
         return 1
 
