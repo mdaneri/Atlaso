@@ -263,6 +263,9 @@ def _admit_fixture(tmp_path: Path, *, include_guest_tools: bool) -> tuple[dict, 
     root, state, rpms = tmp_path / "output", tmp_path / "evidence", tmp_path / "rpms"
     root.mkdir()
     state.mkdir()
+    (state / "capture-root-original.json").write_text(
+        '{"created_utc":"2026-11-20T00:00:00+00:00"}', encoding="utf-8",
+    )
     rpms.mkdir()
     if include_guest_tools:
         (rpms / "guest-tools").mkdir()
@@ -280,6 +283,11 @@ def _admit_stubs(monkeypatch, calls: list[str], *, source_has_payload: bool, fai
         fail_at: Optional verifier whose authentication should fail.
     """
     monkeypatch.setattr(refresh.shutil, "which", lambda _name: "synthetic-rpm-tool")
+    from scripts.installation import photon_snapshot
+
+    packages = {("python3", "0", "3.14.1", "1.ph5", "x86_64", "a" * 64)}
+    monkeypatch.setattr(photon_snapshot, "collect", lambda captured_at: b"original Photon catalog")
+    monkeypatch.setattr(photon_snapshot, "read_snapshot", lambda content: packages)
 
     def inspect_capture(_source, _rpms):
         """Return diagnostic drift without authenticating captured packages.
@@ -300,7 +308,7 @@ def _admit_stubs(monkeypatch, calls: list[str], *, source_has_payload: bool, fai
         """
         calls.append("check_capture")
 
-    def verify_rpms(root, _source, scratch, *, allow_guest_tools=False):
+    def verify_rpms(root, _source, scratch, *, allow_guest_tools=False, photon_inventory=None):
         """Check the Photon verifier inputs and optionally refuse authentication.
 
         Args:
@@ -308,11 +316,13 @@ def _admit_stubs(monkeypatch, calls: list[str], *, source_has_payload: bool, fai
             _source: Source tree selecting the package and trust contracts.
             scratch: Existing private directory for the transaction verifier.
             allow_guest_tools: Explicit admission of the separate companion directory.
+            photon_inventory: Exact retained catalog selected by original admission.
         """
         calls.append("verify_rpms")
         assert root.name == "rpms"
         assert scratch.is_dir()
         assert allow_guest_tools is True
+        assert photon_inventory == packages
         if fail_at == "rpm":
             raise ValueError("synthetic RPM authentication refusal")
         return [{"name": "python3", "sha256": "a" * 64}]
@@ -326,17 +336,19 @@ def _admit_stubs(monkeypatch, calls: list[str], *, source_has_payload: bool, fai
         calls.append("source_requires_payload")
         return source_has_payload
 
-    def verify_guest_tools(root, _source, scratch):
+    def verify_guest_tools(root, _source, scratch, *, photon_inventory=None):
         """Check the separate provider closure boundary and optional refusal.
 
         Args:
             root: Retained guest-tools companion directory.
             _source: Source tree selecting the provider closure contracts.
             scratch: Existing private directory for provider transaction verification.
+            photon_inventory: Exact retained catalog selected by original admission.
         """
         calls.append("verify_guest_tools")
         assert root.name == "guest-tools"
         assert scratch.is_dir()
+        assert photon_inventory == packages
         if fail_at == "guest-tools":
             raise ValueError("synthetic guest-tools authentication refusal")
 
@@ -368,6 +380,8 @@ def test_admit_authenticates_rpms_then_retained_guest_tools_before_success_repor
     assert result["disposition"] == "reuse"
     assert result["report"]["authenticated_guest_tools_validated"] is True
     assert result["report"]["authenticated_transaction_validated"] is True
+    assert result["report"]["snapshot_sha256"] == refresh.digest(state / "photon-snapshot.json")
+    assert len(result["report"]["requirements_sha256"]) == 64
     assert (rpms / "guest-tools").is_dir()
 
 
@@ -393,6 +407,7 @@ def test_admit_authentication_failure_never_returns_successful_report(
     if failure == "guest-tools":
         expected += ["verify_guest_tools"]
     assert calls == expected
+    assert not (state / "photon-snapshot.json").exists()
 
 
 def test_legacy_source_without_companion_does_not_claim_guest_tools_authentication(
