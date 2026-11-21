@@ -581,12 +581,14 @@ jobs:
   acceptance:
     name: Test the exact signed installer in a disconnected UEFI VM
     needs: [prepare, stage]
-    if: needs.stage.outputs.legacy != 'true'
+    if: github.ref == 'refs/heads/main' && needs.stage.outputs.legacy != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 165
     environment: installation-acceptance
     permissions:
-      contents: read
+      # GitHub requires this scope to read private draft assets (HTTP 403 with read).
+      # Only the download step receives the token. This job has no signing secrets.
+      contents: write
     env:
       RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
       VERSION: ${{ needs.prepare.outputs.version }}
@@ -653,7 +655,7 @@ jobs:
           # Disable masking only for this private pipe. The acceptance process never echoes its input.
           op run --no-masking --environment "$OP_ENVIRONMENT_ID" -- env -u OP_SERVICE_ACCOUNT_TOKEN \
             python -c 'import json, os; print(json.dumps({"admin": os.environ["ATLASO_VM_ADMIN_PASSWORD"], "root": os.environ["ATLASO_VM_ROOT_PASSWORD"]}))' | \
-            env -u OP_SERVICE_ACCOUNT_TOKEN \
+            env -u OP_SERVICE_ACCOUNT_TOKEN -u GH_TOKEN -u GITHUB_TOKEN \
             python -m scripts.installation.vm_acceptance --iso "$RUNNER_TEMP/installation.iso" \
               --sha256 "$ISO_SHA256" --version "$VERSION" --commit "$RELEASE_SHA" \
               --output "$RUNNER_TEMP/vm-fixture" --receipt "$RUNNER_TEMP/vm-acceptance.json"

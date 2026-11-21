@@ -81,6 +81,11 @@ not implicitly advance an older release; use the exact-SHA software-release disp
 public release already exists, the workflow verifies and reuses its signed assets only after the replay wheel matches
 the bundled wheel byte for byte, preserving the original signed provenance for channel recovery.
 
+The hosted acceptance job uses the `main`-only `installation-acceptance` environment. GitHub requires a
+write-scoped repository token to download draft assets. Only the download step receives that token. The guest
+has no GitHub credentials, and acceptance has no signing key. Release publication runs in a separate job after
+verification of the receipt and complete signed assets.
+
 The protected appliance release workflow consumes an approved Photon snapshot from its private, digest-pinned
 installation capture archive. The archive binds retained Photon 5.0 repository metadata, including the exact
 `repomd.xml` and primary package metadata, to the original native capture receipt and complete RPM inventory. A
