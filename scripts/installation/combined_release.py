@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -19,6 +20,7 @@ from scripts.verify_installation_iso import verify_release
 FIRST_INSTALLATION_VERSION = (0, 9, 506)
 FIRST_PRERELEASE_VERSION = (1, 0, 0)
 EXISTING_INSTALLER = ("v0.9.516", "623e6c40069062c2a2e8a0f11a1e9f9897dc5526")
+EXISTING_INSTALLER_SHA256 = "b6bfcb1a7af1beaf9d3eb00e71cddc3ab692f0dbcf6a5f0c74d7fb0b8d27bef3"
 VERSION = re.compile(r"v([0-9]+)\.([0-9]+)\.([0-9]+)")
 COMMIT = re.compile(r"[0-9a-f]{40}")
 SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -294,6 +296,12 @@ def require_remote_bytes(records: dict, directory: Path) -> None:
             raise ValueError(f"GitHub release asset bytes differ for {name}")
 
 
+def release_fingerprint(release: dict, tag: str, records: dict) -> str:
+    """Bind approval to the exact GitHub release and all asset identities."""
+    identity = {"id": release["id"], "tag": tag, "assets": records}
+    return hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
 def stage(repo: str, tag: str, commit: str, directory: Path, scratch: Path) -> str:
     """Create a single complete hidden draft and verify the uploaded asset set.
 
@@ -434,6 +442,8 @@ def publish(
         run_attempt: Exact attempt that uploaded the receipt.
     """
     if iso is not None:
+        if (tag, commit) == EXISTING_INSTALLER and iso != EXISTING_INSTALLER_SHA256:
+            raise ValueError("v0.9.516 must retain the original signed ISO SHA-256")
         if (
             acceptance is None
             or not SHA256.fullmatch(iso)
@@ -538,6 +548,7 @@ def main() -> None:
     parser.add_argument("--scratch", type=Path)
     parser.add_argument("--wheel", type=Path)
     parser.add_argument("--vm-acceptance", type=Path)
+    parser.add_argument("--release-fingerprint", type=Path)
     args = parser.parse_args()
     version = version_key(args.tag)
     if not COMMIT.fullmatch(args.commit):
@@ -604,6 +615,13 @@ def main() -> None:
             )
         if args.operation == "physical" and iso is not None:
             verify_acceptance(repo, os.getenv("INSTALLATION_ACCEPTANCE_EVIDENCE", ""), iso, physical=True)
+            if args.release_fingerprint is not None:
+                live = get_release(repo, args.tag)
+                require_tag(args.tag, args.commit)
+                if live is None or live["draft"] or live["id"] != release["id"] or asset_records(live, args.tag) != records:
+                    raise ValueError("release assets changed during physical acceptance verification")
+                with args.release_fingerprint.open("x", encoding="ascii") as stream:
+                    stream.write(release_fingerprint(live, args.tag, records) + "\n")
     print(iso or "legacy")
 
 

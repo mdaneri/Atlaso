@@ -149,7 +149,11 @@ def test_publication_requires_exact_vm_receipt_and_preserves_latest(
     tmp_path, monkeypatch, tag, commit, allowed
 ):
     """Publish the tested draft as a prerelease, without advancing Latest."""
-    iso = "b" * 64
+    iso = (
+        combined_release.EXISTING_INSTALLER_SHA256
+        if (tag, commit) == combined_release.EXISTING_INSTALLER
+        else "b" * 64
+    )
     state = {
         "id": 42,
         "draft": True,
@@ -186,6 +190,9 @@ def test_publication_requires_exact_vm_receipt_and_preserves_latest(
         combined_release.publish(REPO, tag, commit, dict(state), {}, iso, None, "123", "1")
     assert not requests
     receipt.write_text(json.dumps(outcome), encoding="utf-8")
+    if (tag, commit) == combined_release.EXISTING_INSTALLER:
+        with pytest.raises(ValueError, match="original signed ISO"):
+            combined_release.publish(REPO, tag, commit, dict(state), {}, "f" * 64, receipt, "123", "1")
     if not allowed:
         with pytest.raises(ValueError, match="require version 1.0.0"):
             combined_release.publish(REPO, tag, commit, dict(state), {}, iso, receipt, "123", "1")
@@ -313,6 +320,29 @@ def test_evidence_must_bind_the_approved_digest_and_comment_parent(monkeypatch):
     record["issue_url"] = f"https://api.github.com/repos/{REPO}/issues/542"
     with pytest.raises(ValueError, match="does not identify"):
         combined_release.verify_acceptance(REPO, EVIDENCE, "b" * 64)
+
+
+def test_physical_acceptance_requires_a_current_maintainer(monkeypatch):
+    iso = "b" * 64
+    record = {
+        "issue_url": f"https://api.github.com/repos/{REPO}/issues/542",
+        "body": f"Representative physical acceptance: PASS\n\nISO SHA-256 `{iso}`",
+        "user": {"login": "atlaso-maintainer"},
+    }
+    permission = {"role_name": "write"}
+
+    def gh(command):
+        value = permission if command[-1].endswith("/permission") else record
+        return subprocess.CompletedProcess(command, 0, json.dumps(value), "")
+
+    monkeypatch.setattr(combined_release, "run", gh)
+    with pytest.raises(ValueError, match="current Atlaso maintainer"):
+        combined_release.verify_acceptance(REPO, EVIDENCE, iso, physical=True)
+    permission["role_name"] = "maintain"
+    combined_release.verify_acceptance(REPO, EVIDENCE, iso, physical=True)
+    record["body"] = f"VM acceptance passed for `{iso}`"
+    with pytest.raises(ValueError, match="explicit physical acceptance"):
+        combined_release.verify_acceptance(REPO, EVIDENCE, iso, physical=True)
 
 
 def test_portable_capture_fingerprint_preserves_existing_native_receipt_contract(

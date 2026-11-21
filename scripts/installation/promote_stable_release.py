@@ -13,6 +13,7 @@ from scripts.installation.combined_release import (
     TRUST_KEY,
     asset_records,
     get_release,
+    release_fingerprint,
     require_tag,
     run,
     version_key,
@@ -79,9 +80,16 @@ def promote(
     commit: str,
     manifest: Path,
     manifest_sha256: str,
+    fingerprint: str,
+    *,
+    verify_only: bool = False,
 ) -> None:
-    """Promote one accepted asset set without replacing its tag or content."""
-    if not COMMIT.fullmatch(commit) or not SHA256.fullmatch(manifest_sha256):
+    """Verify the accepted release fingerprint or promote it without replacing content."""
+    if (
+        not COMMIT.fullmatch(commit)
+        or not SHA256.fullmatch(manifest_sha256)
+        or not SHA256.fullmatch(fingerprint)
+    ):
         raise ValueError("stable release identity is malformed")
     if digest(manifest) != manifest_sha256:
         raise ValueError("signed release manifest differs from physical admission")
@@ -104,6 +112,17 @@ def promote(
     original_assets = asset_records(release, tag)
     if not original_assets:
         raise ValueError("stable promotion requires the complete published asset set")
+    if release_fingerprint(release, tag, original_assets) != fingerprint:
+        raise ValueError("published release fingerprint differs from physical admission")
+    manifest_asset = original_assets.get(manifest.name)
+    if (
+        manifest_asset is None
+        or manifest_asset[1] != manifest.stat().st_size
+        or manifest_asset[2] != f"sha256:{manifest_sha256}"
+    ):
+        raise ValueError("published release manifest differs from physical admission")
+    if verify_only:
+        return
 
     candidate = version_key(tag)
     highest = latest_version(release_list(repo))
@@ -145,6 +164,8 @@ def promote(
         or current.get("target_commitish") != release.get("target_commitish")
     ):
         raise ValueError("stable release metadata or assets changed during promotion")
+    if release_fingerprint(current, tag, asset_records(current, tag)) != fingerprint:
+        raise ValueError("stable release fingerprint changed during promotion")
     live_manifest = next(
         (asset for asset in current["assets"] if asset["name"] == manifest.name), None
     )
@@ -170,6 +191,8 @@ def main() -> None:
     parser.add_argument("--commit", required=True)
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--manifest-sha256", required=True)
+    parser.add_argument("--fingerprint", required=True)
+    parser.add_argument("--verify-only", action="store_true")
     args = parser.parse_args()
     promote(
         os.environ["GITHUB_REPOSITORY"],
@@ -177,6 +200,8 @@ def main() -> None:
         args.commit,
         args.manifest,
         args.manifest_sha256,
+        args.fingerprint,
+        verify_only=args.verify_only,
     )
 
 

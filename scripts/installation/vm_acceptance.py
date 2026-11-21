@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import base64
-import hashlib
 import json
 import os
 import re
@@ -17,12 +16,13 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from scripts.installation.manifest import digest
+
 VERSION = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\Z")
 COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 DISK_ROW = re.compile(r"(?im)^\s*.*?\b(64|4)\s*GiB\s*@\s*/d(?:ev|eu)/sd[a-z]\b")
-REVIEW_TARGET = re.compile(r"(?im)^\s*/d(?:ev|eu)/sd[a-z]: .{1,72}(?<!\d)64\s*GiB\s*$")
-REVIEW_DECOY = re.compile(r"(?im)^\s*/d(?:ev|eu)/sd[a-z]: .{1,72}(?<!\d)4\s*GiB\s*$")
+REVIEW_DISK = re.compile(r"(?im)^[ \t]*[/f]de[vu]/sd[a-z]: [^\r\n]{1,72}\b(64|4)\s*GiB[ \t]*$")
 CHECKS = [
     "disconnected_uefi_install",
     "selected_64g_target",
@@ -39,15 +39,6 @@ MINIMUM_FREE_BYTES = 16 * 1024**3
 
 class AcceptanceError(RuntimeError):
     """Represent a failed release VM acceptance checkpoint."""
-
-
-def sha256_file(path: Path) -> str:
-    """Return a bounded-memory digest for a regular file."""
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        while block := stream.read(1024 * 1024):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def fixture_intent(output: Path, receipt: Path, version: str, commit: str, iso_sha256: str) -> dict[str, Any]:
@@ -86,8 +77,8 @@ def require_inputs(args: argparse.Namespace) -> tuple[Path, Path, Path, Path, di
         raise AcceptanceError("release version or source commit is malformed")
     if not SHA256.fullmatch(args.sha256):
         raise AcceptanceError("ISO SHA-256 is malformed")
-    iso = Path(args.iso).resolve(strict=True)
-    if not iso.is_file() or iso.is_symlink() or sha256_file(iso) != args.sha256:
+    iso = Path(args.iso).absolute()
+    if digest(iso) != args.sha256:
         raise AcceptanceError("installer ISO is not the expected immutable file")
 
     output = Path(args.output).absolute()
@@ -143,6 +134,7 @@ class Qmp:
         self.address = address
         self.abstract = abstract
         self.process = process
+        self.guest_requested_reboot = False
         deadline = time.monotonic() + 90
         while time.monotonic() < deadline:
             if process.poll() is not None:
@@ -182,6 +174,9 @@ class Qmp:
                 return response["return"]
             if "event" not in response:
                 raise AcceptanceError("QEMU returned an unexpected control response")
+            if response["event"] == "SHUTDOWN":
+                data = response.get("data", {})
+                self.guest_requested_reboot = data.get("guest") is True and data.get("reason") == "guest-reset"
 
     def send_key(self, *keys: str) -> None:
         self.execute(
@@ -331,6 +326,28 @@ def is_disk_selection_screen(text: str) -> bool:
     return "select a disk" in text.casefold()
 
 
+def is_credential_prompt(text: str, account: str, confirmation: bool) -> bool:
+    """Recognize only the expected concealed field in the signed installer sequence."""
+    action = r"confir[mn]" if confirmation else "set"
+    return re.search(rf"\b{action} {re.escape(account)} pass[wu]ord\b", text, re.I) is not None
+
+
+def wait_for_installer_reboot(qmp: Qmp, output: Path, deadline: float) -> None:
+    """Wait for the successful installer's own reset before disconnecting its media."""
+    while time.monotonic() < deadline:
+        status = qmp.execute("query-status")["status"]
+        if status == "shutdown" and qmp.guest_requested_reboot:
+            print("The offline installer finished and requested its reboot.", flush=True)
+            return
+        if status != "running":
+            raise AcceptanceError("the installer stopped without a guest-requested reboot")
+        screen = screen_text(qmp, output).casefold()
+        if "installation cancelled or failed" in screen or "kernel panic" in screen:
+            raise AcceptanceError("the offline installer reported failure before reboot")
+        time.sleep(4)
+    raise AcceptanceError("the offline installer did not reboot before its deadline")
+
+
 def start_qemu(
     iso: Path | None,
     output: Path,
@@ -413,8 +430,10 @@ def stop_qemu(process: subprocess.Popen[bytes], qmp: Qmp) -> None:
 def qga_request(stream, request: dict[str, Any]) -> dict[str, Any]:
     stream.write(json.dumps(request, separators=(",", ":")).encode() + b"\r\n")
     raw = stream.readline(1024 * 1024)
-    if not raw or len(raw) >= 1024 * 1024:
-        raise AcceptanceError("guest-agent response was empty or exceeded its bound")
+    if not raw:
+        raise EOFError("the guest-agent connection closed")
+    if len(raw) >= 1024 * 1024:
+        raise AcceptanceError("guest-agent response exceeded its bound")
     result = json.loads(raw)
     if "error" in result:
         raise AcceptanceError("guest agent rejected an inspection command")
@@ -443,19 +462,27 @@ def wait_for_guest_agent(address: str, process: subprocess.Popen[bytes], seconds
     while time.monotonic() < deadline:
         if process.poll() is not None:
             raise AcceptanceError("media-free QEMU guest exited before its agent became ready")
+        connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        stream = None
+        ready = False
         try:
-            connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             connection.settimeout(30)
             connection.connect("\0" + address if abstract else address)
             peer_pid = connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12)
             if int.from_bytes(peer_pid[:4], byteorder=sys.byteorder, signed=True) != process.pid:
-                connection.close()
                 raise AcceptanceError("guest-agent socket peer differs from the exact QEMU process")
             stream = connection.makefile("rwb", buffering=0)
             qga_request(stream, {"execute": "guest-ping"})
+            ready = True
             return connection, stream
-        except (FileNotFoundError, ConnectionRefusedError, OSError):
-            time.sleep(2)
+        except (OSError, EOFError):
+            pass
+        finally:
+            if not ready:
+                if stream is not None:
+                    stream.close()
+                connection.close()
+        time.sleep(2)
     raise AcceptanceError("media-free Atlaso guest agent did not become available")
 
 
@@ -483,22 +510,24 @@ def install(iso: Path, output: Path, args: argparse.Namespace, passwords: dict[s
         target_index = sizes.index("64")
         for key in ("up", "up", *("down" for _ in range(target_index)), "ret"):
             qmp.send_key(key)
-        for title in ("SFTP backup storage", "VCFDT depot storage"):
-            wait_screen(qmp, output, lambda text, title=title: title in text, title, 180)
+        for title, pattern in (
+            ("SFTP backup storage", r"\bsftp backup storage\b"),
+            ("VCFDT depot storage", r"\bvy?cfdt depot storage\b"),
+        ):
+            wait_screen(qmp, output, lambda text, pattern=pattern: re.search(pattern, text, re.I), title, 180)
             qmp.send_key("ret")
-        review = wait_screen(qmp, output, lambda text: "Erase selected disks?" in text, "destructive layout review", 90)
-        if len(REVIEW_TARGET.findall(review)) != 1 or REVIEW_DECOY.search(review):
+        review = wait_screen(qmp, output, lambda text: "erase selected disks" in text.casefold(), "destructive layout review", 90)
+        if REVIEW_DISK.findall(review) != ["64"]:
             raise AcceptanceError("destructive review did not identify only the intended 64 GiB target")
         qmp.send_key("left")
         qmp.send_key("ret")
         for account in ("admin", "root"):
             secret = passwords[account]
-            for action in ("Set", "Confirm"):
-                wait_screen(qmp, output, lambda text, action=action, account=account: f"{action} {account} password" in text,
+            for confirmation in (False, True):
+                wait_screen(qmp, output, lambda text, confirmation=confirmation, account=account: is_credential_prompt(text, account, confirmation),
                             "concealed installer credential", 180)
                 type_text(qmp, secret)
-        wait_screen(qmp, output, lambda text: "Atlaso installation completed" in text,
-                    "disconnected installation completion", max(1, int(timeout - time.monotonic())))
+        wait_for_installer_reboot(qmp, output, timeout)
     finally:
         stop_qemu(process, qmp)
 
@@ -561,7 +590,7 @@ def main() -> int:
         write_new_json(receipt, value)
         print("Atlaso VM acceptance passed.")
         return 0
-    except (AcceptanceError, OSError, ValueError, subprocess.SubprocessError, json.JSONDecodeError) as error:
+    except (AcceptanceError, EOFError, OSError, ValueError, subprocess.SubprocessError) as error:
         print(str(error), file=sys.stderr)
         return 1
 

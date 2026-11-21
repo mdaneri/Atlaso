@@ -1,5 +1,6 @@
 """Focused unit checks for release VM acceptance evidence and controls."""
 
+import io
 import json
 import os
 import re
@@ -35,10 +36,11 @@ def test_credential_key_events_refuse_unrepresentable_text():
 
 
 def test_native_review_requires_exact_selected_disk_line_and_rejects_4g_suffix():
-    assert vm_acceptance.REVIEW_TARGET.search("/dev/sda: QEMU Hard Disk 64 GiB")
-    assert vm_acceptance.REVIEW_TARGET.search("/deu/sda: QENU HARDDISK — 64 GiB")
-    assert not vm_acceptance.REVIEW_TARGET.search("/dev/sda: QEMU Hard Disk 4 GiB")
-    assert vm_acceptance.REVIEW_DECOY.search("/dev/sdb: QEMU Hard Disk 4 GiB")
+    assert vm_acceptance.REVIEW_DISK.findall("/dev/sda: QEMU Hard Disk 64 GiB") == ["64"]
+    observed = "Confirn\nErase selected disks?\nfdeu/sda: QEMNU HARDDISK 64 GiB\nSerial/WWN: unavailable"
+    assert vm_acceptance.REVIEW_DISK.findall(observed) == ["64"]
+    assert vm_acceptance.REVIEW_DISK.findall(observed + "\n/dev/sdb: QEMU Hard Disk 4 GiB") == ["64", "4"]
+    assert not vm_acceptance.REVIEW_DISK.search("/dev/sda: QEMU Hard Disk 164 GiB")
 
 
 def test_native_disk_rows_include_model_before_the_capacity():
@@ -46,6 +48,32 @@ def test_native_disk_rows_include_model_before_the_capacity():
 
     assert vm_acceptance.is_disk_selection_screen(text)
     assert [match.group(1) for match in vm_acceptance.DISK_ROW.finditer(text)] == ["64", "4"]
+
+
+def test_concealed_credential_prompt_matches_the_expected_account_and_step():
+    assert vm_acceptance.is_credential_prompt("Set admin passuord", "admin", False)
+    assert vm_acceptance.is_credential_prompt("Confirn root password", "root", True)
+    assert not vm_acceptance.is_credential_prompt("Set admin password", "root", False)
+    assert not vm_acceptance.is_credential_prompt("Confirm admin password", "admin", False)
+
+
+@pytest.mark.parametrize("guest,reason,accepted", [(True, "guest-reset", True), (True, "guest-panic", False), (False, "host-signal", False)])
+def test_installer_wait_accepts_only_the_guests_own_reset(tmp_path, monkeypatch, guest, reason, accepted):
+    vm = object.__new__(vm_acceptance.Qmp)
+    vm.stream = io.BytesIO()
+    vm.guest_requested_reboot = False
+    responses = iter([
+        {"event": "SHUTDOWN", "data": {"guest": guest, "reason": reason}},
+        {"event": "STOP"},
+        {"return": {"status": "shutdown"}},
+    ])
+    monkeypatch.setattr(vm, "_read", lambda: next(responses))
+    deadline = vm_acceptance.time.monotonic() + 1
+    if accepted:
+        vm_acceptance.wait_for_installer_reboot(vm, tmp_path, deadline)
+    else:
+        with pytest.raises(vm_acceptance.AcceptanceError, match="without a guest-requested reboot"):
+            vm_acceptance.wait_for_installer_reboot(vm, tmp_path, deadline)
 
 
 def test_ppm_preprocessing_crops_and_upscales_the_gray_installer_panel():
