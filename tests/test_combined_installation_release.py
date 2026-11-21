@@ -148,7 +148,15 @@ def test_partial_draft_stops_before_downloading_or_replacing_assets(
 def test_publication_requires_exact_vm_receipt_and_preserves_latest(
     tmp_path, monkeypatch, tag, commit, allowed
 ):
-    """Publish the tested draft as a prerelease, without advancing Latest."""
+    """Publish the tested draft as a prerelease, without advancing Latest.
+
+    Args:
+        tmp_path: Directory for synthetic VM acceptance receipts.
+        monkeypatch: Fixture for replacing GitHub calls with in-memory state.
+        tag: Software release tag under test.
+        commit: Source revision associated with the candidate.
+        allowed: Whether a matching receipt permits this release to publish.
+    """
     iso = (
         combined_release.EXISTING_INSTALLER_SHA256
         if (tag, commit) == combined_release.EXISTING_INSTALLER
@@ -164,6 +172,12 @@ def test_publication_requires_exact_vm_receipt_and_preserves_latest(
     requests = []
 
     def gh(command, **kwargs):
+        """Simulate editing and reading the release.
+
+        Args:
+            command: Command line that would be passed to GitHub CLI.
+            **kwargs: Run options carrying the metadata request body.
+        """
         if "--method" in command:
             update = json.loads(kwargs["input_text"])
             requests.append(update)
@@ -323,6 +337,11 @@ def test_evidence_must_bind_the_approved_digest_and_comment_parent(monkeypatch):
 
 
 def test_physical_acceptance_requires_a_current_maintainer(monkeypatch):
+    """Verify the physical acceptance author still has maintainer privileges.
+
+    Args:
+        monkeypatch: Fixture that replaces the GitHub API calls.
+    """
     iso = "b" * 64
     record = {
         "issue_url": f"https://api.github.com/repos/{REPO}/issues/542",
@@ -332,6 +351,11 @@ def test_physical_acceptance_requires_a_current_maintainer(monkeypatch):
     permission = {"role_name": "write"}
 
     def gh(command):
+        """Return the fixture acceptance comment or its author's permission.
+
+        Args:
+            command: GitHub CLI arguments identifying the requested resource.
+        """
         value = permission if command[-1].endswith("/permission") else record
         return subprocess.CompletedProcess(command, 0, json.dumps(value), "")
 

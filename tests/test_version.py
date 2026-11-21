@@ -356,7 +356,11 @@ def test_check_allows_approved_ga_release_line_transition(tmp_path):
 
 
 def test_bump_accepts_explicit_ga_release_line_transition(tmp_path):
-    """Verify that the canonical explicit bump supports the approved transition."""
+    """Verify that the canonical explicit bump supports the approved transition.
+
+    Args:
+        tmp_path: Directory for synchronized version files.
+    """
     write_version_sources(tmp_path, "0.9.517")
 
     bumped, changed = versioning.bump(tmp_path, target_version=versioning.Version(1, 0, 0))
@@ -367,7 +371,12 @@ def test_bump_accepts_explicit_ga_release_line_transition(tmp_path):
 
 @pytest.mark.parametrize("base_version", ["0.8.99", "1.0.0"])
 def test_check_rejects_ga_transition_from_other_release_line(tmp_path, base_version):
-    """Verify that 1.0.0 is not a generic major-version jump."""
+    """Verify that 1.0.0 is not a generic major-version jump.
+
+    Args:
+        tmp_path: Directory for paired base and target version files.
+        base_version: Base release outside the permitted 0.9-to-1.0 transition.
+    """
     base = tmp_path / "base"
     target = tmp_path / "target"
     write_version_sources(base, base_version)

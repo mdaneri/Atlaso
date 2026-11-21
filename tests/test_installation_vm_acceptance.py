@@ -71,6 +71,15 @@ def test_media_free_probe_verifies_the_native_console_and_installed_metadata():
 
 @pytest.mark.parametrize("guest,reason,accepted", [(True, "guest-reset", True), (True, "guest-panic", False), (False, "host-signal", False)])
 def test_installer_wait_accepts_only_the_guests_own_reset(tmp_path, monkeypatch, guest, reason, accepted):
+    """Check that the installer must request its own reboot.
+
+    Args:
+        tmp_path: Directory for transient fixture files.
+        monkeypatch: Fixture used to feed synthetic QMP replies.
+        guest: Whether QEMU attributes the shutdown to the guest.
+        reason: Reported QMP shutdown reason.
+        accepted: Whether the shutdown completes the install checkpoint.
+    """
     vm = object.__new__(vm_acceptance.Qmp)
     vm.stream = io.BytesIO()
     vm.guest_requested_reboot = False
@@ -124,6 +133,12 @@ def test_ppm_preprocessing_keeps_non_dialog_frame_for_sparse_grub_ocr():
 
 
 def test_fixture_intent_binds_a_new_output_directory_to_release(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Bind the VM directory's recorded identity to the release under test.
+
+    Args:
+        tmp_path: Directory that contains an isolated fixture root.
+        monkeypatch: Fixture used to provide the task and repository environment.
+    """
     output = tmp_path / "new-vm"
     output.mkdir()
     receipt = tmp_path / "receipt.json"
@@ -142,6 +157,11 @@ def test_fixture_intent_binds_a_new_output_directory_to_release(tmp_path: Path, 
 
 
 def test_final_receipt_is_new_and_contains_only_public_acceptance_fields(tmp_path: Path):
+    """Verify exclusive receipt creation and the public evidence schema.
+
+    Args:
+        tmp_path: Directory that contains the fixture receipt.
+    """
     receipt = tmp_path / "receipt.json"
     value = {
         "schema": 1,

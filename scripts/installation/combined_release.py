@@ -297,7 +297,13 @@ def require_remote_bytes(records: dict, directory: Path) -> None:
 
 
 def release_fingerprint(release: dict, tag: str, records: dict) -> str:
-    """Bind approval to the exact GitHub release and all asset identities."""
+    """Bind approval to the exact GitHub release and all asset identities.
+
+    Args:
+        release: GitHub metadata for the exact release.
+        tag: Verified release tag.
+        records: Asset IDs, sizes, and digests by filename.
+    """
     identity = {"id": release["id"], "tag": tag, "assets": records}
     return hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
@@ -364,6 +370,7 @@ def verify_acceptance(repo: str, evidence: str, iso: str, *, physical: bool = Fa
         repo: GitHub repository in owner/name form.
         evidence: GitHub issue, pull request, or comment URL recording media acceptance.
         iso: Verified SHA-256 of the complete installer ISO.
+        physical: Require a physical acceptance comment from a current maintainer.
     """
     match = re.fullmatch(
         rf"https://github\.com/{re.escape(repo)}/(issues|pull)/([1-9][0-9]*)(?:#issuecomment-([1-9][0-9]*))?",
@@ -403,7 +410,14 @@ def verify_acceptance(repo: str, evidence: str, iso: str, *, physical: bool = Fa
 
 
 def verify_vm_receipt(receipt: Path, tag: str, commit: str, iso: str) -> None:
-    """Match the successful test job's exact installer identity and checkpoints."""
+    """Match the successful test job's exact installer identity and checkpoints.
+
+    Args:
+        receipt: JSON evidence from the successful VM acceptance job.
+        tag: Verified release tag, including the leading v.
+        commit: Full SHA of the release source commit.
+        iso: SHA-256 of the reconstructed installer ISO.
+    """
     if receipt.stat().st_size > 8192:
         raise ValueError("VM acceptance receipt exceeds its size bound")
     record = json.loads(receipt.read_bytes())

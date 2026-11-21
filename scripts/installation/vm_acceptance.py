@@ -41,7 +41,15 @@ class AcceptanceError(RuntimeError):
 
 
 def fixture_intent(output: Path, receipt: Path, version: str, commit: str, iso_sha256: str) -> dict[str, Any]:
-    """Capture output-directory identity before launching a VM process."""
+    """Capture output-directory identity before launching a VM process.
+
+    Args:
+        output: New directory that will own the VM fixture.
+        receipt: Destination for the eventual acceptance receipt.
+        version: Expected installed Atlaso version.
+        commit: Expected installed source commit.
+        iso_sha256: SHA-256 of the exact verified installation image.
+    """
     info = output.stat(follow_symlinks=False)
     if not output.is_dir() or output.is_symlink():
         raise AcceptanceError("VM output root must be a newly created ordinary directory")
@@ -61,7 +69,12 @@ def fixture_intent(output: Path, receipt: Path, version: str, commit: str, iso_s
 
 
 def write_new_json(path: Path, value: dict[str, Any]) -> None:
-    """Publish a durable JSON record without replacing an existing file."""
+    """Publish a durable JSON record without replacing an existing file.
+
+    Args:
+        path: New file to create exclusively.
+        value: JSON record to serialize.
+    """
     encoded = (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(descriptor, "wb") as stream:
@@ -71,7 +84,11 @@ def write_new_json(path: Path, value: dict[str, Any]) -> None:
 
 
 def require_inputs(args: argparse.Namespace) -> tuple[Path, Path, Path, Path, dict[str, str]]:
-    """Validate immutable inputs and absent task-owned output paths."""
+    """Validate immutable inputs and absent task-owned output paths.
+
+    Args:
+        args: Parsed CLI options for the exact media and disposable fixture.
+    """
     if not VERSION.fullmatch(args.version) or not COMMIT.fullmatch(args.commit):
         raise AcceptanceError("release version or source commit is malformed")
     if not SHA256.fullmatch(args.sha256):
@@ -128,6 +145,13 @@ class Qmp:
     """Minimal QMP connection with a finite deadline for every reply."""
 
     def __init__(self, address: str, process: subprocess.Popen[bytes], *, abstract: bool):
+        """Connect to the verified VM process.
+
+        Args:
+            address: Path or abstract name of the QMP socket.
+            process: Exact QEMU subprocess that owns the fixture.
+            abstract: Connect to a Linux abstract socket instead of a filesystem path.
+        """
         self.address = address
         self.abstract = abstract
         self.process = process
@@ -161,6 +185,12 @@ class Qmp:
         return value
 
     def execute(self, command: str, arguments: dict[str, Any] | None = None) -> Any:
+        """Send a QMP command and consume events until it replies.
+
+        Args:
+            command: QMP command name.
+            arguments: Optional command-specific arguments.
+        """
         request: dict[str, Any] = {"execute": command}
         if arguments is not None:
             request["arguments"] = arguments
@@ -176,6 +206,11 @@ class Qmp:
                 self.guest_requested_reboot = data.get("guest") is True and data.get("reason") == "guest-reset"
 
     def send_key(self, *keys: str) -> None:
+        """Send a key chord with a bounded hold time.
+
+        Args:
+            *keys: QEMU key codes pressed together.
+        """
         self.execute(
             "send-key",
             {"keys": [{"type": "qcode", "data": key} for key in keys], "hold-time": 75},
@@ -188,7 +223,11 @@ class Qmp:
 
 
 def key_events(text: str) -> list[list[str]]:
-    """Convert the admitted printable credential alphabet into QEMU key chords."""
+    """Convert the admitted printable credential alphabet into QEMU key chords.
+
+    Args:
+        text: Text to translate through the supported guest keyboard layout.
+    """
     shifted = {
         "!": "1", "@": "2", "#": "3", "$": "4", "%": "5", "^": "6", "&": "7",
         "*": "8", "(": "9", ")": "0", "_": "minus", "+": "equal", "{": "bracket_left",
@@ -217,6 +256,12 @@ def key_events(text: str) -> list[list[str]]:
 
 
 def type_text(qmp: Qmp, value: str) -> None:
+    """Type a complete line through the guest keyboard.
+
+    Args:
+        qmp: Control connection for the selected fixture.
+        value: Text to type before submitting the line.
+    """
     for chord in key_events(value):
         qmp.send_key(*chord)
     qmp.send_key("ret")
@@ -229,6 +274,9 @@ def preprocess_ppm(raw: bytes) -> tuple[bytes, bool]:
     uses a broad, low-chroma gray fill, so its rows and columns provide a stable
     crop even when the selected row changes color. Frames without that panel,
     such as the GRUB menu, retain the full image and use sparse-text OCR.
+
+    Args:
+        raw: Bytes of a raw RGB PPM screenshot returned by QMP.
     """
     header = re.match(rb"P6\s+(\d+)\s+(\d+)\s+255\s", raw)
     if header is None:
@@ -281,7 +329,12 @@ def preprocess_ppm(raw: bytes) -> tuple[bytes, bool]:
 
 
 def screen_text(qmp: Qmp, directory: Path) -> str:
-    """OCR one transient QMP frame without retaining or logging guest pixels."""
+    """OCR one transient QMP frame without retaining or logging guest pixels.
+
+    Args:
+        qmp: Control connection for the selected fixture.
+        directory: Fixture directory used for transient image files.
+    """
     image = directory / f"frame-{uuid.uuid4().hex}.ppm"
     prepared = directory / f"frame-{uuid.uuid4().hex}-ocr.ppm"
     try:
@@ -306,6 +359,15 @@ def screen_text(qmp: Qmp, directory: Path) -> str:
 
 
 def wait_screen(qmp: Qmp, directory: Path, predicate, label: str, seconds: int) -> str:
+    """Wait for the expected guest checkpoint within its deadline.
+
+    Args:
+        qmp: Control connection for the selected fixture.
+        directory: Fixture directory used for transient image files.
+        predicate: Callable that accepts OCR text for the requested screen.
+        label: Public checkpoint name to use in logs.
+        seconds: Maximum time to wait for the checkpoint.
+    """
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         if qmp.process.poll() is not None:
@@ -319,18 +381,34 @@ def wait_screen(qmp: Qmp, directory: Path, predicate, label: str, seconds: int) 
 
 
 def is_disk_selection_screen(text: str) -> bool:
-    """Recognize the case-insensitive, OCR-rendered native selector heading."""
+    """Recognize the case-insensitive, OCR-rendered native selector heading.
+
+    Args:
+        text: Recognized text from the current installer screen.
+    """
     return "select a disk" in text.casefold()
 
 
 def is_credential_prompt(text: str, account: str, confirmation: bool) -> bool:
-    """Recognize only the expected concealed field in the signed installer sequence."""
+    """Recognize only the expected concealed field in the signed installer sequence.
+
+    Args:
+        text: Recognized text from the current installer screen.
+        account: Account name expected in the prompt.
+        confirmation: Match the confirmation prompt when true.
+    """
     action = r"confir[mn]" if confirmation else "set"
     return re.search(rf"\b{action} {re.escape(account)} pass[wu]ord\b", text, re.I) is not None
 
 
 def wait_for_installer_reboot(qmp: Qmp, output: Path, deadline: float) -> None:
-    """Wait for the successful installer's own reset before disconnecting its media."""
+    """Wait for the successful installer's own reset before disconnecting its media.
+
+    Args:
+        qmp: Control connection for the installer fixture.
+        output: Fixture directory used for transient image files.
+        deadline: Absolute deadline on the monotonic clock.
+    """
     while time.monotonic() < deadline:
         status = qmp.execute("query-status")["status"]
         if status == "shutdown" and qmp.guest_requested_reboot:
@@ -356,7 +434,18 @@ def start_qemu(
     abstract_sockets: bool,
     accelerator: str,
 ) -> tuple[subprocess.Popen[bytes], Qmp]:
-    """Start a UEFI fixture with an offline installer and isolated boot networking."""
+    """Start a UEFI fixture with an offline installer and isolated boot networking.
+
+    Args:
+        iso: Installation ISO to attach, or None for a disk-only boot.
+        output: Owned directory containing the VM fixture files.
+        disk: Writable target disk to attach.
+        ovmf_vars: Writable UEFI variable store for this fixture.
+        ovmf_code: Read-only UEFI firmware image.
+        socket_name: Suffix identifying this boot's control socket.
+        abstract_sockets: Use a Linux abstract control socket.
+        accelerator: Select KVM, TCG, or automatic host capability detection.
+    """
     unique = f"atlaso-{uuid.uuid4().hex}-{socket_name}"
     control = unique if abstract_sockets else str(output / f"{unique}.sock")
     acceleration = accelerator
@@ -404,6 +493,12 @@ def start_qemu(
 
 
 def stop_qemu(process: subprocess.Popen[bytes], qmp: Qmp) -> None:
+    """Stop the exact fixture and verify its exit status.
+
+    Args:
+        process: QEMU subprocess launched for this boot.
+        qmp: Control connection to close before stopping QEMU.
+    """
     qmp.close()
     if process.poll() is None:
         process.terminate()
@@ -417,7 +512,11 @@ def stop_qemu(process: subprocess.Popen[bytes], qmp: Qmp) -> None:
 
 
 def installed_console_ready(text: str) -> bool:
-    """Recognize the appliance dashboard after the disk-only boot."""
+    """Recognize the appliance dashboard after the disk-only boot.
+
+    Args:
+        text: Recognized text from the disk-only guest console.
+    """
     text = text.casefold()
     return "manage this appliance at" in text or (
         "atlaso appliance" in text and re.search(r"\bf4[^\n]{0,14}console", text) is not None
@@ -425,23 +524,44 @@ def installed_console_ready(text: str) -> bool:
 
 
 def installed_login_prompt(text: str) -> bool:
-    """Admit only the ordinary Photon login on the selected virtual terminal."""
+    """Admit only the ordinary Photon login on the selected virtual terminal.
+
+    Args:
+        text: Recognized text from the selected Photon virtual terminal.
+    """
     return re.search(r"\btty2\b", text, re.I) is not None and re.search(r"(?im)^[ \t]*[\w.-]+ login:[ \t]*$", text) is not None
 
 
 def run_console_command(qmp: Qmp, command: str) -> None:
-    """Clear the authenticated shell frame before each independently checked command."""
+    """Clear the authenticated shell frame before each independently checked command.
+
+    Args:
+        qmp: Control connection for the authenticated guest.
+        command: Read-only shell command or its local variable setup.
+    """
     qmp.send_key("ctrl", "l")
     type_text(qmp, command)
 
 
 def installed_identity_command(attribute: str, expected_name: str) -> str:
-    """Compare the release identity inside the guest to avoid OCR of a full source SHA."""
+    """Compare the release identity inside the guest to avoid OCR of a full source SHA.
+
+    Args:
+        attribute: Atlaso metadata attribute to compare.
+        expected_name: Name of the guest shell environment variable holding the expected value.
+    """
     return f"$P -BI -c 'import atlaso as a,os;print(a.{attribute}==os.getenv(\"{expected_name}\"))'"
 
 
 def check_installed_application(qmp: Qmp, output: Path, version: str, commit: str) -> None:
-    """Verify installed build metadata and both service states in the authenticated shell."""
+    """Verify installed build metadata and both service states in the authenticated shell.
+
+    Args:
+        qmp: Control connection for the authenticated guest.
+        output: Fixture directory used for transient image files.
+        version: Expected installed Atlaso version.
+        commit: Expected installed source commit.
+    """
     for setup in ("P=/opt/atlaso/.venv/bin/python", f"export V={version}", f"export C={commit}"):
         run_console_command(qmp, setup)
     for attribute, expected_name, label in (
@@ -468,7 +588,15 @@ def check_installed_application(qmp: Qmp, output: Path, version: str, commit: st
 
 
 def verify_installed(qmp: Qmp, output: Path, version: str, commit: str, password: str) -> None:
-    """Verify the production image through the ordinary authenticated native login."""
+    """Verify the production image through the ordinary authenticated native login.
+
+    Args:
+        qmp: Control connection for the disk-only guest.
+        output: Fixture directory used for transient image files.
+        version: Expected installed Atlaso version.
+        commit: Expected installed source commit.
+        password: Root password entered during this fixture's installation.
+    """
     wait_screen(qmp, output, installed_console_ready, "media-free Atlaso appliance console", BOOT_SECONDS)
     qmp.send_key("alt", "f2")
     wait_screen(qmp, output, installed_login_prompt, "native Photon tty2 login", 60)
@@ -488,6 +616,14 @@ def verify_installed(qmp: Qmp, output: Path, version: str, commit: str, password
 
 
 def install(iso: Path, output: Path, args: argparse.Namespace, passwords: dict[str, str]) -> None:
+    """Install to the selected disk and verify the appliance without its media.
+
+    Args:
+        iso: Exact signed installer ISO admitted for testing.
+        output: Owned output directory for this fixture.
+        args: Validated firmware, accelerator, and control-socket options.
+        passwords: Dedicated administrator and root passwords for the test guest.
+    """
     disk = output / "atlaso-target.qcow2"
     decoy = output / "atlaso-unselected.qcow2"
     decoy_baseline = output / "atlaso-unselected-baseline.qcow2"

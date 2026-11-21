@@ -14,6 +14,13 @@ REPO = "mdaneri/Atlaso"
 
 
 def release(tag: str, release_id: int, *, prerelease: bool) -> dict:
+    """Create a published release metadata fixture.
+
+    Args:
+        tag: Release tag assigned to the fixture.
+        release_id: GitHub numeric release ID.
+        prerelease: Initial GitHub prerelease classification.
+    """
     return {
         "id": release_id,
         "tag_name": tag,
@@ -30,9 +37,23 @@ def release(tag: str, release_id: int, *, prerelease: bool) -> dict:
 
 
 def arrange_promotion(monkeypatch, target: dict, published: list[dict]):
+    """Stub remote release reads and record metadata writes.
+
+    Args:
+        monkeypatch: Fixture that replaces signing, tag, and GitHub dependencies.
+        target: Release metadata to edit in place.
+        published: Published releases available for Latest comparison.
+    """
     requests = []
 
     def run(command, *, check=True, input_text=None):
+        """Simulate release API calls and retain edit payloads.
+
+        Args:
+            command: Command line that would be passed to GitHub CLI.
+            check: Whether the caller requested failure on a nonzero exit.
+            input_text: JSON body of a metadata change, when supplied.
+        """
         if "--method" in command:
             body = json.loads(input_text)
             requests.append(body)
@@ -55,6 +76,12 @@ def arrange_promotion(monkeypatch, target: dict, published: list[dict]):
 
 
 def test_promote_stable_advances_latest_to_the_highest_numeric_release(tmp_path, monkeypatch):
+    """Make a physically accepted higher release stable and Latest.
+
+    Args:
+        tmp_path: Directory for the signed manifest fixture.
+        monkeypatch: Fixture for replacing signing and GitHub dependencies.
+    """
     manifest = tmp_path / "release-manifest.json"
     manifest.write_text("{}", encoding="utf-8")
     (tmp_path / "release-manifest.json.sig").write_text("{}", encoding="utf-8")
@@ -71,6 +98,12 @@ def test_promote_stable_advances_latest_to_the_highest_numeric_release(tmp_path,
 
 
 def test_older_stable_promotion_preserves_current_latest(tmp_path, monkeypatch):
+    """Promote an older release while preserving GitHub Latest.
+
+    Args:
+        tmp_path: Directory for the signed manifest fixture.
+        monkeypatch: Fixture for replacing signing and GitHub dependencies.
+    """
     manifest = tmp_path / "release-manifest.json"
     manifest.write_text("{}", encoding="utf-8")
     (tmp_path / "release-manifest.json.sig").write_text("{}", encoding="utf-8")
@@ -92,6 +125,12 @@ def test_older_stable_promotion_preserves_current_latest(tmp_path, monkeypatch):
 
 
 def test_stable_release_metadata_promotion_is_idempotent(tmp_path, monkeypatch):
+    """Accept a repeat request for the same stable release.
+
+    Args:
+        tmp_path: Directory for the signed manifest fixture.
+        monkeypatch: Fixture for replacing signing and GitHub dependencies.
+    """
     manifest = tmp_path / "release-manifest.json"
     manifest.write_text("{}", encoding="utf-8")
     (tmp_path / "release-manifest.json.sig").write_text("{}", encoding="utf-8")
@@ -107,6 +146,12 @@ def test_stable_release_metadata_promotion_is_idempotent(tmp_path, monkeypatch):
 
 
 def test_verify_only_revalidates_full_release_without_mutating_metadata(tmp_path, monkeypatch):
+    """Bind physical evidence to current assets before a channel update.
+
+    Args:
+        tmp_path: Directory for the signed manifest fixture.
+        monkeypatch: Fixture for replacing signing and GitHub dependencies.
+    """
     manifest = tmp_path / "release-manifest.json"
     manifest.write_text("{}", encoding="utf-8")
     (tmp_path / "release-manifest.json.sig").write_text("{}", encoding="utf-8")
@@ -127,6 +172,12 @@ def test_verify_only_revalidates_full_release_without_mutating_metadata(tmp_path
 
 
 def test_release_fingerprint_mismatch_refuses_before_mutation(tmp_path, monkeypatch):
+    """Reject a changed GitHub asset inventory before an edit.
+
+    Args:
+        tmp_path: Directory for the signed manifest fixture.
+        monkeypatch: Fixture for replacing signing and GitHub dependencies.
+    """
     manifest = tmp_path / "release-manifest.json"
     manifest.write_text("{}", encoding="utf-8")
     (tmp_path / "release-manifest.json.sig").write_text("{}", encoding="utf-8")

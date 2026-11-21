@@ -25,7 +25,11 @@ SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
 def release_list(repo: str) -> list[dict]:
-    """Read all release pages without truncating the semantic version comparison."""
+    """Read all release pages without truncating the semantic version comparison.
+
+    Args:
+        repo: GitHub repository in owner/name form.
+    """
     releases = []
     page = 1
     while True:
@@ -49,7 +53,11 @@ def release_list(repo: str) -> list[dict]:
 
 
 def latest_version(releases: list[dict]) -> tuple[int, int, int]:
-    """Return the highest published stable semantic version."""
+    """Return the highest published stable semantic version.
+
+    Args:
+        releases: GitHub release records to compare.
+    """
     versions = []
     for release in releases:
         if release.get("draft") or release.get("prerelease"):
@@ -61,7 +69,11 @@ def latest_version(releases: list[dict]) -> tuple[int, int, int]:
 
 
 def latest_release(repo: str) -> dict:
-    """Read GitHub's current Latest release and reject an absent or malformed result."""
+    """Read GitHub's current Latest release and reject an absent or malformed result.
+
+    Args:
+        repo: GitHub repository in owner/name form.
+    """
     result = json.loads(run(["gh", "api", f"repos/{repo}/releases/latest"]).stdout)
     if (
         not isinstance(result, dict)
@@ -84,7 +96,17 @@ def promote(
     *,
     verify_only: bool = False,
 ) -> None:
-    """Verify the accepted release fingerprint or promote it without replacing content."""
+    """Verify the accepted release fingerprint or promote it without replacing content.
+
+    Args:
+        repo: GitHub repository in owner/name form.
+        tag: Exact software release tag.
+        commit: Full SHA of the physically accepted release commit.
+        manifest: Downloaded release manifest with its detached signature alongside it.
+        manifest_sha256: Manifest digest verified during physical acceptance admission.
+        fingerprint: GitHub release and asset fingerprint verified during admission.
+        verify_only: Revalidate the release without changing its GitHub classification.
+    """
     if (
         not COMMIT.fullmatch(commit)
         or not SHA256.fullmatch(manifest_sha256)
