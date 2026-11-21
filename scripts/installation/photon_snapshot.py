@@ -31,7 +31,11 @@ Package = tuple[str, str, str, str, str, str]
 
 
 def requirements_sha256(source: Path) -> str:
-    """Hash capture requirements using the target tree's data and reviewed identities."""
+    """Hash capture requirements using the target tree's data and reviewed identities.
+
+    Args:
+        source: Exact target release checkout.
+    """
     files = [
         "image/common/powershell/powercli-lock.json",
         "image/common/scripts/build-qemu-guest-agent-rpm.sh",
@@ -70,10 +74,20 @@ def requirements_sha256(source: Path) -> str:
 
 
 def collect(captured_utc: str) -> bytes:
-    """Retain the exact official index and primary bytes used to admit RPMs."""
+    """Retain the exact official index and primary bytes used to admit RPMs.
+
+    Args:
+        captured_utc: Original capture creation timestamp in UTC.
+    """
     documents: dict[str, str] = {}
 
     def download(url: str, limit: int) -> bytes:
+        """Read and retain one authenticated-origin repository document.
+
+        Args:
+            url: Exact requested vendor metadata URL.
+            limit: Maximum permitted document size in bytes.
+        """
         content = _download_photon_repository_document(url, limit)
         documents[url] = base64.b64encode(content).decode("ascii")
         return content
@@ -85,7 +99,12 @@ def collect(captured_utc: str) -> bytes:
 
 
 def read_snapshot(content: bytes, *, now: datetime | None = None) -> set[Package]:
-    """Verify the approval lifetime and re-derive the package identities offline."""
+    """Verify the approval lifetime and re-derive the package identities offline.
+
+    Args:
+        content: Canonical snapshot bytes from the verified archive or capture.
+        now: UTC time for deterministic validation, defaulting to the current UTC time.
+    """
     if not 0 < len(content) <= MAX_SNAPSHOT_BYTES:
         raise ValueError("Photon snapshot exceeds its size limit")
     value = json.loads(content)
@@ -101,6 +120,12 @@ def read_snapshot(content: bytes, *, now: datetime | None = None) -> set[Package
     documents = dict(value["documents"])
 
     def download(url: str, limit: int) -> bytes:
+        """Supply the exact retained document from the bounded snapshot.
+
+        Args:
+            url: Expected original vendor metadata URL.
+            limit: Maximum permitted decoded size in bytes.
+        """
         encoded = documents.pop(url, None)
         if not isinstance(encoded, str) or len(encoded) > 4 * ((limit + 2) // 3):
             raise ValueError("Photon snapshot is missing a required bounded metadata document")
@@ -116,7 +141,12 @@ def read_snapshot(content: bytes, *, now: datetime | None = None) -> set[Package
 
 
 def read_pinned_snapshot(path: Path, expected: str) -> set[Package]:
-    """Bind a local snapshot to the checksum obtained during protected admission."""
+    """Bind a local snapshot to the checksum obtained during protected admission.
+
+    Args:
+        path: Exact file provided by protected archive admission.
+        expected: Lowercase SHA-256 of the admitted snapshot bytes.
+    """
     content = read_bounded_regular(path, MAX_SNAPSHOT_BYTES)
     if hashlib.sha256(content).hexdigest() != expected:
         raise ValueError("Photon snapshot differs from the admitted capture")
@@ -124,7 +154,12 @@ def read_pinned_snapshot(path: Path, expected: str) -> set[Package]:
 
 
 def captured_packages(inventory: set[Package], rpm_inventory: list[dict]) -> set[Package]:
-    """Require catalog membership for every RPM except the separately verified local QEMU agent."""
+    """Require catalog membership for every RPM except the separately verified local QEMU agent.
+
+    Args:
+        inventory: Exact vendor package identities and digests from the snapshot.
+        rpm_inventory: Complete captured RPM file inventory from native admission.
+    """
     if any(not isinstance(entry, dict) or not isinstance(entry.get("path"), str)
            or not isinstance(entry.get("sha256"), str) or not re.fullmatch(r"[0-9a-f]{64}", entry["sha256"])
            for entry in rpm_inventory):
@@ -142,7 +177,11 @@ def captured_packages(inventory: set[Package], rpm_inventory: list[dict]) -> set
 
 
 def audit(selected: set[Package]) -> dict:
-    """Compare selected RPM identities and security advisories against the live catalog."""
+    """Compare selected RPM identities and security advisories against the live catalog.
+
+    Args:
+        selected: Exact package identities used by the approved capture.
+    """
     current = _photon_repository_inventory()
     by_name_arch: dict[tuple[str, str], set[tuple[str, str, str]]] = {}
     for name, epoch, version, release, arch, _ in selected:
@@ -166,7 +205,12 @@ def audit(selected: set[Package]) -> dict:
 
 
 def _older_than(installed: tuple[str, str, str], fixed: tuple[str, str, str]) -> bool:
-    """Compare package versions with RPM's own version ordering."""
+    """Compare package versions with RPM's own version ordering.
+
+    Args:
+        installed: Epoch, version, and release of the captured RPM.
+        fixed: Epoch, version, and release of the vendor's fixed RPM.
+    """
     if not all(RPM_COMPONENT.fullmatch(part) for part in (*installed, *fixed)):
         raise ValueError("Photon package version has an unsupported RPM identity")
     if not all(re.fullmatch(r"[0-9]{1,10}", epoch) for epoch in (installed[0], fixed[0])):

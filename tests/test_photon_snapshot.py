@@ -13,7 +13,11 @@ from scripts.installation.manifest import canonical_json
 
 
 def snapshot_bytes(captured_utc: str) -> bytes:
-    """Build a bounded synthetic snapshot with every expected repository document."""
+    """Build a bounded synthetic snapshot with every expected repository document.
+
+    Args:
+        captured_utc: Synthetic original capture timestamp in UTC.
+    """
     primary = b"""<metadata xmlns="http://linux.duke.edu/metadata/common">
         <package><name>bash</name><arch>x86_64</arch>
         <version epoch="0" ver="5.2.37" rel="1.ph5"/>
@@ -79,7 +83,12 @@ def test_snapshot_expires_at_30_days():
 
 
 def test_snapshot_file_must_match_the_protected_digest_pin(tmp_path, monkeypatch):
-    """Reject a local snapshot whose bytes differ from the protected digest."""
+    """Reject a local snapshot whose bytes differ from the protected digest.
+
+    Args:
+        tmp_path: Fixture directory for the bounded snapshot.
+        monkeypatch: Replace metadata parsing to isolate the digest boundary.
+    """
     path = tmp_path / photon_snapshot.SNAPSHOT
     path.write_bytes(b"original snapshot")
     expected = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -92,7 +101,11 @@ def test_snapshot_file_must_match_the_protected_digest_pin(tmp_path, monkeypatch
 
 
 def write_requirement_source(root: Path) -> None:
-    """Create the minimal source files consumed by the capture fingerprint."""
+    """Create the minimal source files consumed by the capture fingerprint.
+
+    Args:
+        root: Fixture checkout containing just the relevant capture inputs.
+    """
     contents = {
         "image/common/powershell/powercli-lock.json": "{}\n",
         "image/common/scripts/build-qemu-guest-agent-rpm.sh": "build\n",
@@ -114,7 +127,11 @@ def write_requirement_source(root: Path) -> None:
 
 
 def test_capture_fingerprint_tracks_requirements_and_reviewed_rpm_pins(tmp_path):
-    """Ignore unrelated provisioning edits while tracking reviewed package identities."""
+    """Ignore unrelated provisioning edits while tracking reviewed package identities.
+
+    Args:
+        tmp_path: Fixture checkout for independent provisioning and runtime edits.
+    """
     write_requirement_source(tmp_path)
 
     baseline = photon_snapshot.requirements_sha256(tmp_path)

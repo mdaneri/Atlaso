@@ -86,7 +86,12 @@ def publish(path: Path, value: dict) -> None:
 
 
 def publish_evidence_bytes(path: Path, raw: bytes) -> None:
-    """Publish already bounded evidence with the same durable no-replacement contract."""
+    """Publish already bounded evidence with the same durable no-replacement contract.
+
+    Args:
+        path: Absent final path for the immutable evidence.
+        raw: Bounded encoded bytes to flush and publish.
+    """
     temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.pending")
     with temporary.open("xb") as stream:
         stream.write(raw)

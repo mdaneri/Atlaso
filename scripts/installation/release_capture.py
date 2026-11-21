@@ -122,7 +122,13 @@ def verify_archive(archive: Path, expected: str) -> None:
 
 
 def _archive_document(source: tarfile.TarFile, name: str, limit: int) -> bytes:
-    """Read one required bounded archive member in its canonical order."""
+    """Read one required bounded archive member in its canonical order.
+
+    Args:
+        source: Open capture archive at the next expected member.
+        name: Exact required member name.
+        limit: Maximum permitted member size in bytes.
+    """
     member = source.next()
     if member is None or member.name != name or not member.isfile() or not 0 < member.size <= limit:
         raise ValueError(f"capture archive must contain bounded {name} in order")
@@ -134,7 +140,14 @@ def _archive_document(source: tarfile.TarFile, name: str, limit: int) -> bytes:
 def _inspect_archive(
     archive: Path, target: Path, repo_name: str, *, require_snapshot: bool,
 ) -> tuple[dict, set[photon_snapshot.Package]]:
-    """Validate provenance and select the approved Photon RPM inventory."""
+    """Validate provenance and select the approved Photon RPM inventory.
+
+    Args:
+        archive: Exact capture archive whose checksum was already verified.
+        target: Exact target release source checkout.
+        repo_name: Repository allowed to produce this capture.
+        require_snapshot: Require the current snapshot archive format.
+    """
     with tarfile.open(archive, "r:gz") as source:
         value = json.loads(_archive_document(source, "capture.json", 16 * 1024**2))
         if (

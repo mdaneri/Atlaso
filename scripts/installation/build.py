@@ -390,9 +390,10 @@ def validate_candidate(
     if {path.name for path in (root / "rpm-repos").iterdir()} != {"atlaso-installation.repo"}:
         raise ValueError("candidate contains an unexpected RPM repository definition")
     software = verify_directory(root / "software", trust_key, version, commit)
-    records = verify_rpms(root / "rpms", source, scratch, photon_inventory=photon_inventory)
+    verification = {} if photon_inventory is None else {"photon_inventory": photon_inventory}
+    records = verify_rpms(root / "rpms", source, scratch, **verification)
     if (root / "guest-tools").exists() or source_requires_payload(source):
-        verify_guest_tools(root / "guest-tools", source, scratch, photon_inventory=photon_inventory)
+        verify_guest_tools(root / "guest-tools", source, scratch, **verification)
     subprocess.run(
         ["pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", "-File", str(repository / "image/common/powershell/provision-powercli.ps1"), "-Mode", "Validate", "-ModuleRoot", str(root / "powercli")],
         check=True,

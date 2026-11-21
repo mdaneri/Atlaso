@@ -120,19 +120,18 @@ def main() -> int:
         return 0
     if (args.photon_snapshot is None) != (args.photon_snapshot_sha256 is None):
         parser.error("the Photon snapshot and its admitted SHA-256 must be supplied together")
-    photon_inventory = (
-        read_pinned_snapshot(args.photon_snapshot, args.photon_snapshot_sha256)
-        if args.photon_snapshot is not None else None
-    )
+    validation_options = {}
+    if args.photon_snapshot is not None:
+        validation_options["photon_inventory"] = read_pinned_snapshot(args.photon_snapshot, args.photon_snapshot_sha256)
     if args.operation == "validate":
-        validate_candidate(args.payload, repository=ROOT, commit=args.commit, version=args.version, trust_key=ROOT / f"image/common/update-trust/{KEY_ID}.pem", scratch=args.scratch, photon_inventory=photon_inventory)
+        validate_candidate(args.payload, repository=ROOT, commit=args.commit, version=args.version, trust_key=ROOT / f"image/common/update-trust/{KEY_ID}.pem", scratch=args.scratch, **validation_options)
         return 0
     from scripts.build_virtualization_artifact_index import _load_signing_key
 
     if not args.output.is_dir() or any(args.output.iterdir()) or not args.scratch.is_dir() or any(args.scratch.iterdir()):
         raise ValueError("finalization requires empty caller-owned output and scratch directories")
     trust_key = ROOT / f"image/common/update-trust/{KEY_ID}.pem"
-    validated = validate_candidate(args.payload, repository=ROOT, commit=args.commit, version=args.version, trust_key=trust_key, scratch=args.scratch, photon_inventory=photon_inventory)
+    validated = validate_candidate(args.payload, repository=ROOT, commit=args.commit, version=args.version, trust_key=trust_key, scratch=args.scratch, **validation_options)
     value = json.loads((args.payload / MANIFEST).read_bytes())
     expected = {"schema": 1, "architecture": "x86_64", "version": args.version, "source_commit": args.commit, "signing_key_id": KEY_ID, "photon_installer": "2.2", "photon_installer_sha256": PHOTON_INSTALLER_SHA256, "photon_iso_sha512": SOURCE_ISO_SHA512, "packages": package_selection(args.payload / "source"), "files": inventory(args.payload)}
     if value != expected:
