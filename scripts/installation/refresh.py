@@ -82,6 +82,11 @@ def publish(path: Path, value: dict) -> None:
     raw = (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
     if len(raw) > MAX_STATE:
         raise RefreshRefusal("refresh evidence exceeds its bound")
+    publish_evidence_bytes(path, raw)
+
+
+def publish_evidence_bytes(path: Path, raw: bytes) -> None:
+    """Publish already bounded evidence with the same durable no-replacement contract."""
     temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.pending")
     with temporary.open("xb") as stream:
         stream.write(raw)
@@ -525,10 +530,23 @@ def execute(plan: dict, state: Path, phase: str) -> dict:
             check_capture(plan, state)
             from scripts.installation.build import verify_guest_tools, verify_rpms
             from scripts.installation.guest_tools import source_requires_payload
+            from scripts.installation.photon_snapshot import (
+                SNAPSHOT,
+                collect,
+                read_snapshot,
+                requirements_sha256,
+            )
+
+            snapshot = b""
+            verification = {}
+            if plan["capture_receipt"] is None:
+                original = read(state / "capture-root-original.json")
+                snapshot = collect(original["created_utc"])
+                verification["photon_inventory"] = read_snapshot(snapshot)
             scratch = root / "admission"
             scratch.mkdir()
             rpms = Path(plan["rpms"])
-            report["authenticated_rpm_inventory"] = verify_rpms(rpms, ROOT, scratch, allow_guest_tools=True)
+            report["authenticated_rpm_inventory"] = verify_rpms(rpms, ROOT, scratch, allow_guest_tools=True, **verification)
             # The companion is outside the installable Photon transaction. Its
             # checksum inventory alone cannot authenticate each provider closure.
             # Reuse the assembly boundary's full signatures/identity/transaction
@@ -536,8 +554,12 @@ def execute(plan: dict, state: Path, phase: str) -> dict:
             guest_tools = rpms / "guest-tools"
             report["authenticated_guest_tools_validated"] = False
             if guest_tools.exists() or source_requires_payload(ROOT):
-                verify_guest_tools(guest_tools, ROOT, scratch)
+                verify_guest_tools(guest_tools, ROOT, scratch, **verification)
                 report["authenticated_guest_tools_validated"] = True
+            if snapshot:
+                report["requirements_sha256"] = requirements_sha256(ROOT)
+                publish_evidence_bytes(state / SNAPSHOT, snapshot)
+                report["snapshot_sha256"] = hashlib.sha256(snapshot).hexdigest()
             report["authenticated_transaction_validated"] = True
         return {"disposition": disposition, "report": report}
     if phase == "capture":

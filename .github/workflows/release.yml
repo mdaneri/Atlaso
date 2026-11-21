@@ -498,13 +498,17 @@ jobs:
             exit 1
           fi
       - name: Admit protected native inputs and pinned Photon media
+        id: native-inputs
         if: steps.state.outputs.state == 'absent'
         env:
           INSTALLATION_CAPTURE_SHA256: ${{ vars.INSTALLATION_CAPTURE_SHA256 }}
         run: |
-          python -m scripts.installation.release_capture admit --archive "$RUNNER_TEMP/capture.tar.gz" \
-            --sha256 "$INSTALLATION_CAPTURE_SHA256" \
-            --output "$RUNNER_TEMP/capture" --target target-source
+          SNAPSHOT_SHA256="$(python -m scripts.installation.release_capture admit --archive "$RUNNER_TEMP/capture.tar.gz" \
+            --sha256 "$INSTALLATION_CAPTURE_SHA256" --require-snapshot \
+            --output "$RUNNER_TEMP/capture" --target target-source)"
+          [[ "$SNAPSHOT_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          echo "snapshot_sha256=$SNAPSHOT_SHA256" >> "$GITHUB_OUTPUT"
+          mv "$RUNNER_TEMP/capture/photon-snapshot.json" "$RUNNER_TEMP/photon-snapshot.json"
           rm -- "$RUNNER_TEMP/capture.tar.gz"
           curl --fail --location --proto '=https' --tlsv1.2 --output "$RUNNER_TEMP/photon.iso" \
             https://packages.broadcom.com/photon/5.0/GA/iso/photon-5.0-dde71ec57.x86_64.iso
@@ -538,6 +542,8 @@ jobs:
             --commit "$RELEASE_SHA" --built-at "$BUILT_AT" --repository "$GITHUB_REPOSITORY"
       - name: Prepare and independently validate offline installer inputs
         if: steps.state.outputs.state == 'absent'
+        env:
+          SNAPSHOT_SHA256: ${{ steps.native-inputs.outputs.snapshot_sha256 }}
         run: |
           mv target-source/dist/release dist/release
           python scripts/prepare_virtualization_source.py \
@@ -550,6 +556,7 @@ jobs:
             --rpms "$RUNNER_TEMP/capture/rpms" --powercli "$RUNNER_TEMP/capture/powercli"
           mkdir "$RUNNER_TEMP/iso-validation"
           "$RUNNER_TEMP/iso-python/bin/python" scripts/build_installation_iso.py validate --commit "$RELEASE_SHA" --version "$VERSION" \
+            --photon-snapshot "$RUNNER_TEMP/photon-snapshot.json" --photon-snapshot-sha256 "$SNAPSHOT_SHA256" \
             --payload "$RUNNER_TEMP/payload" --scratch "$RUNNER_TEMP/iso-validation"
           rm -rf -- "$RUNNER_TEMP/capture" "$RUNNER_TEMP/software" "$RUNNER_TEMP/iso-validation"
           python -m scripts.installation.release_capture check-capacity \
@@ -558,6 +565,7 @@ jobs:
         if: steps.state.outputs.state == 'absent'
         env:
           RELEASE_SIGNING_PRIVATE_KEY: ${{ secrets.RELEASE_SIGNING_PRIVATE_KEY }}
+          SNAPSHOT_SHA256: ${{ steps.native-inputs.outputs.snapshot_sha256 }}
         run: |
           test -n "$RELEASE_SIGNING_PRIVATE_KEY"
           umask 077
@@ -566,6 +574,7 @@ jobs:
           unset RELEASE_SIGNING_PRIVATE_KEY
           mkdir "$RUNNER_TEMP/iso-assets" "$RUNNER_TEMP/iso-build"
           "$RUNNER_TEMP/iso-python/bin/python" scripts/build_installation_iso.py finalize --commit "$RELEASE_SHA" --version "$VERSION" \
+            --photon-snapshot "$RUNNER_TEMP/photon-snapshot.json" --photon-snapshot-sha256 "$SNAPSHOT_SHA256" \
             --payload "$RUNNER_TEMP/payload" --source-iso "$RUNNER_TEMP/photon.iso" \
             --output "$RUNNER_TEMP/iso-assets" --scratch "$RUNNER_TEMP/iso-build" \
             --signing-key "$RUNNER_TEMP/release-signing-key.pem" --bind-software

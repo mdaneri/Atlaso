@@ -1509,59 +1509,75 @@ def _download_photon_repository_document(url: str, maximum_bytes: int) -> bytes:
     return content
 
 
-def _photon_repository_inventory() -> set[tuple[str, str, str, str, str, str]]:
-    """Return exact RPM identities and digests from current official Photon metadata."""
+def _photon_repository_metadata(repository_url: str, metadata_type: str, download=None) -> bytes:
+    """Read a bounded metadata document and verify both hashes from its index.
 
-    inventory: set[tuple[str, str, str, str, str, str]] = set()
+    Args:
+        repository_url: Pinned official Photon repository base URL.
+        metadata_type: Exact requested entry type in the repository index.
+        download: Optional reader of bounded documents from a retained snapshot.
+    """
+    read_document = _download_photon_repository_document if download is None else download
     repository_namespace = {"repo": REPOSITORY_METADATA_NAMESPACE}
+    repomd = read_document(
+        urllib.parse.urljoin(repository_url, "repodata/repomd.xml"), 1024 * 1024
+    )
+    try:
+        root = ET.fromstring(repomd)
+        entry = next(
+            node
+            for node in root.findall("repo:data", repository_namespace)
+            if node.get("type") == metadata_type
+        )
+        checksum_node = entry.find("repo:checksum", repository_namespace)
+        open_checksum_node = entry.find("repo:open-checksum", repository_namespace)
+        location_node = entry.find("repo:location", repository_namespace)
+        open_size_node = entry.find("repo:open-size", repository_namespace)
+        if (
+            checksum_node is None
+            or checksum_node.get("type") != "sha256"
+            or DIGEST_PATTERN.fullmatch(checksum_node.text or "") is None
+            or open_checksum_node is None
+            or open_checksum_node.get("type") != "sha256"
+            or DIGEST_PATTERN.fullmatch(open_checksum_node.text or "") is None
+            or location_node is None
+            or open_size_node is None
+            or int(open_size_node.text or "0") > 64 * 1024 * 1024
+        ):
+            raise ValueError("invalid primary metadata identity")
+        location = location_node.get("href", "")
+        if re.fullmatch(r"repodata/[A-Za-z0-9_.-]+[.]gz", location) is None:
+            raise ValueError("unsafe primary metadata location")
+    except (ET.ParseError, StopIteration, TypeError, ValueError) as exc:
+        raise SystemExit("Photon repository index is invalid") from exc
+    compressed = read_document(
+        urllib.parse.urljoin(repository_url, location), 16 * 1024 * 1024
+    )
+    if hashlib.sha256(compressed).hexdigest() != checksum_node.text:
+        raise SystemExit("Photon primary metadata digest does not match its index")
+    try:
+        with gzip.GzipFile(fileobj=io.BytesIO(compressed)) as archive:
+            document = archive.read(64 * 1024 * 1024 + 1)
+    except (OSError, EOFError) as exc:
+        raise SystemExit("Photon primary metadata is not valid gzip") from exc
+    if (
+        len(document) > 64 * 1024 * 1024
+        or hashlib.sha256(document).hexdigest() != open_checksum_node.text
+    ):
+        raise SystemExit("Photon primary metadata content digest does not match")
+    return document
+
+
+def _photon_repository_inventory(download=None) -> set[tuple[str, str, str, str, str, str]]:
+    """Return exact RPM identities and digests from official Photon metadata.
+
+    Args:
+        download: Optional reader of the exact bounded documents from a retained snapshot.
+    """
+    inventory: set[tuple[str, str, str, str, str, str]] = set()
     common_namespace = {"common": REPOSITORY_COMMON_NAMESPACE}
     for repository_url in PHOTON_REPOSITORY_URLS:
-        repomd = _download_photon_repository_document(
-            urllib.parse.urljoin(repository_url, "repodata/repomd.xml"), 1024 * 1024
-        )
-        try:
-            root = ET.fromstring(repomd)
-            primary = next(
-                node
-                for node in root.findall("repo:data", repository_namespace)
-                if node.get("type") == "primary"
-            )
-            checksum_node = primary.find("repo:checksum", repository_namespace)
-            open_checksum_node = primary.find("repo:open-checksum", repository_namespace)
-            location_node = primary.find("repo:location", repository_namespace)
-            open_size_node = primary.find("repo:open-size", repository_namespace)
-            if (
-                checksum_node is None
-                or checksum_node.get("type") != "sha256"
-                or DIGEST_PATTERN.fullmatch(checksum_node.text or "") is None
-                or open_checksum_node is None
-                or open_checksum_node.get("type") != "sha256"
-                or DIGEST_PATTERN.fullmatch(open_checksum_node.text or "") is None
-                or location_node is None
-                or open_size_node is None
-                or int(open_size_node.text or "0") > 64 * 1024 * 1024
-            ):
-                raise ValueError("invalid primary metadata identity")
-            location = location_node.get("href", "")
-            if not location.startswith("repodata/") or ".." in location.split("/"):
-                raise ValueError("unsafe primary metadata location")
-        except (ET.ParseError, StopIteration, TypeError, ValueError) as exc:
-            raise SystemExit("Photon repository index is invalid") from exc
-        compressed = _download_photon_repository_document(
-            urllib.parse.urljoin(repository_url, location), 16 * 1024 * 1024
-        )
-        if hashlib.sha256(compressed).hexdigest() != checksum_node.text:
-            raise SystemExit("Photon primary metadata digest does not match its index")
-        try:
-            with gzip.GzipFile(fileobj=io.BytesIO(compressed)) as archive:
-                document = archive.read(64 * 1024 * 1024 + 1)
-        except (OSError, EOFError) as exc:
-            raise SystemExit("Photon primary metadata is not valid gzip") from exc
-        if (
-            len(document) > 64 * 1024 * 1024
-            or hashlib.sha256(document).hexdigest() != open_checksum_node.text
-        ):
-            raise SystemExit("Photon primary metadata content digest does not match")
+        document = _photon_repository_metadata(repository_url, "primary", download)
         try:
             primary_root = ET.fromstring(document)
             for package in primary_root.findall("common:package", common_namespace):

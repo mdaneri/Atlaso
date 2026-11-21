@@ -42,6 +42,9 @@ from scripts.installation.manifest import (  # noqa: E402 - direct-script reposi
     inventory,
     verify_media,
 )
+from scripts.installation.photon_snapshot import (  # noqa: E402 - direct-script repository bootstrap.
+    read_pinned_snapshot,
+)
 
 
 def write_signed(path: Path, value: dict, key) -> None:
@@ -85,6 +88,9 @@ def main() -> int:
         command.add_argument("--payload", type=Path, required=True)
     for name in ("software", "rpms", "powercli"):
         prepare.add_argument("--" + name, type=Path, required=True)
+    for command in (validate, finalize):
+        command.add_argument("--photon-snapshot", type=Path)
+        command.add_argument("--photon-snapshot-sha256")
     finalize.add_argument("--source-iso", type=Path, required=True)
     finalize.add_argument("--output", type=Path, required=True, help="Caller-owned empty output directory.")
     finalize.add_argument("--scratch", type=Path, required=True, help="Caller-owned empty validation directory.")
@@ -112,15 +118,21 @@ def main() -> int:
     if args.operation == "prepare":
         prepare_payload(repository=ROOT, commit=args.commit, version=args.version, software=args.software, rpms=args.rpms, powercli=args.powercli, output=args.payload)
         return 0
+    if (args.photon_snapshot is None) != (args.photon_snapshot_sha256 is None):
+        parser.error("the Photon snapshot and its admitted SHA-256 must be supplied together")
+    photon_inventory = (
+        read_pinned_snapshot(args.photon_snapshot, args.photon_snapshot_sha256)
+        if args.photon_snapshot is not None else None
+    )
     if args.operation == "validate":
-        validate_candidate(args.payload, repository=ROOT, commit=args.commit, version=args.version, trust_key=ROOT / f"image/common/update-trust/{KEY_ID}.pem", scratch=args.scratch)
+        validate_candidate(args.payload, repository=ROOT, commit=args.commit, version=args.version, trust_key=ROOT / f"image/common/update-trust/{KEY_ID}.pem", scratch=args.scratch, photon_inventory=photon_inventory)
         return 0
     from scripts.build_virtualization_artifact_index import _load_signing_key
 
     if not args.output.is_dir() or any(args.output.iterdir()) or not args.scratch.is_dir() or any(args.scratch.iterdir()):
         raise ValueError("finalization requires empty caller-owned output and scratch directories")
     trust_key = ROOT / f"image/common/update-trust/{KEY_ID}.pem"
-    validated = validate_candidate(args.payload, repository=ROOT, commit=args.commit, version=args.version, trust_key=trust_key, scratch=args.scratch)
+    validated = validate_candidate(args.payload, repository=ROOT, commit=args.commit, version=args.version, trust_key=trust_key, scratch=args.scratch, photon_inventory=photon_inventory)
     value = json.loads((args.payload / MANIFEST).read_bytes())
     expected = {"schema": 1, "architecture": "x86_64", "version": args.version, "source_commit": args.commit, "signing_key_id": KEY_ID, "photon_installer": "2.2", "photon_installer_sha256": PHOTON_INSTALLER_SHA256, "photon_iso_sha512": SOURCE_ISO_SHA512, "packages": package_selection(args.payload / "source"), "files": inventory(args.payload)}
     if value != expected:
@@ -142,6 +154,8 @@ def main() -> int:
     index = {"schema": 1, "kind": "atlaso-installation", "architecture": "x86_64", "version": args.version, "source_commit": args.commit, "signing_key_id": KEY_ID, "asset_manifest": assets, "verifier": {"name": verifier.name, "size": verifier.stat().st_size, "sha256": digest(verifier)}, "physical_hardware_acceptance": "pending"}
     if args.bind_software:
         index["software_release_manifest_sha256"] = validated["software"]["release_manifest_sha256"]
+    if args.photon_snapshot_sha256 is not None:
+        index["photon_snapshot_sha256"] = args.photon_snapshot_sha256
     write_signed(args.output / "installation-artifact-index.json", index, key)
     print(json.dumps({"version": args.version, "assets": len(assets["assets"]), "physical_hardware_acceptance": "pending"}))
     return 0

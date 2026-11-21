@@ -211,7 +211,7 @@ def test_candidate_admission_requires_exact_lf_repository_configuration(
     monkeypatch.setattr(build, "repository_configuration", lambda *_args: (expected_configuration, expected_repository))
     monkeypatch.setattr("scripts.prepare_virtualization_source.verify_directory",
                         lambda *_args: verified.append("software") or software_identity)
-    monkeypatch.setattr(build, "verify_rpms", lambda *_args: verified.append("rpms") or rpm_records)
+    monkeypatch.setattr(build, "verify_rpms", lambda *_args, **_kwargs: verified.append("rpms") or rpm_records)
     monkeypatch.setattr(build.subprocess, "run", lambda *_args, **_kwargs: verified.append("powercli"))
     arguments = {"repository": tmp_path / "repository", "commit": "a" * 40, "version": "1.2.3",
                  "trust_key": tmp_path / "trust.pem", "scratch": tmp_path}
