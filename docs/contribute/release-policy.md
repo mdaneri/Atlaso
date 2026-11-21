@@ -78,6 +78,24 @@ not implicitly advance an older release; use the exact-SHA software-release disp
 public release already exists, the workflow verifies and reuses its signed assets only after the replay wheel matches
 the bundled wheel byte for byte, preserving the original signed provenance for channel recovery.
 
+The protected appliance release workflow consumes an approved Photon snapshot from its private, digest-pinned
+installation capture archive. The archive binds retained Photon 5.0 repository metadata, including the exact
+`repomd.xml` and primary package metadata, to the original native capture receipt and complete RPM inventory. A
+release job validates metadata and referenced package identities against captured bytes, verifies Photon signatures,
+tests the full offline RPM transaction, and independently checks reviewed runtime inputs, PowerCLI content, the pinned
+boot ISO, and output capacity. This snapshot boundary keeps routine changes to the live Photon updates
+repository from invalidating staging or changing the package bytes selected for a release.
+
+The capture compatibility fingerprint covers declarative installer requirements, including package selection, pinned
+boot ISO identity, Photon signing keys, PowerCLI lock, guest-tools source, and reviewed runtime RPM identities. Changes
+to unrelated provisioning code do not by themselves require a new RPM capture. All release-source and output checks
+remain bound to the exact release commit. A snapshot remains valid for 30 days after its original capture. New Photon
+publications prompt separate drift review and do not block otherwise compatible routine software releases. A changed
+installer requirement, expired snapshot, or withdrawal for an applicable security advisory or signing-trust issue
+blocks new staging until a fresh reviewed capture is admitted and both protected digest pins are rotated together.
+Snapshot-aware production staging requires the new archive format. Earlier workflow revisions and the standalone
+prerelease path retain live upstream-metadata admission.
+
 Release notice generation identifies each wheel from its top-level `.dist-info/METADATA` file. Nested metadata for
 vendored distributions, such as Packaging bundled inside setuptools, cannot establish the wheel's identity even when
 the vendored version also appears in the release lock. Missing or ambiguous top-level locked metadata, missing locked
