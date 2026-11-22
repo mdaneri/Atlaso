@@ -644,7 +644,7 @@ function Test-InstallationCustomPublicState {
         [string]$ExpectedDisk = '', [string]$ExpectedDataDisk = '')
     if ($Text.Length -gt 65536) { throw 'Public Custom history exceeds its bound.' }
     $plain = [regex]::Replace($Text, '\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Z0-9]|\x1b[=>su]', '')
-    if ($plain -cmatch '(?:Set|Confirm) (?:admin|root) password|Password:|Traceback|curses\.error') {
+    if ($plain -cmatch 'Account passwords|(?:Set|Confirm) (?:admin|root) password|Password:|Traceback|curses\.error') {
         throw 'Unexpected private or failed state in public Custom navigation.'
     }
     $rows = @(ConvertFrom-InstallationConsoleFrame -Text $Text)
@@ -958,6 +958,8 @@ Connected private serial pipe.
 Expected public prompt text.
 .PARAMETER Deadline
 Absolute test deadline.
+.PARAMETER ReadAccountLayout
+Return only the recognized current or historical masked account layout.
 .PARAMETER ReadDiskSelection
 Return the complete fixed-fixture public disk rows instead of returning at its title.
 .PARAMETER KnownProvisioningStages
@@ -980,7 +982,7 @@ Public package names derived from the original ISO, admitted before reporting ca
 Fixed disk recipe used only when admitting native disk-selection rows.
 #>
 function Wait-InstallationConsoleState {
-    param([IO.Pipes.NamedPipeServerStream]$Pipe, [string]$Pattern, [DateTimeOffset]$Deadline, [switch]$ReadDiskSelection, [string[]]$KnownProvisioningStages = @(), [switch]$ReadBootProgress, [switch]$ReadLoginProgress, [ValidateSet('', 'root', 'admin')][string]$ShellAccount = '', [string]$ExpectedCapacityDisk = '', [hashtable]$CursorState, [switch]$ReadInspectionReport, [string[]]$AllowedRpmPackages = @(), [ValidateSet('SingleDisk', 'MultiDisk', 'OldSystemLabel')][string]$FixtureProfile = 'SingleDisk')
+    param([IO.Pipes.NamedPipeServerStream]$Pipe, [string]$Pattern, [DateTimeOffset]$Deadline, [switch]$ReadAccountLayout, [switch]$ReadDiskSelection, [string[]]$KnownProvisioningStages = @(), [switch]$ReadBootProgress, [switch]$ReadLoginProgress, [ValidateSet('', 'root', 'admin')][string]$ShellAccount = '', [string]$ExpectedCapacityDisk = '', [hashtable]$CursorState, [switch]$ReadInspectionReport, [string[]]$AllowedRpmPackages = @(), [ValidateSet('SingleDisk', 'MultiDisk', 'OldSystemLabel')][string]$FixtureProfile = 'SingleDisk')
     if ($AllowedRpmPackages.Count -gt 1024) { throw 'Diagnostic package set exceeds its bound.' }
     $allowedPackageHashes = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($name in $AllowedRpmPackages) {
@@ -1169,6 +1171,9 @@ function Wait-InstallationConsoleState {
             if ($plain.Contains('Password must ', [StringComparison]::Ordinal)) {
                 throw 'The installer rejected the concealed credential under its account policy.'
             }
+            if ($plain.Contains('Passwords do not match.', [StringComparison]::Ordinal)) {
+                throw 'The installer reported a concealed credential mismatch.'
+            }
             if ($plain.Contains('Login incorrect', [StringComparison]::Ordinal)) {
                 throw 'Installed password authentication failed.'
             }
@@ -1257,6 +1262,18 @@ function Wait-InstallationConsoleState {
                     }
                     throw ('The installer reported a Python failure before the expected console state. Public location: {0}; {1}.' -f $kind.Groups[1].Value, ($frames -join ', '))
                 }
+            }
+            if ($ReadAccountLayout -and -not $failureDeadline) {
+                if ($plain.Contains('Account passwords', [StringComparison]::Ordinal) -and
+                    $plain.Contains('Confirm admin password', [StringComparison]::Ordinal) -and
+                    $plain.Contains('Confirm root password', [StringComparison]::Ordinal) -and
+                    $plain.Contains('Enter selects or advances. Esc goes back.', [StringComparison]::Ordinal)) {
+                    return 'Form'
+                }
+                if ($plain.Contains('Set admin password', [StringComparison]::Ordinal)) {
+                    return 'Sequential'
+                }
+                continue
             }
             $matched = if ($ShellAccount) { Test-InstallationShellPrompt -Text $plain -Account $ShellAccount }
                 else { $plain.Contains($Pattern, [StringComparison]::Ordinal) }
@@ -1897,13 +1914,20 @@ try {
             # The native horizontal Yes/No menu starts on No. Select Yes only
             # after Auto's native review or Custom's complete strict plan check.
             Send-InstallationConsoleText -Pipe $pipe -Text "`eOD`n"
+            $accountLayout = Wait-InstallationConsoleState -Pipe $pipe -Pattern 'concealed account fields' `
+                -Deadline $deadline -ReadAccountLayout
+            $firstField = $true
             foreach ($account in @('admin', 'root')) {
                 $value = if ($account -eq 'admin') { $credentials.AdminPassword } else { $credentials.RootPassword }
                 foreach ($verb in @('Set', 'Confirm')) {
-                    Wait-InstallationConsoleState -Pipe $pipe -Pattern "$verb $account password" -Deadline $deadline
+                    if ($accountLayout -ceq 'Sequential' -and -not $firstField) {
+                        Wait-InstallationConsoleState -Pipe $pipe -Pattern "$verb $account password" -Deadline $deadline
+                    }
                     Send-InstallationConsoleSecret -Pipe $pipe -Value $value
+                    $firstField = $false
                 }
             }
+            if ($accountLayout -ceq 'Form') { Send-InstallationConsoleText -Pipe $pipe -Text "`n" }
             if ($Scenario -eq 'OldLabelInterrupted') {
                 # This fixed public checkpoint follows native base/grub setup and input staging.
                 # Stop only this original VM; recovery will require another explicit erasure confirmation.

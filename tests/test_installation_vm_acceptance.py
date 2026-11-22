@@ -59,6 +59,44 @@ def test_concealed_credential_prompt_matches_the_expected_account_and_step():
     assert not vm_acceptance.is_credential_prompt("Confirm admin password", "admin", False)
 
 
+@pytest.mark.parametrize("compact_form", [True, False])
+def test_acceptance_enters_passwords_in_the_recognized_installer_layout(tmp_path, monkeypatch, compact_form):
+    """Keep acceptance compatible with existing signed media and the new form.
+
+    Args:
+        tmp_path: Directory for transient screenshot files.
+        monkeypatch: Supplies synthetic OCR and observes concealed input steps.
+        compact_form: Whether the installed media presents the new account form.
+    """
+    form = "Account passwords\nAdmin password\nConfirm admin password\nRoot password\nConfirm root password\nContinue"
+    screens = iter([form] if compact_form else [
+        "Set admin password", "Confirm admin password", "Set root password", "Confirm root password",
+    ])
+    events = []
+    qmp = SimpleNamespace(send_key=lambda key: events.append(key))
+
+    def wait_screen(_qmp, _output, predicate, _label, _seconds):
+        """Make the harness verify the next simulated prompt.
+
+        Args:
+            _qmp: Fake QMP control connection.
+            _output: Test screenshot path.
+            predicate: Required OCR screen predicate.
+            _label: Public checkpoint label.
+            _seconds: Checkpoint time bound.
+        """
+        text = next(screens)
+        assert predicate(text)
+        return text
+
+    monkeypatch.setattr(vm_acceptance, "wait_screen", wait_screen)
+    monkeypatch.setattr(vm_acceptance, "type_text", lambda _qmp, value: events.append(value))
+
+    vm_acceptance.enter_installer_passwords(qmp, tmp_path, {"admin": "fixture-one", "root": "fixture-two"})
+
+    assert events == ["fixture-one", "fixture-one", "fixture-two", "fixture-two"] + (["ret"] if compact_form else [])
+
+
 def test_media_free_probe_verifies_the_native_console_and_installed_metadata():
     assert vm_acceptance.installed_console_ready("Atlaso Appliance 1.0.0\n<F4> Console")
     assert vm_acceptance.installed_console_ready("Manage this appliance at:")

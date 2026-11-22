@@ -324,11 +324,10 @@ otherwise the native console remains available.
 Native logger propagation and Python prints are isolated from the progress terminal; detailed output remains available
 on the separate terminal or in the private volatile log.
 The VM-window installer keeps the kernel's detected terminal size; only the serial harness uses a fixed 80×25 size.
-Concealed account fields accept printable ASCII characters and preserve spaces exactly. Rejected password input is
-cleared before retrying. **Go Back** on confirmation returns to the first password field for that account; **Go Back**
-on the first admin field returns to the full disk review and requires a new **Yes** (the default remains **No**).
-**Go Back** on the first root field returns to admin password entry and discards collected passwords. No disk writes
-occur during these setup screens. Explicitly declining the disk review still cancels installation.
+The **Account passwords** screen collects and confirms both local account passwords in masked fields. Printable ASCII
+including spaces is compared exactly. A validation error identifies the account and returns focus to the affected field.
+**Go Back** discards the form and returns to the full disk review. Choose **Yes** again to continue. No disk writes occur
+during setup screens, and declining the disk review cancels installation.
 **Go Back** from Custom partitioning returns to disk/layout selection and discards the abandoned partition plan.
 For the automated serial-console harness, add `--serial-console` to the development build command to make the serial
 entry the default; both entries remain available. The build result's `console` field records that default as
