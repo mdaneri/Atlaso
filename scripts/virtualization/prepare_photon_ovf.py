@@ -47,20 +47,35 @@ PROPERTIES = (
 
 
 def digest(path: Path, algorithm: str = "sha256") -> str:
-    """Hash one file without loading its payload into memory."""
+    """Hash one file without loading its payload into memory.
+
+    Args:
+        path: File to hash.
+        algorithm: Hash algorithm accepted by hashlib.
+    """
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, algorithm).hexdigest()
 
 
 def disk_info(path: Path, image_format: str) -> dict[str, Any]:
-    """Read the explicit image format and virtual capacity through QEMU."""
+    """Read the explicit image format and virtual capacity through QEMU.
+
+    Args:
+        path: Disk image to inspect.
+        image_format: Explicit QEMU image format.
+    """
     return json.loads(subprocess.check_output(
         ["qemu-img", "info", "--output=json", "-f", image_format, str(path)], timeout=60,
     ))
 
 
 def require_stream_vmdk(path: Path, size: int) -> None:
-    """Accept only a standalone stream-optimized disk of the expected capacity."""
+    """Accept only a standalone stream-optimized disk of the expected capacity.
+
+    Args:
+        path: VMDK to admit.
+        size: Required virtual capacity in bytes.
+    """
     info = disk_info(path, "vmdk")
     details = info["format-specific"]["data"]
     extents = details["extents"]
@@ -77,21 +92,38 @@ def require_stream_vmdk(path: Path, size: int) -> None:
 
 
 def ovf_element(parent: ET.Element, tag: str, text: str = "", **attrs: str) -> ET.Element:
-    """Append an OVF element with namespaced attributes."""
+    """Append an OVF element with namespaced attributes.
+
+    Args:
+        parent: Parent in the descriptor tree.
+        tag: Local OVF element name.
+        text: Optional element text.
+        **attrs: OVF attribute names and values.
+    """
     elem = ET.SubElement(parent, f"{{{OVF}}}{tag}", {f"{{{OVF}}}{key}": val for key, val in attrs.items()})
     elem.text = text or None
     return elem
 
 
 def hardware_item(hardware: ET.Element, **fields: str) -> None:
-    """Write one RASD item in schema order."""
+    """Write one RASD item in schema order.
+
+    Args:
+        hardware: Virtual hardware section receiving the item.
+        **fields: RASD field names and values.
+    """
     item = ovf_element(hardware, "Item")
     for name, value in sorted(fields.items()):
         ET.SubElement(item, f"{{{RASD}}}{name}").text = value
 
 
 def write_ovf(path: Path, sizes: tuple[int, int]) -> None:
-    """Write the four-disk Atlaso descriptor and deployment properties."""
+    """Write the four-disk Atlaso descriptor and deployment properties.
+
+    Args:
+        path: Destination OVF descriptor.
+        sizes: Stored VMDK lengths in Photon and System Content order.
+    """
     for prefix, namespace in (("ovf", OVF), ("rasd", RASD), ("vssd", VSSD), ("vmw", VMW)):
         ET.register_namespace(prefix, namespace)
     root = ET.Element(f"{{{OVF}}}Envelope")
@@ -163,7 +195,15 @@ def write_ovf(path: Path, sizes: tuple[int, int]) -> None:
 
 
 def package(output: Path, version: str, commit: str, build: dict[str, Any], extraction: Path) -> Path:
-    """Assemble, size-check and independently validate the five-member OVA."""
+    """Assemble, size-check and independently validate the five-member OVA.
+
+    Args:
+        output: Directory containing both named payload VMDKs.
+        version: Synchronized Atlaso product version.
+        commit: Full Atlaso source commit.
+        build: Trial builder and guest provenance.
+        extraction: Empty destination for independent validation.
+    """
     payload_sizes = tuple((output / filename).stat().st_size for filename in VMDK_NAMES)
     if any(not 0 < size <= MAXIMUM_GITHUB_ASSET_BYTES for size in payload_sizes):
         raise ValueError("A payload exceeds the GitHub release asset limit")

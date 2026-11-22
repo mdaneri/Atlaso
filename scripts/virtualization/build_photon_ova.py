@@ -57,12 +57,25 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
     """Keep the upstream download on the exact pinned URL."""
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        """Reject redirects, including redirects within the same provider."""
+        """Reject redirects, including redirects within the same provider.
+
+        Args:
+            req: Original download request.
+            fp: Redirect response stream.
+            code: HTTP redirect status.
+            msg: HTTP status message.
+            headers: Redirect response headers.
+            newurl: Proposed destination URL.
+        """
         raise ValueError("The pinned Photon download URL attempted a redirect")
 
 
 def fetch_photon(path: Path) -> None:
-    """Download exactly the pinned amount of data before verifying it."""
+    """Download exactly the pinned amount of data before verifying it.
+
+    Args:
+        path: New local file for the pinned OVA.
+    """
     opener = urllib.request.build_opener(NoRedirect())
     with opener.open(PHOTON_URL, timeout=60) as response, path.open("xb") as output:
         remaining = PHOTON_BYTES
@@ -77,7 +90,12 @@ def fetch_photon(path: Path) -> None:
 
 
 def extract_photon(path: Path, desired_disk: Path) -> None:
-    """Verify the vendor digest and copy only the admitted regular VMDK."""
+    """Verify the vendor digest and copy only the admitted regular VMDK.
+
+    Args:
+        path: Downloaded or cached upstream OVA.
+        desired_disk: New file for the verified archive's only disk.
+    """
     if path.stat().st_size != PHOTON_BYTES or digest(path, "sha512") != PHOTON_SHA512:
         raise ValueError("The Photon OVA does not match the pinned archive")
     with tarfile.open(path, "r:") as archive:
@@ -104,13 +122,26 @@ def extract_photon(path: Path, desired_disk: Path) -> None:
 
 
 def run(*args: str, seconds: int = 600, capture: bool = False) -> str:
-    """Run a bounded host command with an optional captured standard output."""
+    """Run a bounded host command with an optional captured standard output.
+
+    Args:
+        *args: Executable followed by its arguments.
+        seconds: Subprocess deadline in seconds.
+        capture: Return stdout instead of streaming it to the caller's console.
+    """
     result = subprocess.run(args, check=True, timeout=seconds, text=True, stdout=subprocess.PIPE if capture else None)
     return result.stdout or ""
 
 
 def fish(disk: Path, *actions: tuple[str, ...], readonly: bool = False, second: Path | None = None) -> str:
-    """Run bounded libguestfs operations against explicitly formatted images."""
+    """Run bounded libguestfs operations against explicitly formatted images.
+
+    Args:
+        disk: Photon qcow2 disk.
+        *actions: Ordered guestfish commands and their arguments.
+        readonly: Open the images read-only for inspection.
+        second: Optional separate qcow2 content disk.
+    """
     args = ["guestfish", "--ro" if readonly else "--rw", "--format=qcow2", "-a", str(disk)]
     if second is not None:
         args.extend(("--format=qcow2", "-a", str(second)))
@@ -121,7 +152,13 @@ def fish(disk: Path, *actions: tuple[str, ...], readonly: bool = False, second: 
 
 
 def setup_disk(disk: Path, original: Path, source_archive: Path) -> dict[str, str]:
-    """Preserve the Photon partition identifiers, expand root and seed the guest."""
+    """Preserve the Photon partition identifiers, expand root and seed the guest.
+
+    Args:
+        disk: New qcow2 root image to create.
+        original: Verified upstream VMDK.
+        source_archive: Commit-bound Atlaso provisioning files for the guest.
+    """
     run("qemu-img", "convert", "-f", "vmdk", "-O", "qcow2", str(original), str(disk))
     checks = (
         ("part-get-parttype", "/dev/sda"), ("part-get-gpt-guid", "/dev/sda", "2"),
@@ -158,7 +195,14 @@ def setup_disk(disk: Path, original: Path, source_archive: Path) -> dict[str, st
 
 
 def provision(work: Path, disk: Path, content: Path, firmware: Path) -> tuple[dict[str, str], str]:
-    """Provision in QEMU with the same PVSCSI bus and NIC type as the target."""
+    """Provision in QEMU with the same PVSCSI bus and NIC type as the target.
+
+    Args:
+        work: Run-owned scratch directory.
+        disk: Prepared Photon root disk.
+        content: Blank Atlaso System Content disk.
+        firmware: Directory with the OVMF code and variable template.
+    """
     vars_file = work / "ovmf-vars.fd"
     shutil.copyfile(firmware / "OVMF_VARS_4M.fd", vars_file)
     run(
@@ -210,7 +254,14 @@ def provision(work: Path, disk: Path, content: Path, firmware: Path) -> tuple[di
 
 
 def build_artifact(output: Path, scratch: Path, firmware: Path, override: Path | None) -> Path:
-    """Run the trial build and write only validated artifacts to the output."""
+    """Run the trial build and write only validated artifacts to the output.
+
+    Args:
+        output: New directory for validated trial artifacts.
+        scratch: Existing parent for run-owned scratch.
+        firmware: Directory with the OVMF code and variable template.
+        override: Optional existing copy of the pinned Photon archive.
+    """
     if platform.system() != "Linux" or platform.machine() != "x86_64":
         raise ValueError("This build requires x86-64 Linux")
     with Path("/dev/kvm").open("r+b", buffering=0):
@@ -295,6 +346,12 @@ def main() -> int:
         parser.error("--photon-ova must be an existing regular file")
 
     def interrupted(_signal: int, _frame: object) -> None:
+        """Unwind the build so its owned scratch can be released.
+
+        Args:
+            _signal: Received signal number.
+            _frame: Frame where the signal arrived.
+        """
         raise KeyboardInterrupt
 
     signal.signal(signal.SIGTERM, interrupted)

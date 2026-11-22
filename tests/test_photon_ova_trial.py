@@ -18,6 +18,12 @@ NS = {"ovf": OVF, "rasd": RASD}
 
 
 def test_package_preserves_disk_roles_and_runtime_properties(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Validate the archive layout and deployment contract.
+
+    Args:
+        tmp_path: Temporary directory for package and validator output.
+        monkeypatch: Fixture to record disk admission calls.
+    """
     output = tmp_path / "package"
     output.mkdir()
     for name in prepare_photon_ovf.VMDK_NAMES:
@@ -25,6 +31,12 @@ def test_package_preserves_disk_roles_and_runtime_properties(tmp_path: Path, mon
     checked = []
 
     def check_disk(path: Path, size: int) -> None:
+        """Record the requested disk admission.
+
+        Args:
+            path: Payload passed to disk validation.
+            size: Expected virtual capacity in bytes.
+        """
         checked.append((path.name, size))
 
     monkeypatch.setattr(prepare_photon_ovf, "require_stream_vmdk", check_disk)
@@ -61,6 +73,12 @@ def test_package_preserves_disk_roles_and_runtime_properties(tmp_path: Path, mon
 
 
 def test_upstream_digest_is_checked_before_reading_the_tar(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify an invalid digest stops before tar parsing.
+
+    Args:
+        tmp_path: Temporary directory for the upstream fixture.
+        monkeypatch: Fixture to admit the test file length.
+    """
     path = tmp_path / "bad.ova"
     path.write_bytes(b"not a tar file")
     monkeypatch.setattr(build_photon_ova, "PHOTON_BYTES", path.stat().st_size)
@@ -70,6 +88,13 @@ def test_upstream_digest_is_checked_before_reading_the_tar(tmp_path: Path, monke
 
 @pytest.mark.parametrize("kind", ("traversal", "link", "duplicate"))
 def test_upstream_member_inventory_fails_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str) -> None:
+    """Reject an unsafe member before writing the payload.
+
+    Args:
+        tmp_path: Temporary directory for the upstream fixture.
+        monkeypatch: Fixture to admit its length and checksum.
+        kind: Unsafe member shape to exercise.
+    """
     path = tmp_path / "bad.ova"
     name = "../photon-ova.ovf" if kind == "traversal" else "photon-ova.ovf"
     with tarfile.open(path, "w") as archive:
