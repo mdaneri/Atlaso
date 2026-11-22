@@ -3,7 +3,8 @@ set -eu
 
 build=/var/tmp/atlaso-ova-build
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
-export ATLASO_SRC=/tmp/atlaso-src
+# The sources must survive the kernel-switch reboot even when /tmp is tmpfs.
+export ATLASO_SRC="$build/source"
 if [ ! -e "$build/generic-kernel-ready" ]; then
     # The official image boots linux-esx. The canonical appliance uses the
     # generic Photon kernel to support VMware and the portable import targets.
