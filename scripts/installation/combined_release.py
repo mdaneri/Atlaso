@@ -18,7 +18,7 @@ from scripts.publish_release import run
 from scripts.verify_installation_iso import verify_release
 
 FIRST_INSTALLATION_VERSION = (0, 9, 506)
-FIRST_PRERELEASE_VERSION = (1, 0, 0)
+FIRST_PRERELEASE_VERSION = (0, 9, 517)
 EXISTING_INSTALLER = ("v0.9.516", "623e6c40069062c2a2e8a0f11a1e9f9897dc5526")
 EXISTING_INSTALLER_SHA256 = "b6bfcb1a7af1beaf9d3eb00e71cddc3ab692f0dbcf6a5f0c74d7fb0b8d27bef3"
 VERSION = re.compile(r"v([0-9]+)\.([0-9]+)\.([0-9]+)")
@@ -321,7 +321,7 @@ def stage(repo: str, tag: str, commit: str, directory: Path, scratch: Path) -> s
     if get_release(repo, tag) is not None:
         raise ValueError("release already exists; preserve it and retry verification")
     if version_key(tag) < FIRST_PRERELEASE_VERSION:
-        raise ValueError("new installer releases require version 1.0.0 or later")
+        raise ValueError("new installer releases require version 0.9.517 or later")
     scratch.mkdir()
     iso = release_assets(directory, scratch, tag, commit)
     assert iso is not None
@@ -481,7 +481,7 @@ def publish(
         raise ValueError("release state changed during verification")
     if current["draft"]:
         if version_key(tag) < FIRST_PRERELEASE_VERSION and (tag, commit) != EXISTING_INSTALLER:
-            raise ValueError("new public releases require version 1.0.0 or later")
+            raise ValueError("this historical installer cannot be newly published")
         evidence = f"https://github.com/{repo}/actions/runs/{run_id}/attempts/{run_attempt}"
         body = (current["body"] or "") + (
             f"\n\nValidated installer SHA-256: `{iso}`\n\n"

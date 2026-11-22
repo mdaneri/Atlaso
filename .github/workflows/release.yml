@@ -115,7 +115,7 @@ jobs:
           VERSION="$(git show "${RELEASE_SHA}:pyproject.toml" | python -c 'import sys,tomllib; print(tomllib.loads(sys.stdin.read())["project"]["version"])')"
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           ELIGIBLE=true
-          if test "${{ github.event_name }}" = workflow_run && [[ "$VERSION" == 0.* ]]; then
+          if test "${{ github.event_name }}" = workflow_run && dpkg --compare-versions "$VERSION" lt 0.9.517; then
             ELIGIBLE=false
           fi
           echo "eligible=$ELIGIBLE" >> "$GITHUB_OUTPUT"

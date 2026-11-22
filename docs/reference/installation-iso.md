@@ -194,8 +194,9 @@ Set `OP_ENVIRONMENT_ID` to the dedicated `Atlaso Installer CI` 1Password Environ
 account token as `OP_SERVICE_ACCOUNT_TOKEN`. Scope the service account to that Environment and leave vault access
 empty. Follow the [credential policy](../contribute/credential-policy.md) for the VM credentials.
 
-For stable promotion, record disconnected UEFI installation, boot without media, Appliance Update and rollback
-persistence, unselected-disk preservation and representative physical hardware results for the exact signed ISO.
+Only versions `1.0.0` and later can advance `stable`. Record disconnected UEFI installation, boot without media,
+Appliance Update and rollback persistence, unselected-disk preservation and representative physical hardware results
+for the exact signed ISO.
 A maintainer posts those results and the full ISO SHA-256 in an issue or PR comment with a separate line reading
 `Representative physical acceptance: PASS`. Dispatch **Promote appliance release** from `main` with `stable`, the
 version without its `v` prefix and the comment URL as `physical_acceptance_evidence`. The workflow revalidates the
