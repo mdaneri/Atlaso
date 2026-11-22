@@ -703,6 +703,77 @@ def test_storage_review_serializes_changed_manifest_identity(client, monkeypatch
     assert after_storage["format_volumes"] == before_storage["format_volumes"]
     assert after_storage["snapshot_hash"] != before_storage["snapshot_hash"]
     assert after["plan_token"] != before["plan_token"]
+
+
+def test_volume_only_storage_is_reviewable_with_format_confirmation(client, monkeypatch):
+    """Review a saved blank volume without a datastore and reject missing format consent."""
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import EsxStorageVolume, Job
+
+    login(client)
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+
+    with SessionLocal() as db:
+        dns = ui.get_dns_settings_row(db)
+        dns.enabled = False
+        storage_settings = ui.get_esx_storage_settings_row(db)
+        storage_settings.enabled = False
+        storage_settings.hostname = "nfs"
+        initial_units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(
+            db,
+            initial_units,
+            {unit["id"] for unit in initial_units},
+        )
+        db.add(
+            EsxStorageVolume(
+                name="review-only",
+                source_type="blank_disk",
+                stable_device_id="/dev/disk/by-id/wwn-review-only",
+                device_model="Virtual disk",
+                capacity_bytes=10 * 1024**3,
+                mount_path="/mnt/atlaso-esx-storage/review-only",
+                state="pending_format",
+                applied=False,
+            )
+        )
+        storage_settings.enabled = True
+        db.commit()
+
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: pytest.fail("invalid job executed"))
+    preview = client.get("/appliance-apply/review?selected_units=esx_storage")
+
+    assert preview.status_code == 200, preview.text
+    plan = preview.json()
+    assert not plan["plan_error"]
+    storage = next(unit for unit in plan["units"] if unit["id"] == "esx_storage")
+    assert storage["changed"] is True
+    assert storage["valid"] is True
+    assert storage["selected"] is True
+    assert storage["format_volumes"][0]["confirmation"] == "FORMAT review-only"
+
+    with SessionLocal() as db:
+        job_count = db.query(Job).filter(Job.type == "appliance-apply").count()
+
+    response = client.post(
+        "/appliance-apply",
+        data={
+            "csrf": csrf,
+            "reviewed_plan": plan["plan_token"],
+            "requested_units": plan["requested_units"],
+            "selected_units": [unit["id"] for unit in plan["units"] if unit["selected"]],
+        },
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 422
+    assert "FORMAT review-only" in response.json()["detail"]
+    with SessionLocal() as db:
+        assert db.query(Job).filter(Job.type == "appliance-apply").count() == job_count
+
+
 @pytest.mark.parametrize("wants_json", [False, True])
 def test_tokenless_apply_refuses_current_state_after_review(client, monkeypatch, wants_json):
     """Old assets and form clients cannot submit unreviewed current snapshots.

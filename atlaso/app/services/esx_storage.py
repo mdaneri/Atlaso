@@ -348,16 +348,14 @@ def validate_storage_state(
         The validate storage state result.
     """
     errors: list[str] = []
-    warnings: list[str] = []
-    if settings.enabled and not dns_enabled:
-        errors.append("DNS desired state must be enabled before ESX Storage can be applied.")
-    if settings.enabled and "." not in settings.hostname.strip().rstrip("."):
-        errors.append("ESX Storage service hostname must be a fully qualified DNS name.")
-    if settings.enabled and not any(share.enabled for share in shares):
-        errors.append("Enable at least one NFS datastore share.")
+    enabled_shares = [share for share in shares if share.enabled]
+    if settings.enabled and enabled_shares:
+        if not dns_enabled:
+            errors.append("DNS desired state must be enabled before publishing ESX Storage datastores.")
+        if "." not in settings.hostname.strip().rstrip("."):
+            errors.append("ESX Storage service hostname must be a fully qualified DNS name.")
 
     volume_by_id = {volume.id: volume for volume in volumes}
-    enabled_shares = [share for share in shares if share.enabled]
     seen_names: set[str] = set()
     for share in enabled_shares:
         name_key = share.datastore_name.strip().casefold()
@@ -413,9 +411,7 @@ def validate_storage_state(
                 validate_mounted_volume_path(volume.mount_path)
             except ValueError as exc:
                 errors.append(f"Existing volume {volume.name}: {exc}")
-        if not any(share.volume_id == volume.id for share in enabled_shares):
-            warnings.append(f"Volume {volume.name} has no enabled datastore share.")
-    return list(dict.fromkeys(errors)), list(dict.fromkeys(warnings))
+    return list(dict.fromkeys(errors)), []
 
 
 def render_manifest(
