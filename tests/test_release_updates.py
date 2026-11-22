@@ -1470,7 +1470,7 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "<script" not in publication
     assert publication.count("ref: ${{ needs.prepare.outputs.release_sha }}") == 2
     assert publication.count("actions/upload-artifact@v7") >= 3
-    assert publication.count("actions/download-artifact@v8") == 3
+    assert publication.count("actions/download-artifact@v8") == 4
     assert "python scripts/wheel_artifact.py select" in publication
     assert "--publisher-trigger automatic-main" in publication
     assert "--application-wheel-root ../dist/application-wheel" in publication
@@ -1523,8 +1523,10 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "persist-credentials: false" in prepare_job
     assert "name: validated-release-request" in prepare_job
     assert "retention-days: 1" in prepare_job
-    assert "actions/workflows/ci.yml/runs" in prepare_job
-    assert prepare_job.index('if test -n "$VALIDATED_ISO_SHA256"') < prepare_job.index("actions/workflows/ci.yml/runs")
+    assert 'git merge-base --is-ancestor "$RELEASE_SHA" origin/main' in prepare_job
+    assert '[[ "$VERSION" == 0.* ]]' in prepare_job
+    assert "ELIGIBLE=false" in prepare_job
+    assert "validated_iso_sha256:" not in publication
     assert "github.event.workflow_run.head_sha" not in prepare_job
     assert "CANDIDATE_ARTIFACTS=" in prepare_job
     assert "while IFS=$'\\t' read -r ARTIFACT_ID ARTIFACT_NAME; do" in prepare_job
@@ -1536,9 +1538,11 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert 'test "$SELECTED_ARTIFACT_NAME" = "atlaso-wheel-v${VERSION}-${RELEASE_SHA}"' in prepare_job
     assert 'test "$SELECTED_WHEEL" = "atlaso-${VERSION}-py3-none-any.whl"' in prepare_job
     assert "if length == 1 then .[0].id else empty end" not in prepare_job
-    publish_job = publication.split("  publish:\n", 1)[1]
+    publish_job, development_job = publication.split("  publish:\n", 1)[1].split("  development:\n", 1)
     assert 'ref: ${{ github.workflow_sha }}' in publish_job
-    stage_job = publication.split("  stage:\n", 1)[1].split("  publish:\n", 1)[0]
+    stage_job, acceptance_job = publication.split("  stage:\n", 1)[1].split("  publish:\n", 1)[0].split(
+        "  acceptance:\n", 1
+    )
     assert "group: atlaso-github-pages" not in stage_job
     wheelhouse_job = publication.split("  wheelhouse:\n", 1)[1].split(
         "  release_inputs:\n", 1
@@ -1558,7 +1562,9 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "Check whether the exact release exists" in release_inputs_job
     assert "actions/upload-artifact@v7" in release_inputs_job
     assert "retention-days: 1" in release_inputs_job
-    assert "group: atlaso-github-pages" in publish_job
+    assert "group: atlaso-github-pages" not in publish_job
+    assert "group: atlaso-github-pages" in development_job
+    assert "needs: [prepare, publish]" in development_job
     assert "actions/download-artifact@v8" in stage_job
     assert "needs.prepare.result == 'success'" in stage_job
     assert "needs.release_inputs.result == 'success'" in stage_job
@@ -1566,10 +1572,21 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
         "needs.release_inputs.outputs.existing_release == 'true' || "
         "needs.wheelhouse.result == 'success'"
     ) in stage_job
-    assert "needs.prepare.outputs.approve == 'true'" in publish_job
+    assert "github.ref == 'refs/heads/main'" in acceptance_job
+    assert "runs-on: ubuntu-24.04" in acceptance_job
+    assert "environment: installation-acceptance" in acceptance_job
+    assert "RELEASE_SIGNING_PRIVATE_KEY" not in acceptance_job
+    assert "verify_installation_iso.py" in acceptance_job
+    assert "python -m scripts.installation.vm_acceptance" in acceptance_job
+    attempt_receipt = "name: vm-acceptance-${{ github.run_id }}-${{ github.run_attempt }}"
+    assert attempt_receipt in acceptance_job
+    assert attempt_receipt in publish_job
+    assert "needs: [prepare, stage, acceptance]" in publish_job
+    assert "needs.acceptance.result == 'success'" in publish_job
     assert "needs.stage.outputs.legacy == 'true'" in publish_job
+    assert '--vm-acceptance "$RUNNER_TEMP/acceptance/vm-acceptance.json"' in publish_job
     assert "combined_release publish" in publish_job
-    assert publish_job.index("combined_release publish") < publish_job.index("Advance the signed development channel")
+    assert "Advance the signed development channel" in development_job
     assert "Resolve the immutable automatic wheel handoff" not in publish_job
     assert "actions/artifacts?name=" not in publish_job
     assert publication.count('test "$(jq -r .event <<<"$') >= 3
@@ -1709,6 +1726,10 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert '--site-root "$SITE_ROOT/updates"' in publication
     assert "gh release download" in promotion
     assert "build_release_bundle.py" not in promotion
+    assert "physical_acceptance_evidence:" in promotion
+    assert "combined_release physical" in promotion
+    assert "needs.admit.outputs.release_fingerprint" in promotion
+    assert "promote_stable_release" in promotion
     assert "--expected-version \"$RELEASE_VERSION\"" in promotion
     assert "python scripts/check_published_release_channel.py" in promotion
     assert '--expected-channel "$RELEASE_CHANNEL"' in promotion

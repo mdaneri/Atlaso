@@ -14,18 +14,107 @@ on:
         description: Existing Atlaso release version without the v prefix
         required: true
         type: string
+      physical_acceptance_evidence:
+        description: Maintainer issue or PR comment confirming physical acceptance for a stable promotion
+        required: false
+        type: string
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: appliance-promotion-${{ inputs.channel }}
   cancel-in-progress: false
 
 jobs:
+  admit:
+    name: Verify stable release acceptance
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      physical_iso_sha256: ${{ steps.acceptance.outputs.physical_iso_sha256 }}
+      release_commit: ${{ steps.acceptance.outputs.release_commit }}
+      release_manifest_sha256: ${{ steps.acceptance.outputs.release_manifest_sha256 }}
+      release_fingerprint: ${{ steps.acceptance.outputs.release_fingerprint }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - name: Validate release identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          ACCEPTANCE_EVIDENCE: ${{ inputs.physical_acceptance_evidence }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          if test "$RELEASE_CHANNEL" = stable; then
+            test -n "$ACCEPTANCE_EVIDENCE"
+            ROLE="$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$TRIGGERING_ACTOR/permission" --jq .role_name)"
+            case "$ROLE" in admin|maintain) ;; *) echo '::error::Stable promotion requires a repository maintainer.'; exit 1 ;; esac
+          fi
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+      - name: Install locked release tooling
+        env:
+          PIP_CONFIG_FILE: /dev/null
+        run: python -m pip install --require-hashes --requirement requirements-release-tools.lock
+      - name: Verify exact physical acceptance for stable promotion
+        id: acceptance
+        if: inputs.channel == 'stable'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          INSTALLATION_ACCEPTANCE_EVIDENCE: ${{ inputs.physical_acceptance_evidence }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          RELEASE="$(gh release view "v${RELEASE_VERSION}" --json isDraft,isPrerelease)"
+          test "$(jq -r .isDraft <<<"$RELEASE")" = false
+          case "$(jq -r .isPrerelease <<<"$RELEASE")" in true|false) ;; *) exit 1 ;; esac
+          TAG_REF="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v${RELEASE_VERSION}")"
+          TAG_OBJECT="$(jq -r .object.sha <<<"$TAG_REF")"
+          if test "$(jq -r .object.type <<<"$TAG_REF")" = tag; then
+            RELEASE_COMMIT="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$TAG_OBJECT" --jq .object.sha)"
+          else
+            RELEASE_COMMIT="$TAG_OBJECT"
+          fi
+          VERIFY_ROOT="$RUNNER_TEMP/installation-physical-acceptance"
+          mkdir "$VERIFY_ROOT"
+          ASSETS="$VERIFY_ROOT/assets"
+          SCRATCH="$VERIFY_ROOT/scratch"
+          ISO_SHA256="$(python -m scripts.installation.combined_release physical \
+            --tag "v${RELEASE_VERSION}" --commit "$RELEASE_COMMIT" \
+            --assets "$ASSETS" --scratch "$SCRATCH" \
+            --release-fingerprint "$VERIFY_ROOT/release-fingerprint")"
+          [[ "$ISO_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          RELEASE_FINGERPRINT="$(cat "$VERIFY_ROOT/release-fingerprint")"
+          [[ "$RELEASE_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]
+          jq -e --arg version "$RELEASE_VERSION" --arg commit "$RELEASE_COMMIT" \
+            '.version == $version and .git_commit == $commit' \
+            "$ASSETS/release-manifest.json" >/dev/null
+          MANIFEST_SHA256="$(sha256sum "$ASSETS/release-manifest.json" | cut -d ' ' -f 1)"
+          echo "physical_iso_sha256=$ISO_SHA256" >> "$GITHUB_OUTPUT"
+          echo "release_commit=$RELEASE_COMMIT" >> "$GITHUB_OUTPUT"
+          echo "release_manifest_sha256=$MANIFEST_SHA256" >> "$GITHUB_OUTPUT"
+          echo "release_fingerprint=$RELEASE_FINGERPRINT" >> "$GITHUB_OUTPUT"
+
   promote:
     name: Promote existing signed release
     runs-on: ubuntu-latest
+    needs: admit
+    if: always() && needs.admit.result == 'success'
+    permissions:
+      contents: write
     concurrency:
       group: atlaso-github-pages
       queue: max
@@ -33,6 +122,9 @@ jobs:
     environment: appliance-release
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
       - uses: actions/setup-python@v7
         with:
           python-version: '3.14'
@@ -50,6 +142,41 @@ jobs:
             --pattern release-manifest.json \
             --pattern release-manifest.json.sig \
             --dir release
+      - name: Revalidate stable release identity before Pages promotion
+        if: inputs.channel == 'stable'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          ADMITTED_COMMIT: ${{ needs.admit.outputs.release_commit }}
+          ADMITTED_MANIFEST_SHA256: ${{ needs.admit.outputs.release_manifest_sha256 }}
+          ADMITTED_RELEASE_FINGERPRINT: ${{ needs.admit.outputs.release_fingerprint }}
+        run: |
+          set -euo pipefail
+          [[ "$ADMITTED_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$ADMITTED_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$ADMITTED_RELEASE_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]
+          test "$(sha256sum release/release-manifest.json | cut -d ' ' -f 1)" = "$ADMITTED_MANIFEST_SHA256"
+          jq -e --arg version "$RELEASE_VERSION" --arg commit "$ADMITTED_COMMIT" \
+            '.version == $version and .git_commit == $commit' \
+            release/release-manifest.json >/dev/null
+          TAG_REF="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v${RELEASE_VERSION}")"
+          TAG_OBJECT="$(jq -r .object.sha <<<"$TAG_REF")"
+          if test "$(jq -r .object.type <<<"$TAG_REF")" = tag; then
+            LIVE_COMMIT="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$TAG_OBJECT" --jq .object.sha)"
+          else
+            LIVE_COMMIT="$TAG_OBJECT"
+          fi
+          test "$LIVE_COMMIT" = "$ADMITTED_COMMIT"
+          RELEASE="$(gh release view "v${RELEASE_VERSION}" --json isDraft)"
+          test "$(jq -r .isDraft <<<"$RELEASE")" = false
+          python -m scripts.installation.promote_stable_release \
+            --tag "v${RELEASE_VERSION}" \
+            --commit "$ADMITTED_COMMIT" \
+            --manifest release/release-manifest.json \
+            --manifest-sha256 "$ADMITTED_MANIFEST_SHA256" \
+            --fingerprint "$ADMITTED_RELEASE_FINGERPRINT" \
+            --verify-only
       - name: Materialize the protected signing key
         env:
           RELEASE_SIGNING_PRIVATE_KEY: ${{ secrets.RELEASE_SIGNING_PRIVATE_KEY }}
@@ -59,9 +186,14 @@ jobs:
           printf '%s\n' "$RELEASE_SIGNING_PRIVATE_KEY" > "$RUNNER_TEMP/release-signing-key.pem"
       - name: Verify and promote without rebuilding
         env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
           RELEASE_CHANNEL: ${{ inputs.channel }}
           RELEASE_VERSION: ${{ inputs.version }}
           RELEASE_KEY_ID: atlaso-release-2026-01
+          RELEASE_COMMIT: ${{ needs.admit.outputs.release_commit }}
+          RELEASE_MANIFEST_SHA256: ${{ needs.admit.outputs.release_manifest_sha256 }}
+          RELEASE_FINGERPRINT: ${{ needs.admit.outputs.release_fingerprint }}
         run: |
           SITE_ROOT="$RUNNER_TEMP/site"
           git clone --branch gh-pages --single-branch \
@@ -86,17 +218,53 @@ jobs:
           git -C "$SITE_ROOT" config user.name github-actions[bot]
           git -C "$SITE_ROOT" config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git -C "$SITE_ROOT" commit -m "Promote v${RELEASE_VERSION} to ${RELEASE_CHANNEL}"
+          if test "$RELEASE_CHANNEL" = stable; then
+            python -m scripts.installation.promote_stable_release \
+              --tag "v${RELEASE_VERSION}" \
+              --commit "$RELEASE_COMMIT" \
+              --manifest release/release-manifest.json \
+              --manifest-sha256 "$RELEASE_MANIFEST_SHA256" \
+              --fingerprint "$RELEASE_FINGERPRINT" \
+              --verify-only
+          fi
           git -C "$SITE_ROOT" push origin HEAD:gh-pages
       - name: Verify the published signed channel
         env:
           RELEASE_CHANNEL: ${{ inputs.channel }}
           RELEASE_KEY_ID: atlaso-release-2026-01
           RELEASE_VERSION: ${{ inputs.version }}
+          PHYSICAL_ISO_SHA256: ${{ needs.admit.outputs.physical_iso_sha256 }}
+          ADMITTED_RELEASE_COMMIT: ${{ needs.admit.outputs.release_commit }}
         run: |
+          if test "$RELEASE_CHANNEL" = stable; then
+            [[ "$PHYSICAL_ISO_SHA256" =~ ^[0-9a-f]{64}$ ]]
+            [[ "$ADMITTED_RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+            printf 'Representative physical acceptance passed for ISO SHA-256 `%s`.\n' \
+              "$PHYSICAL_ISO_SHA256" >> "$GITHUB_STEP_SUMMARY"
+          fi
           RELEASE_COMMIT="$(python -c 'import json; print(json.load(open("release/release-manifest.json", encoding="utf-8"))["git_commit"])')"
+          if test "$RELEASE_CHANNEL" = stable && test "$RELEASE_COMMIT" != "$ADMITTED_RELEASE_COMMIT"; then
+            exit 1
+          fi
           python scripts/check_published_release_channel.py \
             --channel-url "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/updates/channels/${RELEASE_CHANNEL}/manifest.json" \
             --expected-channel "$RELEASE_CHANNEL" \
             --expected-version "$RELEASE_VERSION" \
             --expected-commit "$RELEASE_COMMIT" \
             --trusted-key "image/common/update-trust/${RELEASE_KEY_ID}.pem"
+      - name: Publish the accepted GitHub release as stable
+        if: inputs.channel == 'stable'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_COMMIT: ${{ needs.admit.outputs.release_commit }}
+          RELEASE_MANIFEST_SHA256: ${{ needs.admit.outputs.release_manifest_sha256 }}
+          RELEASE_FINGERPRINT: ${{ needs.admit.outputs.release_fingerprint }}
+        run: |
+          python -m scripts.installation.promote_stable_release \
+            --tag "v${RELEASE_VERSION}" \
+            --commit "$RELEASE_COMMIT" \
+            --manifest release/release-manifest.json \
+            --manifest-sha256 "$RELEASE_MANIFEST_SHA256" \
+            --fingerprint "$RELEASE_FINGERPRINT"

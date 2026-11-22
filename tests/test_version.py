@@ -339,20 +339,51 @@ def test_check_does_not_treat_normalized_distribution_spelling_as_rename(
         versioning.check(target, base)
 
 
-def test_check_allows_approved_pre_ga_release_line_transition(tmp_path):
-    """Verify that check allows approved pre ga release line transition.
+def test_check_allows_approved_ga_release_line_transition(tmp_path):
+    """Verify that check allows the 0.9.x to 1.0.0 release transition.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     base = tmp_path / "base"
     target = tmp_path / "target"
-    write_version_sources(base, "0.1.11")
-    write_version_sources(target, "0.9.0")
+    write_version_sources(base, "0.9.517")
+    write_version_sources(target, "1.0.0")
 
-    assert versioning.check(target, base) == versioning.Version(0, 9, 0)
+    assert versioning.check(target, base) == versioning.Version(1, 0, 0)
     bumped, changed = versioning.bump(target, base)
-    assert (str(bumped), changed) == ("0.9.0", False)
+    assert (str(bumped), changed) == ("1.0.0", False)
+
+
+def test_bump_accepts_explicit_ga_release_line_transition(tmp_path):
+    """Verify that the canonical explicit bump supports the approved transition.
+
+    Args:
+        tmp_path: Directory for synchronized version files.
+    """
+    write_version_sources(tmp_path, "0.9.517")
+
+    bumped, changed = versioning.bump(tmp_path, target_version=versioning.Version(1, 0, 0))
+
+    assert (str(bumped), changed) == ("1.0.0", True)
+    assert versioning.consistent_version(tmp_path) == bumped
+
+
+@pytest.mark.parametrize("base_version", ["0.8.99", "1.0.0"])
+def test_check_rejects_ga_transition_from_other_release_line(tmp_path, base_version):
+    """Verify that 1.0.0 is not a generic major-version jump.
+
+    Args:
+        tmp_path: Directory for paired base and target version files.
+        base_version: Base release outside the permitted 0.9-to-1.0 transition.
+    """
+    base = tmp_path / "base"
+    target = tmp_path / "target"
+    write_version_sources(base, base_version)
+    write_version_sources(target, "1.0.0")
+
+    with pytest.raises(versioning.VersionError, match="PR version must"):
+        versioning.check(target, base)
 
 
 def test_bump_rejects_unexpected_target_version(tmp_path):

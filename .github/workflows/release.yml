@@ -12,14 +12,6 @@ on:
         description: Successful main CI commit to publish or recover
         required: true
         type: string
-      validated_iso_sha256:
-        description: Exact staged ISO SHA-256 approved after installation acceptance (leave blank to stage)
-        required: false
-        type: string
-      installation_acceptance_evidence:
-        description: Atlaso issue or PR URL recording acceptance for that exact ISO
-        required: false
-        type: string
 
 permissions:
   actions: read
@@ -46,7 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       release_sha: ${{ steps.target.outputs.release_sha }}
-      approve: ${{ steps.target.outputs.approve }}
+      eligible: ${{ steps.target.outputs.eligible }}
       version: ${{ steps.target.outputs.version }}
     steps:
       - name: Check out protected main admission tooling
@@ -60,9 +52,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_SHA: ${{ inputs.release_sha }}
-          VALIDATED_ISO_SHA256: ${{ inputs.validated_iso_sha256 }}
-          INSTALLATION_ACCEPTANCE_EVIDENCE: ${{ inputs.installation_acceptance_evidence }}
-          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
           PUBLISHER_RUN_ID: ${{ github.event.workflow_run.id }}
           PUBLISHER_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
         run: |
@@ -125,20 +114,11 @@ jobs:
           git merge-base --is-ancestor "$RELEASE_SHA" origin/main
           VERSION="$(git show "${RELEASE_SHA}:pyproject.toml" | python -c 'import sys,tomllib; print(tomllib.loads(sys.stdin.read())["project"]["version"])')"
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          APPROVE=false
-          if test -n "$VALIDATED_ISO_SHA256" || test -n "$INSTALLATION_ACCEPTANCE_EVIDENCE"; then
-            [[ "$VALIDATED_ISO_SHA256" =~ ^[0-9a-f]{64}$ ]]
-            test -n "$INSTALLATION_ACCEPTANCE_EVIDENCE"
-            ROLE="$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$TRIGGERING_ACTOR/permission" --jq .role_name)"
-            case "$ROLE" in admin|maintain) ;; *) echo '::error::ISO acceptance requires a repository maintainer.'; exit 1 ;; esac
-            RUNS="$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" \
-              -f head_sha="$RELEASE_SHA" -f branch=main -f event=push -f status=success -f per_page=100)"
-            jq -e --arg sha "$RELEASE_SHA" --arg repo "$GITHUB_REPOSITORY" \
-              'any(.workflow_runs[]; .head_sha == $sha and .head_repository.full_name == $repo and
-                .head_branch == "main" and .event == "push" and .conclusion == "success")' <<<"$RUNS"
-            APPROVE=true
+          ELIGIBLE=true
+          if test "${{ github.event_name }}" = workflow_run && [[ "$VERSION" == 0.* ]]; then
+            ELIGIBLE=false
           fi
-          echo "approve=$APPROVE" >> "$GITHUB_OUTPUT"
+          echo "eligible=$ELIGIBLE" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           printf '{"release_sha":"%s"}\n' "$RELEASE_SHA" > validated-release-request.json
           echo "release_sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
@@ -205,7 +185,7 @@ jobs:
     name: Resolve immutable release inputs
     needs:
       - prepare
-    if: needs.prepare.outputs.approve != 'true'
+    if: needs.prepare.outputs.eligible == 'true'
     runs-on: ubuntu-latest
     outputs:
       existing_release: ${{ steps.existing_release.outputs.present }}
@@ -386,6 +366,7 @@ jobs:
       contents: write
     outputs:
       legacy: ${{ steps.state.outputs.legacy }}
+      iso_assets: ${{ steps.iso-assets.outputs.inventory }}
     env:
       RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
       VERSION: ${{ needs.prepare.outputs.version }}
@@ -580,7 +561,7 @@ jobs:
             --signing-key "$RUNNER_TEMP/release-signing-key.pem" --bind-software
           mv "$RUNNER_TEMP/iso-assets/"* dist/release/
           rm -- "$RUNNER_TEMP/iso-build/atlaso-installation-$VERSION-x86_64.iso"
-      - name: Stage combined draft and report the approval checksum
+      - name: Stage combined draft and record its checksum
         if: steps.state.outputs.state == 'absent'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -588,16 +569,159 @@ jobs:
           ISO="$(python -m scripts.installation.combined_release stage --tag "v$VERSION" --commit "$RELEASE_SHA" \
             --assets dist/release --scratch "$RUNNER_TEMP/verify-staged")"
           printf 'Staged draft %s. ISO SHA-256: \`%s\`\n' "v$VERSION" "$ISO" >> "$GITHUB_STEP_SUMMARY"
+      - name: Select private draft asset IDs for the acceptance runner
+        id: iso-assets
+        if: steps.state.outputs.legacy != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          INVENTORY="$(python -m scripts.installation.combined_release iso-assets --tag "v$VERSION" --commit "$RELEASE_SHA")"
+          echo "inventory=$INVENTORY" >> "$GITHUB_OUTPUT"
+
+  acceptance:
+    name: Test the exact signed installer in a disconnected UEFI VM
+    needs: [prepare, stage]
+    if: github.ref == 'refs/heads/main' && needs.stage.outputs.legacy != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 165
+    environment: installation-acceptance
+    permissions:
+      # GitHub requires this scope to read private draft assets (HTTP 403 with read).
+      # Only the download step receives the token. This job has no signing secrets.
+      contents: write
+    env:
+      RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Check out protected acceptance tooling
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+      - name: Install QEMU, UEFI firmware and console recognition tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends qemu-system-x86 qemu-utils ovmf tesseract-ocr
+      - name: Download and verify the signed ISO from the private draft
+        id: iso
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INVENTORY: ${{ needs.stage.outputs.iso_assets }}
+        run: |
+          ASSETS="$RUNNER_TEMP/iso-assets"
+          mkdir "$ASSETS"
+          jq -e 'type == "array" and length >= 4 and all(.[];
+            (.id | type == "number" and . > 0) and
+            (.name | test("^(installation-artifact-index\\.json(\\.sig)?|verify-installation\\.pyz|atlaso-installation-[0-9.]+-x86_64\\.iso(\\.part[0-9]{4})?)$")) and
+            (.size | type == "number" and . > 0 and . < 2147483648))' <<<"$INVENTORY" >/dev/null
+          TOTAL="$(jq 'map(.size) | add' <<<"$INVENTORY")"
+          FREE="$(stat -f -c '%a * %S' "$RUNNER_TEMP")"
+          test "$((FREE))" -gt "$((TOTAL * 2 + 1024**3))"
+          jq -r '.[] | [.id, .name] | @tsv' <<<"$INVENTORY" > "$RUNNER_TEMP/iso-asset-ids.tsv"
+          while IFS=$'\t' read -r ID NAME; do
+            gh api "repos/$GITHUB_REPOSITORY/releases/assets/$ID" \
+              -H 'Accept: application/octet-stream' > "$ASSETS/$NAME"
+          done < "$RUNNER_TEMP/iso-asset-ids.tsv"
+          python scripts/verify_installation_iso.py --assets "$ASSETS" \
+            --trust-key image/common/update-trust/atlaso-release-2026-01.pem \
+            --version "$VERSION" --commit "$RELEASE_SHA" --scratch "$RUNNER_TEMP" \
+            --output "$RUNNER_TEMP/installation.iso" > "$RUNNER_TEMP/verified-iso.json"
+          ISO="$(jq -er '.iso.sha256 | select(test("^[0-9a-f]{64}$"))' "$RUNNER_TEMP/verified-iso.json")"
+          echo "sha256=$ISO" >> "$GITHUB_OUTPUT"
+          while IFS=$'\t' read -r ID NAME; do
+            rm -- "$ASSETS/$NAME"
+          done < "$RUNNER_TEMP/iso-asset-ids.tsv"
+      - name: Install the pinned 1Password CLI
+        run: |
+          OP_VERSION=v2.43.0-beta.02
+          OP_ARCHIVE="$RUNNER_TEMP/1password-cli.zip"
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+            --output "$OP_ARCHIVE" "https://cache.agilebits.com/dist/1P/op2/pkg/$OP_VERSION/op_linux_amd64_$OP_VERSION.zip"
+          printf '%s  %s\n' '831beb2374e08993c5362c179ad4166b7e2ff4d0a8f21c7da6964d6bffdea0ad' \
+            "$OP_ARCHIVE" | sha256sum --check
+          mkdir "$RUNNER_TEMP/1password-bin"
+          unzip -q "$OP_ARCHIVE" op -d "$RUNNER_TEMP/1password-bin"
+          echo "$RUNNER_TEMP/1password-bin" >> "$GITHUB_PATH"
+      - name: Run installation acceptance and seal the receipt
+        env:
+          OP_ENVIRONMENT_ID: ${{ vars.OP_ENVIRONMENT_ID }}
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          ISO_SHA256: ${{ steps.iso.outputs.sha256 }}
+        run: |
+          test -n "$OP_ENVIRONMENT_ID" && test -n "$OP_SERVICE_ACCOUNT_TOKEN"
+          # Disable masking only for this private pipe. The acceptance process never echoes its input.
+          op run --no-masking --environment "$OP_ENVIRONMENT_ID" -- env -u OP_SERVICE_ACCOUNT_TOKEN \
+            python -c 'import json, os; print(json.dumps({"admin": os.environ["ATLASO_VM_ADMIN_PASSWORD"], "root": os.environ["ATLASO_VM_ROOT_PASSWORD"]}))' | \
+            env -u OP_SERVICE_ACCOUNT_TOKEN -u GH_TOKEN -u GITHUB_TOKEN \
+            python -m scripts.installation.vm_acceptance --iso "$RUNNER_TEMP/installation.iso" \
+              --sha256 "$ISO_SHA256" --version "$VERSION" --commit "$RELEASE_SHA" \
+              --output "$RUNNER_TEMP/vm-fixture" --receipt "$RUNNER_TEMP/vm-acceptance.json"
+      - name: Retain exact acceptance evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: vm-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/vm-acceptance.json
+          if-no-files-found: error
+          retention-days: 90
 
   publish:
-    name: Publish the approved release and advance development
-    needs: [prepare, stage]
+    name: Publish the verified GitHub prerelease
+    needs: [prepare, stage, acceptance]
     if: >-
-      ${{ !cancelled() &&
-      needs.prepare.result == 'success' &&
-      (needs.prepare.outputs.approve == 'true' || (needs.stage.result == 'success' && needs.stage.outputs.legacy == 'true')) }}
+      ${{ !cancelled() && needs.stage.result == 'success' &&
+      (needs.acceptance.result == 'success' || needs.stage.outputs.legacy == 'true') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 120
+    concurrency:
+      group: atlaso-installation-publish-v${{ needs.prepare.outputs.version }}
+      queue: max
+      cancel-in-progress: false
+    environment: appliance-release
+    permissions:
+      contents: write
+    env:
+      RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Check out protected release tooling
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+      - name: Install locked release tooling
+        env:
+          PIP_CONFIG_FILE: /dev/null
+        run: python -m pip install --require-hashes --requirement requirements-release-tools.lock
+      - name: Download only this workflow attempt's VM receipt
+        if: needs.stage.outputs.legacy != 'true'
+        uses: actions/download-artifact@v8
+        with:
+          name: vm-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/acceptance
+      - name: Revalidate the complete release and exact VM receipt before publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LEGACY: ${{ needs.stage.outputs.legacy }}
+        run: |
+          mkdir dist
+          ACCEPTANCE=()
+          if test "$LEGACY" != true; then
+            ACCEPTANCE=(--vm-acceptance "$RUNNER_TEMP/acceptance/vm-acceptance.json")
+          fi
+          python -m scripts.installation.combined_release publish --tag "v$VERSION" --commit "$RELEASE_SHA" \
+            --assets dist/release --scratch "$RUNNER_TEMP/publication-verification" "${ACCEPTANCE[@]}"
+
+  development:
+    name: Advance the authenticated development channel
+    needs: [prepare, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     concurrency:
       group: atlaso-github-pages
       queue: max
@@ -605,8 +729,6 @@ jobs:
     environment: appliance-release
     permissions:
       contents: write
-      issues: read
-      pull-requests: read
     env:
       RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
       VERSION: ${{ needs.prepare.outputs.version }}
@@ -616,29 +738,22 @@ jobs:
         uses: actions/checkout@v7
         with:
           ref: ${{ github.workflow_sha }}
-          fetch-depth: 0
           persist-credentials: false
-      - name: Confirm the commit is still on main
-        run: |
-          git fetch origin refs/heads/main:refs/remotes/origin/main --no-tags
-          git merge-base --is-ancestor "$RELEASE_SHA" origin/main
-      - name: Set up Python
-        uses: actions/setup-python@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.14'
       - name: Install locked release tooling
         env:
           PIP_CONFIG_FILE: /dev/null
         run: python -m pip install --require-hashes --requirement requirements-release-tools.lock
-      - name: Verify exact media approval and the published release
+      - name: Download the verified public release manifest
         env:
           GH_TOKEN: ${{ github.token }}
-          VALIDATED_ISO_SHA256: ${{ inputs.validated_iso_sha256 }}
-          INSTALLATION_ACCEPTANCE_EVIDENCE: ${{ inputs.installation_acceptance_evidence }}
         run: |
           mkdir dist
-          python -m scripts.installation.combined_release publish --tag "v$VERSION" --commit "$RELEASE_SHA" \
-            --assets dist/release --scratch "$RUNNER_TEMP/publication-verification"
+          gh release download "v$VERSION" --repo "$GITHUB_REPOSITORY" \
+            --pattern release-manifest.json --pattern release-manifest.json.sig --dir dist/release
+          jq -e --arg commit "$RELEASE_SHA" '.git_commit == $commit' dist/release/release-manifest.json >/dev/null
       - name: Read the authenticated development pointer
         id: development
         env:

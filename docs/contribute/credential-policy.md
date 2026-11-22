@@ -24,6 +24,12 @@ only inside a bounded child. Preserve timeout, whole-tree termination, sensitive
 `DEFAULT_ROOT_PASSWORD` and `DEFAULT_ADMIN_PASSWORD` supply their corresponding deployment identities only through
 that supported path. Explicit supported authentication selections remain authoritative.
 
+The protected GitHub installation acceptance job uses a dedicated `Atlaso Installer CI` Environment. It contains
+only concealed `ATLASO_VM_ADMIN_PASSWORD` and `ATLASO_VM_ROOT_PASSWORD` values for disposable offline guests.
+Grant its service account read access to that Environment only. Store its token in the `installation-acceptance`
+GitHub environment, restricted to `main`. The 1Password CLI retrieves the two values in the acceptance step and
+sends them to the VM runner through a private pipe. Windows acceptance continues to use the DPAPI path above.
+
 Before same-host, same-user worktree reuse, read and follow the full
 [credential reuse procedure](../reference/vmware-workstation-lifecycle-testing.md#reuse-primary-checkout-configuration-in-a-task-worktree).
 Discover the primary checkout from Git's common directory and worktree inventory. Copy only missing validated selector

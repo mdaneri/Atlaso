@@ -65,8 +65,11 @@ embedded build metadata, fails closed on collisions, and records that identity i
 does not rebuild or substitute the application wheel. It retains the exact CPython 3.14 wheelhouse, signing,
 immutable-tag/Release, Pages serialization, and live-verification gates. Starting with `v0.9.506`, each software
 release automatically stages its signed installation ISO and software bundle in one hidden GitHub Release draft.
-The protected maintainer approval dispatch validates the exact ISO digest and acceptance evidence before making the
-release public and advancing `development`. See the
+The hosted acceptance job reconstructs the signed draft's exact ISO, installs it in a disconnected UEFI VM and
+checks the installed version, source, services, media-free boot and unselected disk. The protected publisher admits
+the receipt from that workflow attempt, revalidates the signed draft and publishes it as a GitHub prerelease before
+advancing `development`. A separate maintainer dispatch requires exact-ISO representative physical acceptance to
+promote to `stable` and mark the same GitHub release stable. See the
 [ISO release procedure](../reference/installation-iso.md#stage-and-publish-a-standard-release). Manual
 dispatch with the exact full SHA of a successful `main` push CI run remains available for idempotent recovery. After
 the 90-day retention window, manually dispatch **Replay Python wheel** from `main` with the exact commit plus its
@@ -77,6 +80,11 @@ read-only **Publish Python wheel** workflow to revalidate the request and publis
 not implicitly advance an older release; use the exact-SHA software-release dispatch for recovery. When a draft or
 public release already exists, the workflow verifies and reuses its signed assets only after the replay wheel matches
 the bundled wheel byte for byte, preserving the original signed provenance for channel recovery.
+
+The hosted acceptance job uses the `main`-only `installation-acceptance` environment. GitHub requires a
+write-scoped repository token to download draft assets. Only the download step receives that token. The guest
+has no GitHub credentials, and acceptance has no signing key. Release publication runs in a separate job after
+verification of the receipt and complete signed assets.
 
 The protected appliance release workflow consumes an approved Photon snapshot from its private, digest-pinned
 installation capture archive. The archive binds retained Photon 5.0 repository metadata, including the exact
@@ -100,6 +108,13 @@ Release notice generation identifies each wheel from its top-level `.dist-info/M
 vendored distributions, such as Packaging bundled inside setuptools, cannot establish the wheel's identity even when
 the vendored version also appears in the release lock. Missing or ambiguous top-level locked metadata, missing locked
 packages, and missing license or source information still stop publication.
+
+### Version transition
+
+The first new release in this lifecycle is `1.0.0`. Land the trusted version policy with the ordinary next patch,
+then use `python scripts/version.py bump --version 1.0.0` in the next PR. The protected release workflow skips automatic
+staging for the intermediate `0.9.x` patch. The existing signed `v0.9.516` draft is eligible for recovery at its original
+commit and version. Subsequent PRs use the ordinary synchronized patch rule.
 
 OVA and Hyper-V images use the separate manual lifecycle documented in the
 [virtualization artifact guide](../reference/virtualization-artifacts.md). A maintainer workstation creates and

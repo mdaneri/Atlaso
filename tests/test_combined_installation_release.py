@@ -137,41 +137,47 @@ def test_partial_draft_stops_before_downloading_or_replacing_assets(
 
 
 @pytest.mark.parametrize(
-    ("highest", "latest"), [((0, 9, 505), "true"), ((0, 9, 507), "false")]
+    ("tag", "commit", "allowed"),
+    [
+        ("v1.0.0", COMMIT, True),
+        (*combined_release.EXISTING_INSTALLER, True),
+        ("v0.9.517", COMMIT, False),
+        ("v0.9.516", COMMIT, False),
+    ],
 )
-def test_publish_checks_exact_approval_and_order_and_is_idempotent(
-    monkeypatch, highest, latest
+def test_publication_requires_exact_vm_receipt_and_preserves_latest(
+    tmp_path, monkeypatch, tag, commit, allowed
 ):
-    """Publish checks exact approval and order and is idempotent.
+    """Publish the tested draft as a prerelease, without advancing Latest.
 
     Args:
-        monkeypatch: Pytest fixture for substituting external dependencies.
-        highest: Highest software version already published.
-        latest: Expected make_latest value in the GitHub publication request.
+        tmp_path: Directory for synthetic VM acceptance receipts.
+        monkeypatch: Fixture for replacing GitHub calls with in-memory state.
+        tag: Software release tag under test.
+        commit: Source revision associated with the candidate.
+        allowed: Whether a matching receipt permits this release to publish.
     """
-    iso = "b" * 64
+    iso = (
+        combined_release.EXISTING_INSTALLER_SHA256
+        if (tag, commit) == combined_release.EXISTING_INSTALLER
+        else "b" * 64
+    )
     state = {
         "id": 42,
         "draft": True,
         "prerelease": False,
-        "tag_name": TAG,
+        "tag_name": tag,
         "body": "Notes",
     }
     requests = []
 
     def gh(command, **kwargs):
-        """Return GitHub responses and record the publication request.
+        """Simulate editing and reading the release.
 
         Args:
-            command: GitHub CLI arguments issued by the publication helper.
-            **kwargs: Optional subprocess inputs, including the publication request body.
+            command: Command line that would be passed to GitHub CLI.
+            **kwargs: Run options carrying the metadata request body.
         """
-        if command[-1].endswith("/issues/comments/123"):
-            record = {
-                "issue_url": f"https://api.github.com/repos/{REPO}/issues/542",
-                "body": f"Accepted `{iso}`",
-            }
-            return subprocess.CompletedProcess(command, 0, json.dumps(record), "")
         if "--method" in command:
             update = json.loads(kwargs["input_text"])
             requests.append(update)
@@ -181,22 +187,36 @@ def test_publish_checks_exact_approval_and_order_and_is_idempotent(
     monkeypatch.setattr(combined_release, "run", gh)
     monkeypatch.setattr(combined_release, "require_tag", lambda *args: None)
     monkeypatch.setattr(combined_release, "get_release", lambda *args: dict(state))
-    monkeypatch.setattr(combined_release, "latest_version", lambda *args: highest)
     monkeypatch.setattr(combined_release, "asset_records", lambda *args: {})
-    for invalid in ("", "f" * 64):
-        with pytest.raises(ValueError, match="approval"):
-            combined_release.publish(
-                REPO, TAG, COMMIT, dict(state), {}, iso, invalid, EVIDENCE
-            )
-    with pytest.raises(ValueError, match="acceptance evidence"):
-        combined_release.publish(
-            REPO, TAG, COMMIT, dict(state), {}, iso, iso, "https://example.com"
-        )
+    receipt = tmp_path / "receipt.json"
+    outcome = {
+        "schema": 1,
+        "version": tag[1:],
+        "commit": commit,
+        "iso_sha256": iso,
+        "checks": combined_release.VM_CHECKS,
+    }
+    for invalid in ({"iso_sha256": "f" * 64}, {"commit": "c" * 40}, {"checks": []}):
+        receipt.write_text(json.dumps(outcome | invalid), encoding="utf-8")
+        with pytest.raises(ValueError, match="receipt differs"):
+            combined_release.publish(REPO, tag, commit, dict(state), {}, iso, receipt, "123", "1")
+    with pytest.raises(ValueError, match="requires exact ISO VM acceptance"):
+        combined_release.publish(REPO, tag, commit, dict(state), {}, iso, None, "123", "1")
     assert not requests
-    combined_release.publish(REPO, TAG, COMMIT, dict(state), {}, iso, iso, EVIDENCE)
-    assert requests[0]["make_latest"] == latest
-    assert EVIDENCE in requests[0]["body"]
-    combined_release.publish(REPO, TAG, COMMIT, dict(state), {}, iso, iso, EVIDENCE)
+    receipt.write_text(json.dumps(outcome), encoding="utf-8")
+    if (tag, commit) == combined_release.EXISTING_INSTALLER:
+        with pytest.raises(ValueError, match="original signed ISO"):
+            combined_release.publish(REPO, tag, commit, dict(state), {}, "f" * 64, receipt, "123", "1")
+    if not allowed:
+        with pytest.raises(ValueError, match="require version 1.0.0"):
+            combined_release.publish(REPO, tag, commit, dict(state), {}, iso, receipt, "123", "1")
+        assert not requests
+        return
+    combined_release.publish(REPO, tag, commit, dict(state), {}, iso, receipt, "123", "1")
+    assert requests[0]["prerelease"] is True
+    assert requests[0]["make_latest"] == "false"
+    assert f"https://github.com/{REPO}/actions/runs/123/attempts/1" in requests[0]["body"]
+    combined_release.publish(REPO, tag, commit, dict(state), {}, iso, receipt, "123", "2")
     assert len(requests) == 1
 
 
@@ -314,6 +334,39 @@ def test_evidence_must_bind_the_approved_digest_and_comment_parent(monkeypatch):
     record["issue_url"] = f"https://api.github.com/repos/{REPO}/issues/542"
     with pytest.raises(ValueError, match="does not identify"):
         combined_release.verify_acceptance(REPO, EVIDENCE, "b" * 64)
+
+
+def test_physical_acceptance_requires_a_current_maintainer(monkeypatch):
+    """Verify the physical acceptance author still has maintainer privileges.
+
+    Args:
+        monkeypatch: Fixture that replaces the GitHub API calls.
+    """
+    iso = "b" * 64
+    record = {
+        "issue_url": f"https://api.github.com/repos/{REPO}/issues/542",
+        "body": f"Representative physical acceptance: PASS\n\nISO SHA-256 `{iso}`",
+        "user": {"login": "atlaso-maintainer"},
+    }
+    permission = {"role_name": "write"}
+
+    def gh(command):
+        """Return the fixture acceptance comment or its author's permission.
+
+        Args:
+            command: GitHub CLI arguments identifying the requested resource.
+        """
+        value = permission if command[-1].endswith("/permission") else record
+        return subprocess.CompletedProcess(command, 0, json.dumps(value), "")
+
+    monkeypatch.setattr(combined_release, "run", gh)
+    with pytest.raises(ValueError, match="current Atlaso maintainer"):
+        combined_release.verify_acceptance(REPO, EVIDENCE, iso, physical=True)
+    permission["role_name"] = "maintain"
+    combined_release.verify_acceptance(REPO, EVIDENCE, iso, physical=True)
+    record["body"] = f"VM acceptance passed for `{iso}`"
+    with pytest.raises(ValueError, match="explicit physical acceptance"):
+        combined_release.verify_acceptance(REPO, EVIDENCE, iso, physical=True)
 
 
 def test_portable_capture_fingerprint_preserves_existing_native_receipt_contract(

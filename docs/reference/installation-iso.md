@@ -165,7 +165,7 @@ CI checks the manifest and archive digests, capture compatibility, retained Phot
 transactions, PowerCLI lock, pinned Photon source, snapshot age, and free space. Drift results are diagnostic and do
 not replace package authentication or complete-transaction checks. An expired, incompatible, withdrawn, or incomplete
 snapshot leaves the version unpublished. Once compatible inputs are fixed, dispatch the workflow from `main` with the
-full release commit and blank approval fields to retry staging.
+full release commit to retry staging and acceptance.
 
 Audit an approved archive separately on a host with RPM tools. Use the original archive SHA-256 and the exact
 release checkout to review. The command compares selected RPMs with current Photon metadata and reports published
@@ -178,15 +178,29 @@ GITHUB_REPOSITORY=mdaneri/Atlaso python -m scripts.installation.release_capture 
 
 Review advisories independently of staging. If an advisory or signing-trust change requires withdrawal, remove the
 protected capture pins until a replacement is approved. Review pending drafts built from a withdrawn snapshot before
-approving their exact ISO. The signed installation artifact index records the snapshot digest.
+retrying release publication. The signed installation artifact index records the snapshot digest.
 
-Download the complete signed draft and verify and reconstruct the ISO as described below. Record disconnected UEFI
-installation, boot without media, Appliance Update and rollback persistence, unselected-disk preservation, and
-representative physical acceptance for that exact SHA-256 on an Atlaso issue or PR. Dispatch **Publish appliance
-release** from `main` with `release_sha`, `validated_iso_sha256`, and `installation_acceptance_evidence` set to that
-record's GitHub URL. Publication rechecks the draft bytes and verifies the public asset inventory and digests before
-advancing `development`. A later dispatch with the same evidence can recover the channel after publication. An older
-approval can publish its release without moving Latest or `development` backward.
+GitHub Actions downloads the signed draft's ISO parts, verifies the signed index and reconstructs the exact installer.
+The QEMU/OVMF job checks disconnected UEFI installation to a 64 GiB disk, preservation of a second 4 GiB disk, boot
+without installation media, active Atlaso services and matching application version and source commit. The runner reads
+the installed identity and service state through the appliance's authenticated native console. The disk-only boot uses
+isolated virtual DHCP with no forwarded ports. Its receipt
+binds all checkpoints to the ISO SHA-256 and the workflow attempt that ran them. A failed or incomplete run leaves
+the draft hidden. A passing run publishes the same draft as a prerelease and verifies the public assets before
+advancing `development`. To retry, dispatch **Publish appliance release** from `main` with the full `release_sha`.
+
+Before the first hosted test, configure the protected `installation-acceptance` GitHub environment for `main`.
+Set `OP_ENVIRONMENT_ID` to the dedicated `Atlaso Installer CI` 1Password Environment and save its read-only service
+account token as `OP_SERVICE_ACCOUNT_TOKEN`. Scope the service account to that Environment and leave vault access
+empty. Follow the [credential policy](../contribute/credential-policy.md) for the VM credentials.
+
+For stable promotion, record disconnected UEFI installation, boot without media, Appliance Update and rollback
+persistence, unselected-disk preservation and representative physical hardware results for the exact signed ISO.
+A maintainer posts those results and the full ISO SHA-256 in an issue or PR comment with a separate line reading
+`Representative physical acceptance: PASS`. Dispatch **Promote appliance release** from `main` with `stable`, the
+version without its `v` prefix and the comment URL as `physical_acceptance_evidence`. The workflow revalidates the
+signed ISO and evidence, advances and verifies the signed stable channel, then marks the same GitHub release stable.
+GitHub Latest advances only when that version is the highest stable software release.
 
 Keep any partial or conflicting draft for maintainer reconciliation. Compare its asset names, sizes, and digests with
 the original successful build evidence before correcting the draft. A complete verified draft can be reused without a
