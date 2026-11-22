@@ -1524,7 +1524,7 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "name: validated-release-request" in prepare_job
     assert "retention-days: 1" in prepare_job
     assert 'git merge-base --is-ancestor "$RELEASE_SHA" origin/main' in prepare_job
-    assert '[[ "$VERSION" == 0.* ]]' in prepare_job
+    assert 'dpkg --compare-versions "$VERSION" lt 0.9.517' in prepare_job
     assert "ELIGIBLE=false" in prepare_job
     assert "validated_iso_sha256:" not in publication
     assert "github.event.workflow_run.head_sha" not in prepare_job
@@ -1727,6 +1727,7 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "gh release download" in promotion
     assert "build_release_bundle.py" not in promotion
     assert "physical_acceptance_evidence:" in promotion
+    assert '[[ "$RELEASE_VERSION" == 0.* ]]' in promotion
     assert "combined_release physical" in promotion
     assert "needs.admit.outputs.release_fingerprint" in promotion
     assert "promote_stable_release" in promotion

@@ -4,7 +4,9 @@ import io
 import json
 import os
 import re
+import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -95,6 +97,55 @@ def test_installer_wait_accepts_only_the_guests_own_reset(tmp_path, monkeypatch,
     else:
         with pytest.raises(vm_acceptance.AcceptanceError, match="without a guest-requested reboot"):
             vm_acceptance.wait_for_installer_reboot(vm, tmp_path, deadline)
+
+
+@pytest.mark.parametrize("timed_out", [True, False])
+def test_unreadable_ocr_frame_waits_for_verified_checkpoint(tmp_path, monkeypatch, capsys, timed_out):
+    """Accept only a readable matching frame after a transient OCR error.
+
+    Args:
+        tmp_path: Directory for transient screenshot files.
+        monkeypatch: Fixture used to stub the console observer and clocks.
+        capsys: Fixture that captures public checkpoint logs.
+        timed_out: Simulate an OCR timeout or a nonzero OCR process exit.
+    """
+    frame = b"P6\n1 1\n255\n" + bytes(3)
+    vm = object.__new__(vm_acceptance.Qmp)
+    options = []
+
+    def capture(command, arguments):
+        """Write a one-pixel frame to the requested screenshot path.
+
+        Args:
+            command: QMP command name.
+            arguments: QMP options containing the transient screenshot path.
+        """
+        assert command == "screendump"
+        Path(arguments["filename"]).write_bytes(frame)
+
+    def recognize(command, **kwargs):
+        """Fail the first OCR read and recognize the following guest frame.
+
+        Args:
+            command: Arguments passed to the OCR subprocess.
+            **kwargs: Subprocess execution options including the thread limit.
+        """
+        options.append(kwargs)
+        if len(options) == 1:
+            if timed_out:
+                raise subprocess.TimeoutExpired(command, kwargs["timeout"], stderr=b"private frame output")
+            return subprocess.CompletedProcess(command, 1, "Select a disk", "private frame output")
+        return subprocess.CompletedProcess(command, 0, "Select a disk", "")
+
+    monkeypatch.setattr(vm, "execute", capture)
+    vm.process = SimpleNamespace(poll=lambda: None)
+    monkeypatch.setattr(vm_acceptance.subprocess, "run", recognize)
+    monkeypatch.setattr(vm_acceptance.time, "sleep", lambda _: None)
+
+    assert vm_acceptance.wait_screen(vm, tmp_path, vm_acceptance.is_disk_selection_screen, "disk selection", 1)
+    assert [call["env"]["OMP_THREAD_LIMIT"] for call in options] == ["1", "1"]
+    assert not list(tmp_path.iterdir())
+    assert "private frame output" not in capsys.readouterr().out
 
 
 def test_ppm_preprocessing_crops_and_upscales_the_gray_installer_panel():

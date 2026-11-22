@@ -75,6 +75,18 @@ def arrange_promotion(monkeypatch, target: dict, published: list[dict]):
     return requests
 
 
+def test_stable_promotion_requires_a_stable_release_version(tmp_path):
+    """Keep new 0.9.x releases on the prerelease line.
+
+    Args:
+        tmp_path: Directory passed as the manifest location.
+    """
+    with pytest.raises(ValueError, match="stable promotion requires version 1.0.0 or later"):
+        stable_release.promote(
+            REPO, "v0.9.517", COMMIT, tmp_path / "manifest.json", MANIFEST_SHA256, RELEASE_FINGERPRINT
+        )
+
+
 def test_promote_stable_advances_latest_to_the_highest_numeric_release(tmp_path, monkeypatch):
     """Make a physically accepted higher release stable and Latest.
 

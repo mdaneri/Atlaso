@@ -56,6 +56,10 @@ jobs:
           set -euo pipefail
           [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           if test "$RELEASE_CHANNEL" = stable; then
+            if [[ "$RELEASE_VERSION" == 0.* ]]; then
+              echo '::error::Stable promotion requires version 1.0.0 or later.'
+              exit 1
+            fi
             test -n "$ACCEPTANCE_EVIDENCE"
             ROLE="$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$TRIGGERING_ACTOR/permission" --jq .role_name)"
             case "$ROLE" in admin|maintain) ;; *) echo '::error::Stable promotion requires a repository maintainer.'; exit 1 ;; esac

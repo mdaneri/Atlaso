@@ -139,9 +139,10 @@ def test_partial_draft_stops_before_downloading_or_replacing_assets(
 @pytest.mark.parametrize(
     ("tag", "commit", "allowed"),
     [
+        ("v0.9.517", COMMIT, True),
         ("v1.0.0", COMMIT, True),
         (*combined_release.EXISTING_INSTALLER, True),
-        ("v0.9.517", COMMIT, False),
+        ("v0.9.515", COMMIT, False),
         ("v0.9.516", COMMIT, False),
     ],
 )
@@ -208,7 +209,7 @@ def test_publication_requires_exact_vm_receipt_and_preserves_latest(
         with pytest.raises(ValueError, match="original signed ISO"):
             combined_release.publish(REPO, tag, commit, dict(state), {}, "f" * 64, receipt, "123", "1")
     if not allowed:
-        with pytest.raises(ValueError, match="require version 1.0.0"):
+        with pytest.raises(ValueError, match="historical installer cannot be newly published"):
             combined_release.publish(REPO, tag, commit, dict(state), {}, iso, receipt, "123", "1")
         assert not requests
         return
