@@ -1,0 +1,17 @@
+[Unit]
+Description=Provision the trial Atlaso OVA
+Wants=network-online.target
+After=network-online.target
+OnFailure=poweroff.target
+OnFailureJobMode=replace-irreversibly
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh /var/tmp/atlaso-ova-build/provision.sh
+TimeoutStartSec=110min
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/ttyS0
+
+[Install]
+WantedBy=multi-user.target
