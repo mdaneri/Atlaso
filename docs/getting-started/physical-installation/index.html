@@ -4421,11 +4421,10 @@ into ordered parts, the verifier checks each part and the reconstructed image.</
 <li>Select Auto or Custom, choose the disk or disks, assign service storage, and review the complete proposed layout.</li>
 <li>Check the displayed disk identities and proposed partitions, then select <strong>Yes</strong> at <strong>Erase selected disks?</strong>
    only when all data on those disks may be erased. The confirmation defaults to <strong>No</strong>; decline if anything is unexpected.</li>
-<li>Enter the administrator and root passwords at the installer’s concealed prompts. Passwords must use ASCII
-   characters and meet the existing local-account password policy. The installer must not display or retain these
-   values in ordinary logs. If a confirmation does not match, correct it in the same prompt; installation does not restart.
-   <strong>Go Back</strong> from Custom returns to disk/layout selection. From the first admin password field it returns to disk
-   review and requires another <strong>Yes</strong>; from the first root password field it returns to admin password entry.</li>
+<li>Enter and confirm the admin and root passwords on <strong>Account passwords</strong>. All four fields are concealed.
+   Use printable ASCII and follow the local-account password policy. Use Tab to move between fields and choose
+   <strong>Continue</strong> when both pairs are ready. The screen identifies the account and field that need correction.
+   Choose <strong>Go Back</strong> to discard both pairs and return to disk review, where <strong>Yes</strong> is required again.</li>
 <li>Remove the installation media when prompted, then boot the installed system.</li>
 <li>Use the existing tty1 networking setup on first boot to configure management networking.</li>
 <li>Verify the management address and host-facing <code>/openapi.json</code> endpoint before beginning Atlaso configuration.</li>
