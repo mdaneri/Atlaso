@@ -871,74 +871,55 @@ def test_concealed_input_accepts_terminal_backspace_codes(monkeypatch, key, expe
     assert adapter.getmaxyx() == (12, 70)
 
 
-def test_password_confirmation_back_restarts_only_current_account(monkeypatch):
-    """After mismatch and Back, confirm the replacement and keep policy checks.
+def test_single_account_form_rejects_mismatch_and_masks_all_credentials(monkeypatch):
+    """Correct the second account's confirmation in place without displaying either password.
 
     Args:
-        monkeypatch: Controlled prompts without credentials or disk consumers.
+        monkeypatch: Replaces the curses window with a recorder and deterministic key input.
     """
     module = load_installer(monkeypatch)
-    titles = []
+    admin = " Fixture-Password42! "
+    root = "Second-Password42!"
+    keys = [
+        *map(ord, admin), 9,
+        *map(ord, admin), 13,
+        *map(ord, root), 10,
+        *map(ord, root[:-1]), 9, 10,
+        ord("!"), 9, 10,
+    ]
+    draws = []
+    key_input = iter(keys)
+    window = SimpleNamespace(
+        bkgd=lambda *_: None, keypad=lambda *_: None, erase=lambda: None, box=lambda: None,
+        addstr=lambda *args: draws.append(args[2]), refresh=lambda: None,
+        getch=lambda: next(key_input),
+    )
+    module.curses.newwin = lambda *_: window
+    module.curses.color_pair = lambda _: 0
+    for name, value in {
+        "A_BOLD": 1, "A_REVERSE": 2, "A_UNDERLINE": 4, "KEY_ENTER": 343,
+        "KEY_DOWN": 258, "KEY_UP": 259, "KEY_BTAB": 353, "KEY_BACKSPACE": 263,
+    }.items():
+        setattr(module.curses, name, value)
 
-    def prompt(_maxy, _maxx, title, _message, *, secret, validator):
-        """Drive a public fixture through mismatch, Back and replacement.
-
-        Args:
-            _maxy: Console height.
-            _maxx: Console width.
-            title: Account field title.
-            _message: Operator guidance.
-            secret: Required concealment.
-            validator: Unchanged policy or exact-match validator.
-        """
-        titles.append(title)
-        assert secret
-        if len(titles) == 1:
-            assert not validator("short")[0]
-            return "Fixture-Password42!"
-        if len(titles) == 2:
-            assert not validator("Other-Password42!")[0]
-            raise module.Cancelled()
-        assert validator("Replacement-Password42!")[0]
-        return "Replacement-Password42!"
-
-    monkeypatch.setattr(module, "prompt", prompt)
-    assert module.password_prompt(25, 80, "admin") == "Replacement-Password42!"
-    assert titles == ["Set admin password", "Confirm admin password"] * 2
-    monkeypatch.setattr(module, "prompt", lambda *_args, **_kwargs: (_ for _ in ()).throw(module.Cancelled()))
-    with pytest.raises(module.Cancelled):
-        module.password_prompt(25, 80, "root")
+    assert module.account_passwords(25, 80) == (admin, root)
+    assert {"Account passwords", "Admin password", "Confirm admin password",
+            "Root password", "Confirm root password", "root: Passwords do not match."} <= set(draws)
+    assert not any(admin in text or root in text for text in draws)
 
 
-def test_root_password_back_discards_prior_admin_and_returns_to_admin(monkeypatch):
-    """Back through accounts without returning an earlier password pair.
+def test_single_account_form_checks_policy_before_comparing_each_confirmation(monkeypatch):
+    """Reject bad strength and compare printable ASCII without trimming.
 
     Args:
-        monkeypatch: Isolated account prompt responses.
+        monkeypatch: Loads the installer with isolated native dependencies.
     """
     module = load_installer(monkeypatch)
-    names = []
-    values = iter(["old-admin", module.Cancelled(), "new-admin", "new-root"])
-
-    def password(_height, _width, username):
-        """Return synthetic inputs and one first-field Back.
-
-        Args:
-            _height: Console height.
-            _width: Console width.
-            username: Account whose first field is shown.
-        """
-        names.append(username)
-        value = next(values)
-        if isinstance(value, Exception):
-            raise value
-        return value
-
-    monkeypatch.setattr(module, "password_prompt", password)
-    assert module.account_passwords(25, 80) == ("new-admin", "new-root")
-    assert names == ["admin", "root", "admin", "root"]
-    monkeypatch.setattr(module, "password_prompt", lambda *_args: (_ for _ in ()).throw(module.Cancelled()))
-    assert module.account_passwords(25, 80) is None
+    admin = " Fixture-Password42! "
+    root = "Second-Password42!"
+    assert module._password_error(["short", "short", root, root])[0] == 0
+    assert module._password_error([admin, admin.strip(), root, root]) == (1, "admin: Passwords do not match.")
+    assert module._password_error([admin, admin, root, root]) is None
 
 
 @pytest.mark.parametrize("flow", ["custom-back", "admin-back", "admin-back-decline", "admin-back-disk-changed", "service-disks"])
@@ -1056,31 +1037,30 @@ def test_setup_back_navigation_preserves_prewrite_boundaries(monkeypatch, flow):
                 assert mountpoint in reviewed
         return not (flow == "admin-back-decline" and events.count("confirm") == 2)
 
-    def password(_height, _width, username):
+    def password(_height, _width):
         """Go Back once, then provide fresh synthetic inputs.
 
         Args:
             _height: Console rows.
             _width: Console columns.
-            username: Current local account.
         """
-        password_calls.append(username)
+        password_calls.append("accounts")
         if flow.startswith("admin-back") and len(password_calls) == 1:
-            raise module.Cancelled()
-        return "fresh-" + username
+            return None
+        return "fresh-admin", "fresh-root"
 
     monkeypatch.setattr(module, "revalidate_disks", revalidate)
     monkeypatch.setattr(module, "confirm_installation", confirm)
-    monkeypatch.setattr(module, "password_prompt", password)
+    monkeypatch.setattr(module, "account_passwords", password)
     if flow == "admin-back-decline":
         with pytest.raises(module.Cancelled):
             module.configure_console(screen, initial, {})
-        assert password_calls == ["admin"]
+        assert password_calls == ["accounts"]
         assert events.count("confirm") == 2
     elif flow == "admin-back-disk-changed":
         with pytest.raises(ValueError, match="disk changed"):
             module.configure_console(screen, initial, {})
-        assert password_calls == ["admin"]
+        assert password_calls == ["accounts"]
         assert events.count("confirm") == 1
     else:
         config, consent, passwords = module.configure_console(screen, initial, {})
@@ -1660,7 +1640,7 @@ def test_small_default_disk_refusal_returns_to_native_disk_selection(monkeypatch
     monkeypatch.setattr(module.curses, "COLOR_BLACK", 3, raising=False)
     monkeypatch.setattr(module.curses, "COLOR_GREEN", 4, raising=False)
     monkeypatch.setattr(module.curses, "COLOR_RED", 5, raising=False)
-    monkeypatch.setattr(module, "prompt", lambda *_args, **_kwargs: pytest.fail("credentials must follow capacity admission"))
+    monkeypatch.setattr(module, "account_passwords", lambda *_args, **_kwargs: pytest.fail("credentials must follow capacity admission"))
 
     with pytest.raises(module.Cancelled):
         module.configure_console(Screen(), initial, {"/srv": "/var/srv"})
@@ -1829,7 +1809,6 @@ def test_custom_multi_disk_adapter_displays_selected_disk_and_maps_each_partitio
     monkeypatch.setattr(module, "revalidate_disks", lambda *_args: None)
 
     confirmations = []
-    password_errors = []
 
     class ConfirmWindow:
         def __init__(self, height, width, maxy, maxx, starty, message, info=False):
@@ -1855,30 +1834,7 @@ def test_custom_multi_disk_adapter_displays_selected_disk_and_maps_each_partitio
 
     monkeypatch.setitem(sys.modules, "confirmwindow", SimpleNamespace(ConfirmWindow=ConfirmWindow))
 
-    def prompt(_height, _width, title, message, *, secret=False, validator=None):
-        """Capture prompt layout and validation arguments for the fake native UI.
-
-        Args:
-            _height: Console height supplied to the fake UI callback.
-            _width: Console width supplied to the fake UI callback.
-            title: Prompt title shown by the console adapter.
-            message: Expected validation message or prompt text.
-            secret: Whether the fake prompt should conceal its input.
-            validator: Validation callback passed to the prompt.
-        """
-        if title.startswith("Set "):
-            value = "Good-Password42!"
-            assert validator(value)[0]
-            return value
-        if secret and validator:
-            accepted, error = validator("Other-Password42!")
-            assert not accepted
-            password_errors.append(error)
-            assert validator("Good-Password42!")[0]
-            return "Good-Password42!"
-        return "test-password"
-
-    monkeypatch.setattr(module, "prompt", prompt)
+    monkeypatch.setattr(module, "account_passwords", lambda *_: ("fixture-admin", "fixture-root"))
     for name, value in (
         ("COLOR_WHITE", 1),
         ("COLOR_BLUE", 2),
@@ -1910,7 +1866,6 @@ def test_custom_multi_disk_adapter_displays_selected_disk_and_maps_each_partitio
     assert "/dev/sdb: SATA 256 GiB" in confirmation["message"]
     assert "Serial/WWN: serial-backup" in confirmation["message"]
     assert "/mnt/atlaso-vcf-backups xfs 8192 MiB" in confirmation["message"]
-    assert password_errors == ["Passwords do not match.", "Passwords do not match."]
     pane = custompartition_module.PartitionPane()
     pane.partition()
     assert pane.lines[1].startswith("/dev/nvme0n1")
@@ -2015,7 +1970,7 @@ def test_large_custom_disk_review_pages_identities_and_layout_before_cancellable
     monkeypatch.setattr(module, "disk_inventory", lambda: initial)
     monkeypatch.setattr(module, "selected_disks", lambda _config: paths)
     monkeypatch.setattr(module, "revalidate_disks", lambda *_args: None)
-    monkeypatch.setattr(module, "prompt", lambda *_args, **_kwargs: pytest.fail("credentials must follow consent"))
+    monkeypatch.setattr(module, "account_passwords", lambda *_args, **_kwargs: pytest.fail("credentials must follow consent"))
     writes = []
     monkeypatch.setattr(module, "install", lambda *_args: writes.append("install"))
     for name, value in (
