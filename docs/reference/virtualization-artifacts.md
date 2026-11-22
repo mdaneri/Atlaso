@@ -337,12 +337,12 @@ the existing root partition and filesystem to use the 40 GiB Photon disk.
 Set up an isolated, disposable Ubuntu 24.04 x86-64 GitHub Actions runner with the `atlaso-photon-ova` label.
 Give the runner access to `/dev/kvm` and at least four logical CPUs, 8 GiB of RAM, and 140 GiB of free scratch
 space. Install Python 3.12 or later, Git, QEMU x86 and disk utilities, OVMF, and libguestfs tools with GPT support.
-The runner must be able to run `guestfish` with its supermin appliance. Verify that capability in the runner
-image and restrict use of the runner to the intended repositories and workflows. Standard hosted runners and
+Verify that the libguestfs supermin appliance can use KVM and acquire an address and DNS through its DHCP client.
+Restrict use of the runner to the intended repositories and workflows. Standard hosted runners and
 software emulation lack a verified capacity or runtime profile for this build.
 
 ```bash
-sudo apt-get install qemu-system-x86 qemu-utils ovmf libguestfs-tools gdisk
+sudo apt-get install qemu-system-x86 qemu-utils ovmf libguestfs-tools gdisk isc-dhcp-client
 libguestfs-test-tool
 ```
 
@@ -357,9 +357,11 @@ python3 -m scripts.virtualization.build_photon_ova \
 Use `--photon-ova /path/to/photon.ova` to repeat an experiment with an existing copy of the same pinned image.
 Allow guest outbound DNS and HTTPS for Photon package updates, locked Python dependencies, and PowerCLI.
 The runner build does not receive release signing keys or deployment passwords. The builder clears the upstream
-root password and forced-change state offline before boot, then installs the generic Photon kernel. The live
-QEMU guest runs the canonical Atlaso provisioner and finalizer, including the package, PowerCLI, VCF SDK,
-time service, and offline guest-tools checks. The provisioner formats the 20 GiB Atlaso System Content disk
+root password and forced-change state offline. Before first boot, libguestfs installs the generic Photon kernel
+and an initramfs with drivers for the exported VMware PVSCSI controller. The bundled ESXi kernel panics on KVM
+during early timekeeping initialization. QEMU boots the updated Photon disk on SATA with OVMF. The live guest runs
+the canonical Atlaso provisioner and finalizer, including the package, PowerCLI, VCF SDK, time service, and offline guest-tools
+checks. The provisioner formats the 20 GiB Atlaso System Content disk
 and binds `/opt/atlaso` and the machine-wide PowerShell modules to that UUID-mounted filesystem.
 
 The output has two stream-optimized VMDKs and empty OVF definitions for the 500 GiB Depot and Backups disks.

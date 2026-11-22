@@ -9,9 +9,8 @@ OnFailureJobMode=replace-irreversibly
 Type=oneshot
 ExecStart=/bin/sh /var/tmp/atlaso-ova-build/provision.sh
 TimeoutStartSec=110min
-StandardOutput=tty
-StandardError=tty
-TTYPath=/dev/ttyS0
+StandardOutput=journal+console
+StandardError=journal+console
 
 [Install]
 WantedBy=multi-user.target

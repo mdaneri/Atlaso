@@ -116,9 +116,11 @@ def test_upstream_member_inventory_fails_closed(tmp_path: Path, monkeypatch: pyt
     assert not target.exists()
 
 
-def test_source_staging_survives_the_kernel_switch() -> None:
-    """Keep both guest stages bound to the same persistent seed directory."""
+def test_build_sources_use_the_persistent_seed_directory() -> None:
+    """Keep the staged sources and their cleanup bound to the same directory."""
     script = (build_photon_ova.ASSETS / "provision.sh").read_text(encoding="utf-8").splitlines()
     assert f"build={build_photon_ova.SEED}" in script
     assert 'export ATLASO_SRC="$build/source"' in script
+    assert 'chmod 0711 "$build"' in script
+    assert 'install -d -m 0755 "$ATLASO_SRC"' in script
     assert 'rm -rf "$build"' in script

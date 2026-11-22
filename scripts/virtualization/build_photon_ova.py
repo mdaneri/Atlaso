@@ -183,6 +183,17 @@ def setup_disk(disk: Path, original: Path, source_archive: Path) -> dict[str, st
                "usermod --password '!' root && chage -d \"$(date +%F)\" -E -1 -I -1 -M -1 root "
                "&& rm -f /etc/shadow-"),
         ("mkdir", SEED), ("chmod", "0700", SEED),
+        # The inherited graphical GRUB menu can stall with the runner's
+        # headless OVMF. Keep it for VMware and use the firmware console here.
+        ("cp", "/boot/grub2/grub.cfg", f"{SEED}/grub.cfg"),
+        ("sh", r"sed -i '/^loadfont /d; /^insmod \(gfxterm\|vbe\|tga\|png\)$/d; "
+               r"/^set gfxmode=/d; /^gfxpayload=/d; /^set theme=/d; "
+               r"s/^terminal_output gfxterm$/terminal_output console/; "
+               r"/^[[:space:]]*linux \/\(boot\/\)\?\$photon_linux[[:space:]]/ "
+               r"s/$/ console=ttyS0,115200n8 systemd.show_status=1 cloud-init=disabled "
+               r"systemd.mask=serial-getty@ttyS0.service/' /boot/grub2/grub.cfg "
+               r"&& grep -q 'terminal_output console$' /boot/grub2/grub.cfg "
+               r"&& grep -q 'console=ttyS0,115200n8 ' /boot/grub2/grub.cfg"),
         ("upload", str(source_archive), f"{SEED}/source.tar"),
         ("upload", str(ASSETS / "provision.sh"), f"{SEED}/provision.sh"),
         ("upload", str(ASSETS / SERVICE), f"/etc/systemd/system/{SERVICE}"),
@@ -191,11 +202,19 @@ def setup_disk(disk: Path, original: Path, source_archive: Path) -> dict[str, st
     ).strip().lower().splitlines()
     if normalized != expected[:5]:
         raise ValueError("Photon partition identity changed while growing the disk")
+    repository_helper = SOURCE / "image/common/scripts/configure_photon_repositories.py"
+    run(
+        "virt-customize", "--network", "--no-logfile", "--memsize", "3072",
+        "--format=qcow2", "-a", str(disk),
+        "--upload", f"{repository_helper}:{SEED}/configure_photon_repositories.py",
+        "--run", str(ASSETS / "bootstrap-kernel.sh"),
+        seconds=20 * 60,
+    )
     return {"partition_table": "gpt", "root_partuuid": metadata[1], "esp_partuuid": metadata[2]}
 
 
 def provision(work: Path, disk: Path, content: Path, firmware: Path) -> tuple[dict[str, str], str]:
-    """Provision in QEMU with the same PVSCSI bus and NIC type as the target.
+    """Provision in QEMU using SATA for the Photon firmware boot.
 
     Args:
         work: Run-owned scratch directory.
@@ -213,14 +232,17 @@ def provision(work: Path, disk: Path, content: Path, firmware: Path) -> tuple[di
         "-drive", f"if=pflash,format=raw,file={vars_file}",
         "-device", "pvscsi,id=scsi",
         "-drive", f"if=none,id=root,format=qcow2,discard=unmap,file={disk}",
-        "-device", "scsi-hd,drive=root,bus=scsi.0,scsi-id=0,bootindex=1",
+        # The runner's OVMF boots the inherited Photon EFI partition on AHCI.
+        # The installed kernel also keeps PVSCSI boot support for the export.
+        "-device", "ide-hd,drive=root,bus=ide.0,bootindex=1",
         "-drive", f"if=none,id=system,format=qcow2,discard=unmap,file={content}",
         "-device", "scsi-hd,drive=system,bus=scsi.0,scsi-id=1",
         "-netdev", "user,id=management", "-device", "vmxnet3,netdev=management",
         seconds=130 * 60,
     )
     receipt = fish(
-        disk, ("mount-ro", ROOT, "/"), ("mount-ro", "/dev/sdb", "/var/lib/atlaso-system"),
+        disk, ("mount-ro", ROOT, "/"), ("cat", RECEIPT),
+        ("mount-ro", "/dev/sdb", "/var/lib/atlaso-system"),
         ("sh", """set -eu
             export PATH=/usr/sbin:/usr/bin:/sbin:/bin
             test -z "$(getent passwd atlaso-build)"
@@ -233,7 +255,7 @@ def provision(work: Path, disk: Path, content: Path, firmware: Path) -> tuple[di
             test ! -e /var/lib/atlaso-system/opt-atlaso/bin/atlaso-finalize-image-build
             python3 /var/lib/atlaso-system/opt-atlaso/image/common/scripts/verify-template-state.py
         """),
-        ("cat", RECEIPT), ("vfs-uuid", "/dev/sdb"), readonly=True, second=content,
+        ("vfs-uuid", "/dev/sdb"), readonly=True, second=content,
     ).strip()
     build_info, system_uuid = receipt.rsplit("\n", 1)
     if not re.fullmatch(r"[0-9a-f-]{36}", system_uuid):
@@ -285,7 +307,7 @@ def build_artifact(output: Path, scratch: Path, firmware: Path, override: Path |
     version = tomllib.loads(project)["project"]["version"]
     tools = {
         name: run(name, "--version", capture=True).splitlines()[0]
-        for name in ("qemu-system-x86_64", "qemu-img", "guestfish")
+        for name in ("qemu-system-x86_64", "qemu-img", "guestfish", "virt-customize")
     }
 
     with tempfile.TemporaryDirectory(dir=scratch, prefix="atlaso-ova-") as directory:
