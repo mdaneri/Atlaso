@@ -68,9 +68,10 @@ boot image and native installer flow. It excludes the stock Photon RPM repositor
 the upstream license text as a gzip-compressed file. The completed ISO must be smaller than 2,000,000,000 bytes.
 The Atlaso deployment source comes from an immutable Git archive at the selected full commit. The image embeds
 and inventories the signed software release, its exact application wheel, the locked CPython wheelhouse, shared
-provisioning inputs, PowerCLI modules, trust material, notices, firmware, and the signed offline Photon RPM repository. Dependency closure is resolved during authorized ISO preparation; installation does
-not use network package repositories. Shared provisioning explicitly installs `iproute2` for the console and diagnostics;
-the final package-state verifier requires it. The complete captured RPM closure must include its dependencies.
+provisioning inputs, PowerCLI modules, trust material, notices, firmware, and the signed offline Photon RPM repository.
+Dependency closure is resolved during authorized ISO preparation. Installation uses only the embedded repository.
+Shared provisioning explicitly installs `iproute2` for the console and diagnostics, as required by the final
+package-state verifier. The complete captured RPM closure must include its dependencies.
 The base package selection also requires Photon's signed `iana-etc` package, which supplies `/etc/services`
 and `/etc/protocols`. NTPsec's local verification uses these databases to resolve standard service and protocol
 names. A capture missing this package fails admission; regenerate it through the canonical native capture workflow.
