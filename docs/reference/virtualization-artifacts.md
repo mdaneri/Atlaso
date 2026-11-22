@@ -365,6 +365,8 @@ checks. The provisioner formats the 20 GiB Atlaso System Content disk
 and binds `/opt/atlaso` and the machine-wide PowerShell modules to that UUID-mounted filesystem.
 
 The output has two stream-optimized VMDKs and empty OVF definitions for the 500 GiB Depot and Backups disks.
+The builder removes verified zero padding after each VMDK's end-of-stream marker before writing the manifest,
+so VMware Workstation checks the same bytes as the archive validator during import.
 It passes the existing OVA validator before the local build emits the OVA, checksum, and provenance. The
 descriptor supplies `atlaso.fqdn`, `atlaso.admin_password`, `atlaso.root_password`, and the existing management
 network properties to the deployed guest through the runtime OVF environment. The existing VMware first-boot

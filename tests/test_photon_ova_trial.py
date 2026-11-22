@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import struct
 import tarfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -84,6 +85,34 @@ def test_upstream_digest_is_checked_before_reading_the_tar(tmp_path: Path, monke
     monkeypatch.setattr(build_photon_ova, "PHOTON_BYTES", path.stat().st_size)
     with pytest.raises(ValueError, match="pinned archive"):
         build_photon_ova.extract_photon(path, tmp_path / "disk.vmdk")
+
+
+@pytest.mark.parametrize("tail_has_data", (False, True))
+def test_vmdk_manifest_uses_the_complete_stream(tmp_path: Path, tail_has_data: bool) -> None:
+    """Retain the end marker and refuse any nonzero bytes after it.
+
+    Args:
+        tmp_path: Temporary directory for the test VMDK.
+        tail_has_data: Whether to put unexpected data after the end marker.
+    """
+    header = bytearray(512)
+    header[:4] = b"KDMV"
+    struct.pack_into("<I", header, 8, 0x30000)
+    struct.pack_into("<Q", header, 20, 128)
+    struct.pack_into("<Q", header, 64, 1)
+    grain = (struct.pack("<QI", 0, 600) + b"x" * 600).ljust(1024, b"\x00")
+    expected_stream = bytes(header) + grain + bytes(512)
+    padding = (b"x" if tail_has_data else b"\x00") * 512
+    disk = tmp_path / "stream.vmdk"
+    disk.write_bytes(expected_stream + padding)
+
+    if tail_has_data:
+        with pytest.raises(ValueError, match="Unexpected data following"):
+            prepare_photon_ovf.trim_vmdk_stream_padding(disk)
+        assert disk.read_bytes() == expected_stream + padding
+    else:
+        prepare_photon_ovf.trim_vmdk_stream_padding(disk)
+        assert disk.read_bytes() == expected_stream
 
 
 @pytest.mark.parametrize("kind", ("traversal", "link", "duplicate"))

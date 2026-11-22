@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import struct
 import subprocess
 import tarfile
 import xml.etree.ElementTree as ET
@@ -25,6 +26,8 @@ from scripts.virtualization.validate_ova import (
 
 VSSD = "http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_VirtualSystemSettingData"
 VMDK_FORMAT = "http://www.vmware.com/interfaces/specifications/vmdk.html#streamOptimized"
+VMDK_SECTOR_BYTES = 512
+VMDK_END_MARKER = bytes(VMDK_SECTOR_BYTES)
 VMDK_NAMES = ("atlaso-photon.vmdk", "atlaso-system.vmdk")
 PROPERTIES = (
     ("Management network", (
@@ -89,6 +92,50 @@ def require_stream_vmdk(path: Path, size: int) -> None:
         or Path(extents[0]["filename"]).resolve() != path.resolve()
     ):
         raise ValueError("VMDK is not a standalone stream-optimized disk of the expected size")
+
+
+def trim_vmdk_stream_padding(path: Path) -> None:
+    """End a generated VMDK at its terminal marker before hashing it.
+
+    Args:
+        path: Run-owned, stream-optimized VMDK freshly written by QEMU.
+    """
+    with path.open("r+b") as disk:
+        length = path.stat().st_size
+        header = disk.read(VMDK_SECTOR_BYTES)
+        if len(header) != VMDK_SECTOR_BYTES or header[:4] != b"KDMV" or length % VMDK_SECTOR_BYTES:
+            raise ValueError("Invalid stream-optimized VMDK header or alignment")
+        flags = struct.unpack_from("<I", header, 8)[0]
+        if flags & 0x30000 != 0x30000:
+            raise ValueError("VMDK does not declare compressed grains and stream markers")
+        grain_sectors = struct.unpack_from("<Q", header, 20)[0]
+        overhead = struct.unpack_from("<Q", header, 64)[0]
+        if not 0 < grain_sectors <= 128 or not 0 < overhead < length // VMDK_SECTOR_BYTES:
+            raise ValueError("Invalid stream-optimized VMDK grain size or metadata boundary")
+        offset = overhead * VMDK_SECTOR_BYTES
+        while offset < length:
+            disk.seek(offset)
+            marker = disk.read(VMDK_SECTOR_BYTES)
+            if len(marker) != VMDK_SECTOR_BYTES:
+                break
+            if marker == VMDK_END_MARKER:
+                # QEMU can pad up to a grain after the marker. OVF Tool stops
+                # at the marker and checks the manifest against that stream.
+                end = disk.tell()
+                if length - end > grain_sectors * VMDK_SECTOR_BYTES or any(disk.read()):
+                    raise ValueError("Unexpected data following the VMDK end-of-stream marker")
+                disk.truncate(end)
+                return
+            sector, size, kind = struct.unpack_from("<QII", marker)
+            if size:
+                offset += (12 + size + VMDK_SECTOR_BYTES - 1) // VMDK_SECTOR_BYTES * VMDK_SECTOR_BYTES
+            elif kind in {1, 2, 3} and sector:
+                # A grain table, grain directory or footer marker gives
+                # the number of metadata sectors that follow the marker.
+                offset += (1 + sector) * VMDK_SECTOR_BYTES
+            else:
+                break
+        raise ValueError("The VMDK stream has no valid end-of-stream marker")
 
 
 def ovf_element(parent: ET.Element, tag: str, text: str = "", **attrs: str) -> ET.Element:
@@ -187,9 +234,12 @@ def write_ovf(path: Path, sizes: tuple[int, int]) -> None:
     for slot, (disk_id, label) in enumerate(disk_roles):
         hardware_item(hardware, AddressOnParent=str(slot), ElementName=label, InstanceID=str(6 + slot),
                       HostResource=f"ovf:/disk/{disk_id}", Parent="3", ResourceType="17")
-    for key, value in (("firmware", "efi"), ("bootOptions.efiSecureBootEnabled", "false"), ("disk.EnableUUID", "true")):
+    for key, value in (("firmware", "efi"), ("bootOptions.efiSecureBootEnabled", "false")):
         ET.SubElement(hardware, f"{{{VMW}}}Config",
                       {f"{{{OVF}}}required": "false", f"{{{VMW}}}key": key, f"{{{VMW}}}value": value})
+    ET.SubElement(hardware, f"{{{VMW}}}ExtraConfig", {
+        f"{{{OVF}}}required": "false", f"{{{VMW}}}key": "disk.enableUUID", f"{{{VMW}}}value": "TRUE",
+    })
     ET.indent(root)
     ET.ElementTree(root).write(path, encoding="utf-8", xml_declaration=True)
 

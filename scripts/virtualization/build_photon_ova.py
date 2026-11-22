@@ -23,6 +23,7 @@ from scripts.virtualization.prepare_photon_ovf import (
     digest,
     package,
     require_stream_vmdk,
+    trim_vmdk_stream_padding,
 )
 from scripts.virtualization.validate_ova import EXPECTED_PAYLOADS, OVF, VMW
 
@@ -231,11 +232,11 @@ def provision(work: Path, disk: Path, content: Path, firmware: Path) -> tuple[di
         "-drive", f"if=pflash,format=raw,readonly=on,file={firmware / 'OVMF_CODE_4M.fd'}",
         "-drive", f"if=pflash,format=raw,file={vars_file}",
         "-device", "pvscsi,id=scsi",
-        "-drive", f"if=none,id=root,format=qcow2,discard=unmap,file={disk}",
+        "-drive", f"if=none,id=root,format=qcow2,discard=unmap,detect-zeroes=unmap,file={disk}",
         # The runner's OVMF boots the inherited Photon EFI partition on AHCI.
         # The installed kernel also keeps PVSCSI boot support for the export.
         "-device", "ide-hd,drive=root,bus=ide.0,bootindex=1",
-        "-drive", f"if=none,id=system,format=qcow2,discard=unmap,file={content}",
+        "-drive", f"if=none,id=system,format=qcow2,discard=unmap,detect-zeroes=unmap,file={content}",
         "-device", "scsi-hd,drive=system,bus=scsi.0,scsi-id=1",
         "-netdev", "user,id=management", "-device", "vmxnet3,netdev=management",
         seconds=130 * 60,
@@ -334,6 +335,7 @@ def build_artifact(output: Path, scratch: Path, firmware: Path, override: Path |
             stream = candidate / VMDK_NAMES[slot]
             run("qemu-img", "convert", "-f", "qcow2", "-O", "vmdk",
                 "-o", "subformat=streamOptimized,adapter_type=lsilogic", str(payload), str(stream), seconds=2400)
+            trim_vmdk_stream_padding(stream)
             require_stream_vmdk(stream, EXPECTED_PAYLOADS[slot][2])
 
         evidence: dict[str, Any] = {
