@@ -21,6 +21,7 @@ from scripts.installation.manifest import (
     SOURCE_ISO_SHA512 as SOURCE_ISO_SHA512,
 )
 from scripts.interop.create_photon_kickstart_iso import (
+    iso_record_exists,
     open_pinned_input,
     open_pinned_output,
     remove_file_if_present,
@@ -33,6 +34,7 @@ BOOT_LAUNCHER_PATH = "usr/bin/bootphotoninstaller"
 TRUST_KEY_PATH = "etc/atlaso-installer/trust.pem"
 PAYLOAD_ISO_ROOT = "/ATLASO"
 VOLUME_IDENTIFIER = b"ATLASO_INSTALLER".ljust(32, b" ")
+_MAX_INSTALLER_BYTES = 2_000_000_000
 _CHUNK_SIZE = 1024 * 1024
 _CPIO_HEADER_SIZE = 110
 _CPIO_MAGICS = {b"070701", b"070702"}
@@ -713,6 +715,51 @@ def _remove_owned_output(path: Path, identity: tuple[int, int]) -> None:
         pass
 
 
+def _remove_stock_directory(iso, iso_path: str) -> None:
+    """Remove a stock Photon directory after removing its children.
+
+    Args:
+        iso: Open, checksum-admitted Photon ISO to edit in memory.
+        iso_path: Absolute ISO9660 path of the stock directory.
+    """
+    for entry in tuple(iso.list_children(iso_path=iso_path)):
+        if entry.is_dot() or entry.is_dotdot():
+            continue
+        child_path = f"{iso_path}/{entry.file_identifier().decode('ascii')}"
+        if entry.is_dir():
+            _remove_stock_directory(iso, child_path)
+        else:
+            iso.rm_file(iso_path=child_path)
+    iso.rm_directory(iso_path=iso_path)
+
+
+def _compact_photon_source(iso) -> None:
+    """Keep boot files and notices while removing unused upstream install payloads.
+
+    Args:
+        iso: Open, checksum-admitted Photon ISO to edit in memory.
+    """
+    if iso_record_exists(iso, iso_path="/RPMS"):
+        _remove_stock_directory(iso, "/RPMS")
+    if iso_record_exists(iso, iso_path="/OSTREE_REPO.TGZ;1"):
+        iso.rm_file(iso_path="/OSTREE_REPO.TGZ;1")
+
+    license_path = "/OPEN_SOURCE_LICENSE_PHOTON_.TX;1"
+    if iso_record_exists(iso, iso_path=license_path):
+        compressed = io.BytesIO()
+        with gzip.GzipFile(fileobj=compressed, mode="wb", mtime=0) as archive:
+            iso.get_file_from_iso_fp(archive, iso_path=license_path)
+        size = compressed.tell()
+        compressed.seek(0)
+        iso.rm_file(iso_path=license_path)
+        iso.add_fp(
+            compressed,
+            size,
+            iso_path="/OPEN_SOURCE_LICENSE_PHOTON.GZ;1",
+            rr_name="open_source_license_Photon_OS_5.0_GA.txt.gz",
+        )
+
+
 def build_iso(
     source_iso: Path, payload_root: Path, output: Path, *, trust_key: Path,
     development: bool = False, serial_console: bool = False,
@@ -797,7 +844,7 @@ def build_iso(
         remove_file_if_present(iso, iso_path=INITRD_ISO_PATH, rr_name="initrd.img")
         iso.add_fp(io.BytesIO(rewritten), len(rewritten), iso_path=INITRD_ISO_PATH, rr_name="initrd.img")
 
-        from scripts.interop.create_photon_kickstart_iso import iso_record_exists
+        _compact_photon_source(iso)
 
         grub_paths = [entry for entry in _GRUB_CONFIGS if iso_record_exists(iso, iso_path=entry[0])]
         if not grub_paths:
@@ -825,6 +872,8 @@ def build_iso(
 
         output_stream, output_identity = _create_exclusive_output(output_path)
         iso.write_fp(output_stream)
+        if output_stream.seek(0, os.SEEK_END) >= _MAX_INSTALLER_BYTES:
+            raise ValueError("offline installation ISO must be smaller than 2,000,000,000 bytes")
         catalog = iso.eltorito_boot_catalog
         efi = ([catalog.initial_entry] if catalog.validation_entry.platform_id == 0xEF else [])
         efi += [entry for section in catalog.sections if section.platform_id == 0xEF

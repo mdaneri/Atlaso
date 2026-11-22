@@ -64,10 +64,11 @@ reboot, payload, first-boot and host OpenAPI acceptance. Record physical USB 2/3
 ## Installer image contract
 
 The installation image reuses the pinned Photon 5.0 ISO and Photon installer 2.2. Remastering preserves the source EFI
-boot image and native installer flow. The Atlaso deployment source comes from an immutable Git archive at the
-selected full commit. The signed software release, its exact application wheel, locked CPython wheelhouse, shared
-provisioning inputs, PowerCLI modules, trust material, notices, firmware, and a signed offline Photon RPM repository
-are embedded and inventoried. Dependency closure is resolved during authorized ISO preparation; installation does
+boot image and native installer flow. It excludes the stock Photon RPM repository and OSTree archive, and retains
+the upstream license text as a gzip-compressed file. The completed ISO must be smaller than 2,000,000,000 bytes.
+The Atlaso deployment source comes from an immutable Git archive at the selected full commit. The image embeds
+and inventories the signed software release, its exact application wheel, the locked CPython wheelhouse, shared
+provisioning inputs, PowerCLI modules, trust material, notices, firmware, and the signed offline Photon RPM repository. Dependency closure is resolved during authorized ISO preparation; installation does
 not use network package repositories. Shared provisioning explicitly installs `iproute2` for the console and diagnostics;
 the final package-state verifier requires it. The complete captured RPM closure must include its dependencies.
 The base package selection also requires Photon's signed `iana-etc` package, which supplies `/etc/services`
