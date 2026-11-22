@@ -3643,6 +3643,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Release lifecycle contributions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#version-transition" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Version transition
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -4184,6 +4201,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Release lifecycle contributions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#version-transition" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Version transition
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -4360,8 +4394,11 @@ embedded build metadata, fails closed on collisions, and records that identity i
 does not rebuild or substitute the application wheel. It retains the exact CPython 3.14 wheelhouse, signing,
 immutable-tag/Release, Pages serialization, and live-verification gates. Starting with <code>v0.9.506</code>, each software
 release automatically stages its signed installation ISO and software bundle in one hidden GitHub Release draft.
-The protected maintainer approval dispatch validates the exact ISO digest and acceptance evidence before making the
-release public and advancing <code>development</code>. See the
+The hosted acceptance job reconstructs the signed draft's exact ISO, installs it in a disconnected UEFI VM and
+checks the installed version, source, services, media-free boot and unselected disk. The protected publisher admits
+the receipt from that workflow attempt, revalidates the signed draft and publishes it as a GitHub prerelease before
+advancing <code>development</code>. A separate maintainer dispatch requires exact-ISO representative physical acceptance to
+promote to <code>stable</code> and mark the same GitHub release stable. See the
 <a href="../../reference/installation-iso/#stage-and-publish-a-standard-release">ISO release procedure</a>. Manual
 dispatch with the exact full SHA of a successful <code>main</code> push CI run remains available for idempotent recovery. After
 the 90-day retention window, manually dispatch <strong>Replay Python wheel</strong> from <code>main</code> with the exact commit plus its
@@ -4372,6 +4409,10 @@ read-only <strong>Publish Python wheel</strong> workflow to revalidate the reque
 not implicitly advance an older release; use the exact-SHA software-release dispatch for recovery. When a draft or
 public release already exists, the workflow verifies and reuses its signed assets only after the replay wheel matches
 the bundled wheel byte for byte, preserving the original signed provenance for channel recovery.</p>
+<p>The hosted acceptance job uses the <code>main</code>-only <code>installation-acceptance</code> environment. GitHub requires a
+write-scoped repository token to download draft assets. Only the download step receives that token. The guest
+has no GitHub credentials, and acceptance has no signing key. Release publication runs in a separate job after
+verification of the receipt and complete signed assets.</p>
 <p>The protected appliance release workflow consumes an approved Photon snapshot from its private, digest-pinned
 installation capture archive. The archive binds retained Photon 5.0 repository metadata, including the exact
 <code>repomd.xml</code> and primary package metadata, to the original native capture receipt and complete RPM inventory. A
@@ -4392,6 +4433,11 @@ prerelease path retain live upstream-metadata admission.</p>
 vendored distributions, such as Packaging bundled inside setuptools, cannot establish the wheel's identity even when
 the vendored version also appears in the release lock. Missing or ambiguous top-level locked metadata, missing locked
 packages, and missing license or source information still stop publication.</p>
+<h3 id="version-transition">Version transition<a class="headerlink" href="#version-transition" title="Permanent link">&para;</a></h3>
+<p>The first new release in this lifecycle is <code>1.0.0</code>. Land the trusted version policy with the ordinary next patch,
+then use <code>python scripts/version.py bump --version 1.0.0</code> in the next PR. The protected release workflow skips automatic
+staging for the intermediate <code>0.9.x</code> patch. The existing signed <code>v0.9.516</code> draft is eligible for recovery at its original
+commit and version. Subsequent PRs use the ordinary synchronized patch rule.</p>
 <p>OVA and Hyper-V images use the separate manual lifecycle documented in the
 <a href="../../reference/virtualization-artifacts/">virtualization artifact guide</a>. A maintainer workstation creates and
 smokes <code>virtualization-vX.Y.Z-rc.N</code>; protected hosted jobs sign it, and the exact bytes may become

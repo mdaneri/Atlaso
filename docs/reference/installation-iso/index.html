@@ -4680,7 +4680,7 @@ CI checks the manifest and archive digests, capture compatibility, retained Phot
 transactions, PowerCLI lock, pinned Photon source, snapshot age, and free space. Drift results are diagnostic and do
 not replace package authentication or complete-transaction checks. An expired, incompatible, withdrawn, or incomplete
 snapshot leaves the version unpublished. Once compatible inputs are fixed, dispatch the workflow from <code>main</code> with the
-full release commit and blank approval fields to retry staging.</p>
+full release commit to retry staging and acceptance.</p>
 <p>Audit an approved archive separately on a host with RPM tools. Use the original archive SHA-256 and the exact
 release checkout to review. The command compares selected RPMs with current Photon metadata and reports published
 Photon security advisories that specify a newer package for an installed name and architecture.</p>
@@ -4689,14 +4689,26 @@ Photon security advisories that specify a newer package for an installed name an
 </span></code></pre></div>
 <p>Review advisories independently of staging. If an advisory or signing-trust change requires withdrawal, remove the
 protected capture pins until a replacement is approved. Review pending drafts built from a withdrawn snapshot before
-approving their exact ISO. The signed installation artifact index records the snapshot digest.</p>
-<p>Download the complete signed draft and verify and reconstruct the ISO as described below. Record disconnected UEFI
-installation, boot without media, Appliance Update and rollback persistence, unselected-disk preservation, and
-representative physical acceptance for that exact SHA-256 on an Atlaso issue or PR. Dispatch <strong>Publish appliance
-release</strong> from <code>main</code> with <code>release_sha</code>, <code>validated_iso_sha256</code>, and <code>installation_acceptance_evidence</code> set to that
-record's GitHub URL. Publication rechecks the draft bytes and verifies the public asset inventory and digests before
-advancing <code>development</code>. A later dispatch with the same evidence can recover the channel after publication. An older
-approval can publish its release without moving Latest or <code>development</code> backward.</p>
+retrying release publication. The signed installation artifact index records the snapshot digest.</p>
+<p>GitHub Actions downloads the signed draft's ISO parts, verifies the signed index and reconstructs the exact installer.
+The QEMU/OVMF job checks disconnected UEFI installation to a 64 GiB disk, preservation of a second 4 GiB disk, boot
+without installation media, active Atlaso services and matching application version and source commit. The runner reads
+the installed identity and service state through the appliance's authenticated native console. The disk-only boot uses
+isolated virtual DHCP with no forwarded ports. Its receipt
+binds all checkpoints to the ISO SHA-256 and the workflow attempt that ran them. A failed or incomplete run leaves
+the draft hidden. A passing run publishes the same draft as a prerelease and verifies the public assets before
+advancing <code>development</code>. To retry, dispatch <strong>Publish appliance release</strong> from <code>main</code> with the full <code>release_sha</code>.</p>
+<p>Before the first hosted test, configure the protected <code>installation-acceptance</code> GitHub environment for <code>main</code>.
+Set <code>OP_ENVIRONMENT_ID</code> to the dedicated <code>Atlaso Installer CI</code> 1Password Environment and save its read-only service
+account token as <code>OP_SERVICE_ACCOUNT_TOKEN</code>. Scope the service account to that Environment and leave vault access
+empty. Follow the <a href="../../contribute/credential-policy/">credential policy</a> for the VM credentials.</p>
+<p>For stable promotion, record disconnected UEFI installation, boot without media, Appliance Update and rollback
+persistence, unselected-disk preservation and representative physical hardware results for the exact signed ISO.
+A maintainer posts those results and the full ISO SHA-256 in an issue or PR comment with a separate line reading
+<code>Representative physical acceptance: PASS</code>. Dispatch <strong>Promote appliance release</strong> from <code>main</code> with <code>stable</code>, the
+version without its <code>v</code> prefix and the comment URL as <code>physical_acceptance_evidence</code>. The workflow revalidates the
+signed ISO and evidence, advances and verifies the signed stable channel, then marks the same GitHub release stable.
+GitHub Latest advances only when that version is the highest stable software release.</p>
 <p>Keep any partial or conflicting draft for maintainer reconciliation. Compare its asset names, sizes, and digests with
 the original successful build evidence before correcting the draft. A complete verified draft can be reused without a
 rebuild. Any rebuilt image requires new exact-media acceptance before publication.</p>
