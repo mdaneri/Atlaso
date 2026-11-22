@@ -343,16 +343,21 @@ def screen_text(qmp: Qmp, directory: Path) -> str:
         prepared.write_bytes(prepared_bytes)
         result = subprocess.run(
             ["tesseract", str(prepared), "stdout", "--psm", "6" if cropped else "11"],
-            check=True,
+            check=False,
             capture_output=True,
             text=True,
             timeout=15,
+            env={**os.environ, "OMP_THREAD_LIMIT": "1"},
         )
+        if result.returncode:
+            print(f"Console OCR could not read a frame (exit {result.returncode}).", flush=True)
+            return ""
         if len(result.stdout) > 32768:
             raise AcceptanceError("guest screen text exceeded its fixed bound")
         return result.stdout
-    except subprocess.SubprocessError as error:
-        raise AcceptanceError("the bounded guest screen observer failed") from error
+    except subprocess.TimeoutExpired:
+        print("Console OCR timed out on a frame.", flush=True)
+        return ""
     finally:
         image.unlink(missing_ok=True)
         prepared.unlink(missing_ok=True)

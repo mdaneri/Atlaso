@@ -113,6 +113,9 @@ def promote(
         or not SHA256.fullmatch(fingerprint)
     ):
         raise ValueError("stable release identity is malformed")
+    candidate = version_key(tag)
+    if candidate[0] == 0:
+        raise ValueError("stable promotion requires version 1.0.0 or later")
     if digest(manifest) != manifest_sha256:
         raise ValueError("signed release manifest differs from physical admission")
     signature = manifest.with_name("release-manifest.json.sig")
@@ -146,7 +149,6 @@ def promote(
     if verify_only:
         return
 
-    candidate = version_key(tag)
     highest = latest_version(release_list(repo))
     make_latest = candidate >= highest
     previous_latest = None if make_latest else latest_release(repo)

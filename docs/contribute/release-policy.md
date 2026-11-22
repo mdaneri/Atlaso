@@ -68,8 +68,8 @@ release automatically stages its signed installation ISO and software bundle in 
 The hosted acceptance job reconstructs the signed draft's exact ISO, installs it in a disconnected UEFI VM and
 checks the installed version, source, services, media-free boot and unselected disk. The protected publisher admits
 the receipt from that workflow attempt, revalidates the signed draft and publishes it as a GitHub prerelease before
-advancing `development`. A separate maintainer dispatch requires exact-ISO representative physical acceptance to
-promote to `stable` and mark the same GitHub release stable. See the
+advancing `development`. Version `0.9.x` remains the prerelease line. A separate maintainer dispatch allows a
+`1.x` or later release to advance `stable` only after representative physical acceptance of that exact ISO. See the
 [ISO release procedure](../reference/installation-iso.md#stage-and-publish-a-standard-release). Manual
 dispatch with the exact full SHA of a successful `main` push CI run remains available for idempotent recovery. After
 the 90-day retention window, manually dispatch **Replay Python wheel** from `main` with the exact commit plus its
@@ -111,10 +111,11 @@ packages, and missing license or source information still stop publication.
 
 ### Version transition
 
-The first new release in this lifecycle is `1.0.0`. Land the trusted version policy with the ordinary next patch,
-then use `python scripts/version.py bump --version 1.0.0` in the next PR. The protected release workflow skips automatic
-staging for the intermediate `0.9.x` patch. The existing signed `v0.9.516` draft is eligible for recovery at its original
-commit and version. Subsequent PRs use the ordinary synchronized patch rule.
+Continue synchronized patch increments on the `0.9.x` prerelease line. The existing signed `v0.9.516` draft remains
+eligible for recovery at its original commit and version. Beginning with `v0.9.517`, eligible software builds follow
+the automatic prerelease workflow. Once maintainers choose to begin the stable release line, use
+`python scripts/version.py bump --version 1.0.0` in a separate PR. Builds on that line still pass VM acceptance before
+prerelease publication. Stable promotion follows separate physical acceptance.
 
 OVA and Hyper-V images use the separate manual lifecycle documented in the
 [virtualization artifact guide](../reference/virtualization-artifacts.md). A maintainer workstation creates and
