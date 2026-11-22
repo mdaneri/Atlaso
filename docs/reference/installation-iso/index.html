@@ -4702,8 +4702,9 @@ advancing <code>development</code>. To retry, dispatch <strong>Publish appliance
 Set <code>OP_ENVIRONMENT_ID</code> to the dedicated <code>Atlaso Installer CI</code> 1Password Environment and save its read-only service
 account token as <code>OP_SERVICE_ACCOUNT_TOKEN</code>. Scope the service account to that Environment and leave vault access
 empty. Follow the <a href="../../contribute/credential-policy/">credential policy</a> for the VM credentials.</p>
-<p>For stable promotion, record disconnected UEFI installation, boot without media, Appliance Update and rollback
-persistence, unselected-disk preservation and representative physical hardware results for the exact signed ISO.
+<p>Only versions <code>1.0.0</code> and later can advance <code>stable</code>. Record disconnected UEFI installation, boot without media,
+Appliance Update and rollback persistence, unselected-disk preservation and representative physical hardware results
+for the exact signed ISO.
 A maintainer posts those results and the full ISO SHA-256 in an issue or PR comment with a separate line reading
 <code>Representative physical acceptance: PASS</code>. Dispatch <strong>Promote appliance release</strong> from <code>main</code> with <code>stable</code>, the
 version without its <code>v</code> prefix and the comment URL as <code>physical_acceptance_evidence</code>. The workflow revalidates the

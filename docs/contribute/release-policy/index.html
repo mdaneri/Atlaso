@@ -4397,8 +4397,8 @@ release automatically stages its signed installation ISO and software bundle in 
 The hosted acceptance job reconstructs the signed draft's exact ISO, installs it in a disconnected UEFI VM and
 checks the installed version, source, services, media-free boot and unselected disk. The protected publisher admits
 the receipt from that workflow attempt, revalidates the signed draft and publishes it as a GitHub prerelease before
-advancing <code>development</code>. A separate maintainer dispatch requires exact-ISO representative physical acceptance to
-promote to <code>stable</code> and mark the same GitHub release stable. See the
+advancing <code>development</code>. Version <code>0.9.x</code> remains the prerelease line. A separate maintainer dispatch allows a
+<code>1.x</code> or later release to advance <code>stable</code> only after representative physical acceptance of that exact ISO. See the
 <a href="../../reference/installation-iso/#stage-and-publish-a-standard-release">ISO release procedure</a>. Manual
 dispatch with the exact full SHA of a successful <code>main</code> push CI run remains available for idempotent recovery. After
 the 90-day retention window, manually dispatch <strong>Replay Python wheel</strong> from <code>main</code> with the exact commit plus its
@@ -4434,10 +4434,11 @@ vendored distributions, such as Packaging bundled inside setuptools, cannot esta
 the vendored version also appears in the release lock. Missing or ambiguous top-level locked metadata, missing locked
 packages, and missing license or source information still stop publication.</p>
 <h3 id="version-transition">Version transition<a class="headerlink" href="#version-transition" title="Permanent link">&para;</a></h3>
-<p>The first new release in this lifecycle is <code>1.0.0</code>. Land the trusted version policy with the ordinary next patch,
-then use <code>python scripts/version.py bump --version 1.0.0</code> in the next PR. The protected release workflow skips automatic
-staging for the intermediate <code>0.9.x</code> patch. The existing signed <code>v0.9.516</code> draft is eligible for recovery at its original
-commit and version. Subsequent PRs use the ordinary synchronized patch rule.</p>
+<p>Continue synchronized patch increments on the <code>0.9.x</code> prerelease line. The existing signed <code>v0.9.516</code> draft remains
+eligible for recovery at its original commit and version. Beginning with <code>v0.9.517</code>, eligible software builds follow
+the automatic prerelease workflow. Once maintainers choose to begin the stable release line, use
+<code>python scripts/version.py bump --version 1.0.0</code> in a separate PR. Builds on that line still pass VM acceptance before
+prerelease publication. Stable promotion follows separate physical acceptance.</p>
 <p>OVA and Hyper-V images use the separate manual lifecycle documented in the
 <a href="../../reference/virtualization-artifacts/">virtualization artifact guide</a>. A maintainer workstation creates and
 smokes <code>virtualization-vX.Y.Z-rc.N</code>; protected hosted jobs sign it, and the exact bytes may become
