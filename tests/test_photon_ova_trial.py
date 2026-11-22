@@ -124,3 +124,11 @@ def test_build_sources_use_the_persistent_seed_directory() -> None:
     assert 'chmod 0711 "$build"' in script
     assert 'install -d -m 0755 "$ATLASO_SRC"' in script
     assert 'rm -rf "$build"' in script
+
+
+def test_trial_restores_grub_before_installing_appliance_branding() -> None:
+    """The shared provisioner needs the inherited graphical theme declaration."""
+    script = (build_photon_ova.ASSETS / "provision.sh").read_text(encoding="utf-8")
+    restore_menu = script.index('"$build/grub.cfg" > /boot/grub2/grub.cfg')
+    provision_appliance = script.index('sh "$ATLASO_SRC/image/common/scripts/provision-atlaso.sh"')
+    assert restore_menu < provision_appliance
