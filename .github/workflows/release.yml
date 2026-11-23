@@ -646,6 +646,7 @@ jobs:
           unzip -q "$OP_ARCHIVE" op -d "$RUNNER_TEMP/1password-bin"
           echo "$RUNNER_TEMP/1password-bin" >> "$GITHUB_PATH"
       - name: Run installation acceptance and seal the receipt
+        id: vm
         env:
           OP_ENVIRONMENT_ID: ${{ vars.OP_ENVIRONMENT_ID }}
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
@@ -659,6 +660,14 @@ jobs:
             python -m scripts.installation.vm_acceptance --iso "$RUNNER_TEMP/installation.iso" \
               --sha256 "$ISO_SHA256" --version "$VERSION" --commit "$RELEASE_SHA" \
               --output "$RUNNER_TEMP/vm-fixture" --receipt "$RUNNER_TEMP/vm-acceptance.json"
+      - name: Retain sanitized VM failure evidence
+        if: ${{ failure() && steps.vm.outcome == 'failure' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: vm-acceptance-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/vm-acceptance-failure.json
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Retain exact acceptance evidence
         uses: actions/upload-artifact@v7
         with:
