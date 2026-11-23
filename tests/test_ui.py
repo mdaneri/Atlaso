@@ -11694,6 +11694,7 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     )
 
     monkeypatch.setattr("atlaso.app.ui.find_local_vcf_download_tool_archive", lambda: None)
+    monkeypatch.setattr("atlaso.app.ui.VCF_DEPOT_UPLOAD_DIR", tmp_path / "uploads")
 
     login(client)
     legacy = client.get("/https-repository", follow_redirects=False)
