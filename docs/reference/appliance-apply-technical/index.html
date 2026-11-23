@@ -5993,6 +5993,8 @@ selected bind targets.</p>
 initialize approved blank disks, mount ESX Storage volumes, create bind exports, or change <code>rpcbind.service</code> and
 <code>nfs-server.service</code>. IPv4 and IPv6 are equivalent: every enabled family is validated against the selected
 interface/VLAN, its own VMkernel allowlist, generated A/AAAA target, ESX command, and family-specific firewall rule.</p>
+<p>Volume-only Apply initializes or admits volumes with zero enabled shares. It leaves NFS services inactive and publishes
+no exports, managed datastore DNS records, or managed datastore firewall rules.</p>
 <p>Blank whole-disk initialization requires the global review modal to show the stable <code>/dev/disk/by-id</code> path plus model,
 serial, WWN, and size and accept the exact <code>FORMAT &lt;volume-name&gt;</code> confirmation. The server binds that authorization to
 the appliance-apply job ID, manifest SHA256, and stable identity. The helper validates the complete manifest,

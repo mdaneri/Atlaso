@@ -4613,8 +4613,8 @@ instructions deliberately do not use the canonical alias: the IPv4 command uses 
 command uses the generated AAAA target. Resolver preference therefore cannot choose a family implicitly.</p>
 <p>Atlaso never replaces an operator-owned A or AAAA record. A collision blocks ESX Storage apply. Changing the interface,
 addresses, enabled families, service hostname, or enabled state removes stale app-owned records and marks <code>esx_storage</code>,
-<code>dnsmasq</code>, and <code>firewall</code> pending together. DNS desired state must be enabled and valid before ESX Storage can be
-applied.</p>
+<code>dnsmasq</code>, and <code>firewall</code> pending together. DNS desired state must be enabled and valid before ESX Storage publishes
+datastores.</p>
 <h2 id="volumes-and-disk-initialization">Volumes and disk initialization<a class="headerlink" href="#volumes-and-disk-initialization" title="Permanent link">&para;</a></h2>
 <p>Storage Volumes supports two sources:</p>
 <ol>
@@ -4625,6 +4625,15 @@ applied.</p>
    persistence, no partitions or holders, and an active UUID-matching mount. Apply revalidates the complete contract and
    writes its exact UUID, stable identity, and mount to root-owned <code>/etc/atlaso/esx-storage-disks.conf</code>. Filesystems
    reserved for VCF Backups or VCF Offline Depot / VCFDT are never eligible, including paths below those mount roots.</li>
+</ol>
+<p>You can prepare a volume before creating an NFS datastore:</p>
+<ol>
+<li>In <strong>ESX Storage</strong> → <strong>Storage Volumes</strong>, choose <strong>Add storage volume here</strong> and complete the wizard.</li>
+<li>Open <strong>Review appliance changes</strong> and select <strong>ESX Storage</strong>. For a blank disk, verify the displayed disk identity
+   and enter <code>FORMAT &lt;volume-name&gt;</code> before submitting.</li>
+<li>After Apply succeeds, confirm in <strong>Storage Volumes</strong> that the volume has a filesystem UUID and mount path.
+   With zero enabled datastores, Apply publishes no NFS exports and leaves NFS services inactive.</li>
+<li>When ready to publish the volume, add an enabled share in <strong>NFS Datastores</strong> and review and apply the new changes.</li>
 </ol>
 <p>A newly initialized disk becomes a whole-device ext4 filesystem mounted by filesystem UUID at
 <code>/mnt/atlaso-esx-storage/&lt;volume-slug&gt;</code>. <code>/dev/sdX</code> names are never persisted. The global review displays the complete
