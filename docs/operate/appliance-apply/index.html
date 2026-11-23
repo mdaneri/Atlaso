@@ -4588,11 +4588,9 @@ also validate listener conflicts. See <a href="../traffic-publishing/">Traffic P
 <li>Expand each selected unit and inspect its summary and rendered difference.</li>
 <li>Clear the checkbox for a valid unit that should remain pending for a later run.</li>
 </ol>
-<p>Valid changed units are selected by default; invalid independent units are not. Unselected changes remain pending.
-The review also lists unchanged components that must run for management protection, certificate deployment, DNS
-publication, or routing and Firewall consistency. These required dependencies stay checked and locked, with a reason
-beside each component. Clear the originating change to defer its dependencies; the server recomputes the plan after
-each selection change. A required component needing attention blocks submission until its validation is resolved.</p>
+<p>The review selects valid changes and unfinished setup by default. Cleared choices stay pending. Required dependencies
+stay checked and locked with a reason. Clear the originating change to recompute the plan. Resolve validation errors
+in any required component before submitting.</p>
 <p>The summary shows changed components, required dependencies, explicit choices, and complete scope. For example,
 <strong>2 changed components + 5 required dependencies = 7 components to process</strong> means one task with seven components.
 Network/WAN dependencies protect management access and replay translation even when they have no pending edits.</p>
