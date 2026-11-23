@@ -706,7 +706,12 @@ def test_storage_review_serializes_changed_manifest_identity(client, monkeypatch
 
 
 def test_volume_only_storage_is_reviewable_with_format_confirmation(client, monkeypatch):
-    """Review a saved blank volume without a datastore and reject missing format consent."""
+    """Review a saved blank volume without a datastore and reject missing format consent.
+
+    Args:
+        client: Isolated HTTP test client used to review and submit the Apply plan.
+        monkeypatch: Pytest fixture that prevents accidental execution of an Apply job.
+    """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import EsxStorageVolume, Job
