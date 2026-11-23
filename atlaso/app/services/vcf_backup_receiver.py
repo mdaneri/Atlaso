@@ -94,7 +94,11 @@ def _transport(receiver: dict[str, Any]) -> paramiko.Transport:
 
 
 def _shared_installed_backup(root: Path) -> bool:
-    """Admit a native install whose receipt keeps backups on the root filesystem."""
+    """Admit a native install whose receipt keeps backups on the root filesystem.
+
+    Args:
+        root: Installed backup directory whose volume identity is being verified.
+    """
     if not INSTALLATION_PROFILE.exists() or not INSTALLATION_LAYOUT.exists() or root.is_symlink():
         return False
     for receipt in (INSTALLATION_PROFILE, INSTALLATION_LAYOUT):

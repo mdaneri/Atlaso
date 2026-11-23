@@ -14345,7 +14345,7 @@ function initializeAutosaveForms(root = document) {
     }
     if (form.dataset.autosaveInitialized === "1") return;
     form.dataset.autosaveInitialized = "1";
-    if (form.hasAttribute("data-vcf-service-storage")) {
+    if (form.dataset.vcfServiceStorage !== undefined) {
       const volume = form.elements.namedItem("storage_volume_uuid");
       const path = form.elements.namedItem("storage_volume_path");
       if (volume instanceof HTMLSelectElement && path instanceof HTMLInputElement) {

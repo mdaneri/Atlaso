@@ -16369,10 +16369,46 @@ def vcf_backups_config_text(*, enabled: bool = True) -> str:
     )
 
 
+@pytest.mark.parametrize(
+    ("path", "valid"),
+    [
+        ("/mnt/atlaso-esx-storage/vcf/backups_2026-11.23", True),
+        ("/mnt/atlaso-esx-storage/vcf/_archive", True),
+        ("/", False),
+        ("mnt/data/backup", False),
+        ("/mnt/data//backup", False),
+        ("/mnt/data/../backup", False),
+        ("/mnt/data/-backup", False),
+        ("/mnt/data/backup/", False),
+        ("/mnt/data/backup files", False),
+        ("/mnt/data/b\u00e9ckup", False),
+    ],
+)
+def test_vcf_storage_path_syntax_matches_service_and_helper(path, valid):
+    """Preserve the same absolute path syntax at both validation boundaries.
+
+    Args:
+        path: Candidate service storage directory.
+        valid: Whether the existing path syntax allows the candidate.
+    """
+    from atlaso.app.services.vcf_service_storage import _storage_path_syntax
+
+    helper = load_helper_module()
+    assert helper._vcf_storage_valid_path(path) is valid
+    assert _storage_path_syntax(path) is valid
+
+
 @pytest.mark.parametrize("role", ["backup", "depot"])
 @pytest.mark.parametrize("failure", ["bind", "service", None])
 def test_vcf_storage_switch_preserves_previous_assignment(monkeypatch, tmp_path, role, failure):
-    """Exercise the previous mount, candidate verification, service step and boot record."""
+    """Exercise the previous mount, candidate verification, service step, and boot record.
+
+    Args:
+        monkeypatch: Replace host mounts and locks with fixture state.
+        tmp_path: Isolated service and ownership state.
+        role: Service whose mount changes.
+        failure: Stage that rejects activation, or None for success.
+    """
     helper = load_helper_module()
     state_dir = tmp_path / "state"
     state_dir.mkdir()
@@ -16385,6 +16421,12 @@ def test_vcf_storage_switch_preserves_previous_assignment(monkeypatch, tmp_path,
     configured = []
 
     def bind(source, destination):
+        """Record a mount attempt without changing host storage.
+
+        Args:
+            source: Candidate directory to expose.
+            destination: Stable service mountpoint.
+        """
         assert destination == target
         if source == Path(desired["path"]) and failure == "bind":
             raise ValueError("candidate bind failed")
@@ -16427,7 +16469,13 @@ def test_vcf_storage_switch_preserves_previous_assignment(monkeypatch, tmp_path,
 
 @pytest.mark.parametrize("approved_bind", [False, True])
 def test_vcf_storage_rechecks_the_original_installation_mount(monkeypatch, tmp_path, approved_bind):
-    """Use the installed receipt with or without an independently verified overlay."""
+    """Use the installed receipt with or without an independently verified overlay.
+
+    Args:
+        monkeypatch: Supply the installed layout and mount observations.
+        tmp_path: Isolated fixture path.
+        approved_bind: Whether the service overlay has been verified.
+    """
     helper = load_helper_module()
     verifier = tmp_path / "layout.py"
     mount = {"target": str(tmp_path), "uuid": "original-uuid", "filesystem": "ext4"}
@@ -16442,11 +16490,22 @@ def test_vcf_storage_rechecks_the_original_installation_mount(monkeypatch, tmp_p
     original_lstat = Path.lstat
 
     def lstat(path):
+        """Return trusted verifier metadata without modifying the test filesystem.
+
+        Args:
+            path: Path whose metadata is requested.
+        """
         if path == verifier:
             return SimpleNamespace(st_mode=stat.S_IFREG | 0o644, st_uid=0)
         return original_lstat(path)
 
     def findmnt(command, **kwargs):
+        """Return the original filesystem from the expected mount query.
+
+        Args:
+            command: Native mount observation under test.
+            **kwargs: Subprocess options supplied by the helper.
+        """
         assert ("--shadowed" in command) == approved_bind
         return subprocess.CompletedProcess(command, 0, json.dumps({
             "filesystems": [{"uuid": "original-uuid", "fstype": "ext4"}],

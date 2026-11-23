@@ -135,6 +135,11 @@ def storage_layout_screen(maxy: int, maxx: int, config: dict, initial: dict,
     custom_layout = None
 
     def conflicts(eligible: dict) -> list[str]:
+        """Return inline errors for root and service assignments.
+
+        Args:
+            eligible: Current disks whose identities still match the initial inventory.
+        """
         found = [""] * len(roles)
         root_disk = working["disk"]
         root = next((item for item in working["partitions"] if item.get("mountpoint") == "/"), None)
@@ -179,6 +184,13 @@ def storage_layout_screen(maxy: int, maxx: int, config: dict, initial: dict,
         return found
 
     def apply_choice(mountpoint: str, choice: tuple, partitions: list[dict]) -> None:
+        """Replace one role assignment while retaining a chosen partition's position.
+
+        Args:
+            mountpoint: Fixed service mount being assigned.
+            choice: Selected choice action and its value.
+            partitions: Current tentative partitions used to resolve a partition choice.
+        """
         _label, action, value = choice
         if action == "keep":
             return
@@ -186,14 +198,22 @@ def storage_layout_screen(maxy: int, maxx: int, config: dict, initial: dict,
             working["partitions"] = [partition for partition in working["partitions"]
                                      if partition.get("mountpoint") != mountpoint]
             return
-        chosen = copy.deepcopy(partitions[value]) if action == "partition" else {
-            "disk": value, "size": 0, "filesystem": "ext4",
-        }
+        if action == "partition":
+            chosen = copy.deepcopy(partitions[value])
+            chosen["mountpoint"] = mountpoint
+            replacement = []
+            for index, partition in enumerate(working["partitions"]):
+                if index == value:
+                    replacement.append(chosen)
+                elif partition.get("mountpoint") != mountpoint:
+                    replacement.append(partition)
+            working["partitions"] = replacement
+            return
+
+        chosen = {"disk": value, "size": 0, "filesystem": "ext4", "mountpoint": mountpoint}
         working["partitions"] = [partition for partition in working["partitions"]
                                  if partition.get("mountpoint") != mountpoint]
-        chosen["mountpoint"] = mountpoint
-        if action == "disk":
-            working["partitions"].append(chosen)
+        working["partitions"].append(chosen)
 
     role_count = len(roles)
     choice_cursors = [0] * len(SERVICE_STORAGE)

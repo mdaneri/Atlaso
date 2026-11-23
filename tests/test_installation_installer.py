@@ -182,7 +182,7 @@ def test_service_storage_assigns_custom_partition_and_preserves_existing_role(mo
     Args:
         monkeypatch: Isolated disk inventory and native menu selections.
     """
-    module = load_installer(monkeypatch)
+    module = load_installer(monkeypatch, native_choices=True)
     config = {"disk": "/dev/sda", "partitions": [
         {"mountpoint": "/", "size": 0, "filesystem": "ext4"},
         {"mountpoint": "/var", "disk": "/dev/sdb", "size": 4096, "filesystem": "ext4"},
@@ -192,11 +192,58 @@ def test_service_storage_assigns_custom_partition_and_preserves_existing_role(mo
     initial = {f"/dev/sd{letter}": {"size": 64 * 1024**3} for letter in "abc"}
 
     monkeypatch.setattr(module, "disk_inventory", lambda: initial)
-    monkeypatch.setattr(module, "storage_layout_screen", lambda _height, _width, selected_config, eligible, *_args:
-                        (assign_service_targets(module, selected_config, {
-                            "/mnt/atlaso-vcf-backups": 2,
-                            "/mnt/atlaso-vcf-offline-depot": "keep",
-                        }, eligible) or True))
+    class Window:
+        def bkgd(self, *_args):
+            """Accept background setup in the isolated terminal window.
+
+            Args:
+                *_args: Native background attributes.
+            """
+            pass
+
+        def keypad(self, *_args):
+            """Accept keypad setup in the isolated terminal window.
+
+            Args:
+                *_args: Native keypad flags.
+            """
+            pass
+
+        def erase(self):
+            pass
+
+        def box(self):
+            pass
+
+        def addstr(self, *_args):
+            """Ignore rendered text in the storage assignment test.
+
+            Args:
+                *_args: Coordinates, text, and optional drawing style.
+            """
+            pass
+
+        def refresh(self):
+            pass
+
+        def clear(self):
+            pass
+
+        def getch(self):
+            return next(keys)
+
+    keys = iter((9, ord("e"), 10))
+    module.curses.newwin = lambda *_args: Window()
+    module.curses.A_BOLD = 1
+    module.curses.A_REVERSE = 2
+    module.curses.A_UNDERLINE = 4
+    module.curses.KEY_ENTER = 10
+    module.curses.KEY_RIGHT = 261
+    module.curses.KEY_DOWN = 258
+    module.curses.KEY_BTAB = 353
+    module.curses.KEY_LEFT = 260
+    module.curses.KEY_UP = 259
+    module.curses.color_pair = lambda _index: 0
     assert module.storage_layout_screen(25, 80, config, initial)
     assert config["partitions"][1]["mountpoint"] == "/var"
     assert config["partitions"][2] == {"mountpoint": "/mnt/atlaso-vcf-backups", "disk": "/dev/sdb",
@@ -253,9 +300,19 @@ def test_combined_storage_layout_displays_all_roles_before_review(monkeypatch):
 
     class Window:
         def bkgd(self, *_args):
+            """Accept background setup in the isolated terminal window.
+
+            Args:
+                *_args: Native background attributes.
+            """
             pass
 
         def keypad(self, *_args):
+            """Accept keypad setup in the isolated terminal window.
+
+            Args:
+                *_args: Native keypad flags.
+            """
             pass
 
         def erase(self):
@@ -265,6 +322,11 @@ def test_combined_storage_layout_displays_all_roles_before_review(monkeypatch):
             pass
 
         def addstr(self, *_args):
+            """Collect visible text from the isolated terminal window.
+
+            Args:
+                *_args: Coordinates, text, and optional drawing style.
+            """
             rendered.append(str(_args[2]))
 
         def refresh(self):
@@ -316,9 +378,19 @@ def test_custom_editor_back_returns_to_combined_page_state(monkeypatch):
 
     class Window:
         def bkgd(self, *_args):
+            """Accept background setup in the isolated terminal window.
+
+            Args:
+                *_args: Native background attributes.
+            """
             pass
 
         def keypad(self, *_args):
+            """Accept keypad setup in the isolated terminal window.
+
+            Args:
+                *_args: Native keypad flags.
+            """
             pass
 
         def erase(self):
@@ -328,6 +400,11 @@ def test_custom_editor_back_returns_to_combined_page_state(monkeypatch):
             pass
 
         def addstr(self, *_args):
+            """Ignore rendered text in the navigation test.
+
+            Args:
+                *_args: Coordinates, text, and optional drawing style.
+            """
             pass
 
         def refresh(self):
@@ -358,6 +435,11 @@ def test_custom_editor_back_returns_to_combined_page_state(monkeypatch):
               "partitions": [{"mountpoint": "/", "size": 0, "filesystem": "ext4"}]}
 
     def custom_back(candidate):
+        """Model an abandoned Custom layout and return Back.
+
+        Args:
+            candidate: Mutable tentative configuration passed to the editor.
+        """
         layouts.append(candidate["autopartition"])
         candidate["partitions"] = [{"mountpoint": "/old", "size": 4096, "filesystem": "ext4"}]
         return False
@@ -379,9 +461,19 @@ def test_custom_layout_survives_auto_toggle_and_reopens(monkeypatch):
 
     class Window:
         def bkgd(self, *_args):
+            """Accept background setup in the isolated terminal window.
+
+            Args:
+                *_args: Native background attributes.
+            """
             pass
 
         def keypad(self, *_args):
+            """Accept keypad setup in the isolated terminal window.
+
+            Args:
+                *_args: Native keypad flags.
+            """
             pass
 
         def erase(self):
@@ -391,6 +483,11 @@ def test_custom_layout_survives_auto_toggle_and_reopens(monkeypatch):
             pass
 
         def addstr(self, *_args):
+            """Ignore rendered text in the navigation test.
+
+            Args:
+                *_args: Coordinates, text, and optional drawing style.
+            """
             pass
 
         def refresh(self):
@@ -420,6 +517,11 @@ def test_custom_layout_survives_auto_toggle_and_reopens(monkeypatch):
               "partitions": [{"mountpoint": "/", "size": 0, "filesystem": "ext4"}]}
 
     def edit_custom(candidate):
+        """Model successive edits to the retained Custom draft.
+
+        Args:
+            candidate: Mutable candidate layout supplied by the shared screen.
+        """
         visits.append(module.copy.deepcopy(candidate["partitions"]))
         if len(visits) == 1:
             candidate["partitions"].append({"mountpoint": "/var/lib/atlaso", "size": 4096,
@@ -1087,6 +1189,16 @@ def test_setup_back_navigation_preserves_prewrite_boundaries(monkeypatch, flow):
                             }, eligible) or True))
     if flow == "custom-back":
         def edit_custom(_height, _width, selected_config, _eligible, _source, custom_editor):
+            """Enter Custom and return to the shared page after Back.
+
+            Args:
+                _height: Terminal row count.
+                _width: Terminal column count.
+                selected_config: Mutable tentative storage configuration.
+                _eligible: Initial eligible disk identities.
+                _source: Captured installation source binding.
+                custom_editor: Existing native Custom partition editor callback.
+            """
             events.append("select")
             original = module.copy.deepcopy(selected_config)
             selected_config["autopartition"] = False
@@ -1579,6 +1691,15 @@ def test_disk_review_cancellation_returns_before_passwords_or_install(monkeypatc
     monkeypatch.setattr(module, "revalidate_disks", lambda *_args: calls.append("revalidate"))
     rendered = []
     def layout_screen(_height, _width, config, _eligible, *_args):
+        """Record the tentative target and model screen navigation.
+
+        Args:
+            _height: Terminal row count.
+            _width: Terminal column count.
+            config: Tentative installer configuration.
+            _eligible: Initial eligible disk identities.
+            *_args: Optional source and Custom editor callbacks.
+        """
         rendered.append(config["disk"])
         return size_gib >= 64
 
@@ -1667,9 +1788,19 @@ def test_root_disk_cycle_shows_inline_capacity_error_and_allows_eligible_target(
 
     class Window:
         def bkgd(self, *_args):
+            """Accept background setup in the isolated terminal window.
+
+            Args:
+                *_args: Native background attributes.
+            """
             pass
 
         def keypad(self, *_args):
+            """Accept keypad setup in the isolated terminal window.
+
+            Args:
+                *_args: Native keypad flags.
+            """
             pass
 
         def erase(self):
@@ -1679,6 +1810,11 @@ def test_root_disk_cycle_shows_inline_capacity_error_and_allows_eligible_target(
             pass
 
         def addstr(self, *_args):
+            """Collect rendered text for inline-error assertions.
+
+            Args:
+                *_args: Coordinates, text, and optional drawing style.
+            """
             rendered.append(str(_args[2]))
 
         def refresh(self):
@@ -1872,6 +2008,16 @@ def test_custom_multi_disk_adapter_displays_selected_disk_and_maps_each_partitio
     monkeypatch.setattr(module, "selected_disks", lambda _config: ["/dev/nvme0n1", "/dev/sdb"])
     monkeypatch.setattr(module, "revalidate_disks", lambda *_args: None)
     def enter_custom(_height, _width, config, _eligible, _source, custom_editor):
+        """Route the combined page into the existing Custom editor.
+
+        Args:
+            _height: Terminal row count.
+            _width: Terminal column count.
+            config: Tentative installer configuration.
+            _eligible: Initial eligible disk identities.
+            _source: Captured installation source binding.
+            custom_editor: Existing native Custom partition editor callback.
+        """
         config["autopartition"] = False
         return custom_editor(config)
 
@@ -2024,6 +2170,16 @@ def test_large_custom_disk_review_pages_identities_and_layout_before_cancellable
     monkeypatch.setattr(module, "selected_disks", lambda _config: paths)
     monkeypatch.setattr(module, "revalidate_disks", lambda *_args: None)
     def enter_custom(_height, _width, config, _eligible, _source, custom_editor):
+        """Route the combined page into the existing Custom editor.
+
+        Args:
+            _height: Terminal row count.
+            _width: Terminal column count.
+            config: Tentative installer configuration.
+            _eligible: Initial eligible disk identities.
+            _source: Captured installation source binding.
+            custom_editor: Existing native Custom partition editor callback.
+        """
         config["autopartition"] = False
         return custom_editor(config)
 

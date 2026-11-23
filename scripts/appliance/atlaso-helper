@@ -20549,19 +20549,41 @@ def _apply_vcf_backups_dropins(candidates: dict[Path, str | None]) -> int:
 
 
 def _vcf_storage_target(role: str) -> Path:
+    """Return the stable consumer mount for a VCF service.
+
+    Args:
+        role: Backup or depot service.
+    """
     return {"backup": VCF_BACKUPS_DEFAULT_STORAGE_PATH, "depot": VCF_DEPOT_STORE_PATH}[role]
 
 
+def _vcf_storage_valid_path(value: str) -> bool:
+    """Check the absolute path and each component without nested matching.
+
+    Args:
+        value: Path from the reviewed assignment or applied record.
+    """
+    return 0 < len(value) <= 240 and value.startswith("/") and all(
+        part and part[0] not in ".-" and part.isascii()
+        and all(char.isalnum() or char in "_.-" for char in part)
+        for part in value[1:].split("/")
+    )
+
+
 def _vcf_storage_metadata(value: object) -> dict[str, str]:
+    """Validate the assignment before consulting disk state.
+
+    Args:
+        value: Decoded storage metadata.
+    """
     if not isinstance(value, dict) or set(value) != {"uuid", "path", "volume_path", "device"}:
         raise ValueError("Invalid VCF storage assignment.")
     if not all(isinstance(field, str) for field in value.values()):
         raise ValueError("Invalid VCF storage assignment fields.")
     path = value["path"]
     volume_path = value["volume_path"]
-    path_pattern = r"(?:/[A-Za-z0-9_][A-Za-z0-9_.-]*)+"
-    if (len(path) > 240 or not re.fullmatch(path_pattern, path)
-            or not re.fullmatch(path_pattern, volume_path) or str(PurePosixPath(path).parent) != volume_path
+    if (not _vcf_storage_valid_path(path)
+            or not _vcf_storage_valid_path(volume_path) or str(PurePosixPath(path).parent) != volume_path
             or _esx_storage_reserved_mount_owner(volume_path)):
         raise ValueError("VCF storage must be a dedicated directory on a registered data volume.")
     volume = PurePosixPath(volume_path)
@@ -20577,6 +20599,11 @@ def _vcf_storage_metadata(value: object) -> dict[str, str]:
 
 
 def _vcf_storage_from_config(text: str) -> dict[str, str]:
+    """Read the optional storage metadata from a staged service configuration.
+
+    Args:
+        text: Complete staged service configuration.
+    """
     entries = [line.removeprefix(VCF_STORAGE_COMMENT) for line in text.splitlines()
                if line.startswith(VCF_STORAGE_COMMENT)]
     if not entries:
@@ -20587,6 +20614,11 @@ def _vcf_storage_from_config(text: str) -> dict[str, str]:
 
 
 def _vcf_storage_read(role: str) -> dict[str, str]:
+    """Read a protected applied assignment, defaulting to installed storage.
+
+    Args:
+        role: Backup or depot service.
+    """
     path = VCF_STORAGE_STATE_DIR / f"{role}.json"
     if not os.path.lexists(path):
         return {}
@@ -20600,6 +20632,11 @@ def _vcf_storage_read(role: str) -> dict[str, str]:
 
 
 def _vcf_storage_root_directory(path: Path) -> None:
+    """Require protected directory ancestry before using a trust-sensitive path.
+
+    Args:
+        path: Directory to check along with its ancestors.
+    """
     for candidate in (path, *path.parents):
         info = candidate.lstat()
         if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
@@ -20607,6 +20644,12 @@ def _vcf_storage_root_directory(path: Path) -> None:
 
 
 def _vcf_storage_find_mount(path: Path, field: str) -> list[str]:
+    """Read selected fields for an exact mountpoint.
+
+    Args:
+        path: Mountpoint to look up.
+        field: Requested findmnt output columns.
+    """
     result = _run(["findmnt", "-nro", field, "--mountpoint", str(path)], timeout=10)
     if result.returncode not in {0, 1}:
         raise ValueError("Unable to inspect VCF storage mounts.")
@@ -20616,6 +20659,14 @@ def _vcf_storage_find_mount(path: Path, field: str) -> list[str]:
 def _vcf_storage_live_source(
     role: str, assignment: dict[str, str], *, create: bool = False, boot: bool = False,
 ) -> Path:
+    """Verify a service directory against its registered writable filesystem.
+
+    Args:
+        role: Backup or depot service.
+        assignment: Reviewed registration identity and directory.
+        create: Whether Apply may create the dedicated directory.
+        boot: Whether startup may restore the registered primary mount.
+    """
     source = Path(assignment["path"])
     primary = Path(assignment["volume_path"])
     _vcf_storage_root_directory(primary)
@@ -20673,22 +20724,45 @@ def _vcf_storage_live_source(
 
 
 def _vcf_storage_mounted(source: Path, target: Path) -> bool:
+    """Compare the underlying directory identities of a source and its mount.
+
+    Args:
+        source: Expected service directory.
+        target: Consumer path to verify.
+    """
     return source.is_dir() and target.is_dir() and os.path.samestat(source.stat(), target.stat())
 
 
 def _vcf_storage_bind(source: Path, target: Path) -> None:
+    """Attach the service directory and verify the resulting mount.
+
+    Args:
+        source: Admitted service directory.
+        target: Stable service mountpoint.
+    """
     result = _run(["mount", "--bind", str(source), str(target)], timeout=15)
     if result.returncode or not _vcf_storage_mounted(source, target):
         raise ValueError("Could not attach and verify the selected VCF storage.")
 
 
 def _vcf_storage_unbind(target: Path) -> None:
+    """Detach the current service mount without forcing active handles closed.
+
+    Args:
+        target: Verified service mountpoint to detach.
+    """
     if _run(["umount", str(target)], timeout=15).returncode:
         raise ValueError("The current VCF storage is busy. Retry after active access has drained.")
 
 
 def _apply_with_vcf_storage(role: str, assignment: dict[str, str], apply: Callable[[], int]) -> int:
-    """Verify the candidate before switching and restore the last applied mount on failure."""
+    """Verify the candidate before switching and restore the last applied mount on failure.
+
+    Args:
+        role: Backup or depot service.
+        assignment: Reviewed registration identity, or empty for installed storage.
+        apply: Operation that activates the service on the selected storage.
+    """
     try:
         if not assignment and not os.path.lexists(VCF_STORAGE_STATE_DIR):
             return apply()
@@ -20767,6 +20841,12 @@ def _restore_vcf_storage_at_boot() -> int:
 
 
 def _vcf_storage_is_bound(role: str, expected_uuid: str = "") -> bool:
+    """Check that the observed service mount matches its applied assignment.
+
+    Args:
+        role: Backup or depot service.
+        expected_uuid: Optional filesystem UUID required by the caller.
+    """
     if role not in {"backup", "depot"} or not os.path.lexists(VCF_STORAGE_STATE_DIR):
         return False
     _vcf_storage_root_directory(VCF_STORAGE_STATE_DIR)
@@ -20874,6 +20954,12 @@ def _handle_vcf_backups(action: str, args: list[str]) -> int:
 
 
 def _apply_vcf_backups_service(values: dict[str, str | bool], candidates: dict[Path, str | None]) -> int:
+    """Activate the SFTP receiver on the verified service mount.
+
+    Args:
+        values: Parsed and validated receiver configuration.
+        candidates: SSH configuration files to install or remove.
+    """
     VCF_BACKUPS_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     if not values["enabled"]:
         return _apply_vcf_backups_dropins(candidates)

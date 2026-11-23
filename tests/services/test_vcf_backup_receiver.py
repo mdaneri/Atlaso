@@ -202,7 +202,12 @@ def test_stale_applied_baseline_blocks_before_public_key_or_ssh_checks(db, monke
 
 
 def test_pending_storage_reassignment_keeps_the_applied_receiver_usable(db, monkeypatch):
-    """Bind native backup work to the current verified storage during a pending reassignment."""
+    """Bind native backup work to the current verified storage during a pending reassignment.
+
+    Args:
+        db: Isolated session containing current and proposed storage assignments.
+        monkeypatch: Pytest fixture used to observe receiver key and runtime probes.
+    """
     settings = _settings(db, user=User(username="vcf-backup", enabled=True, os_sync_status="applied"))
     applied = {
         "uuid": "00000000-0000-0000-0000-000000000001",

@@ -239,7 +239,11 @@ def _reconcile_vcf_backup_probe_column(connection: Connection) -> None:
 
 
 def _reconcile_vcf_service_storage_columns(connection: Connection) -> None:
-    """Keep installed storage as the default for appliances with older schemas."""
+    """Keep installed storage as the default for appliances with older schemas.
+
+    Args:
+        connection: Transaction holding the startup schema lock.
+    """
     inspector = inspect(connection)
     for table in ("vcf_backup_settings", "vcf_offline_depot_settings"):
         columns = {column["name"] for column in inspector.get_columns(table)}

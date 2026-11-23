@@ -23,18 +23,28 @@ from atlaso.app.services.network_objects import acquire_network_objects_write_lo
 Role = Literal["backup", "depot"]
 DEFAULT_PATHS = {"backup": "/mnt/atlaso-vcf-backups", "depot": "/mnt/atlaso-vcf-offline-depot"}
 STORAGE_COMMENT = "# Atlaso VCF storage: "
-_SAFE_PATH = re.compile(r"(?:/[A-Za-z0-9_][A-Za-z0-9_.-]*)+")
 _SYSTEM_ROOTS = frozenset("bin boot dev etc home lib lib64 opt proc root run sbin sys tmp usr var".split())
 _UUID = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}")
 
 
 def _row(db: Session, role: Role) -> VcfBackupSettings | VcfOfflineDepotSettings | None:
+    """Select the singleton for one service.
+
+    Args:
+        db: Active database session.
+        role: Service that owns the assignment.
+    """
     if role == "backup":
         return db.scalars(select(VcfBackupSettings)).one_or_none()
     return db.scalars(select(VcfOfflineDepotSettings)).one_or_none()
 
 
 def _eligible_volumes(db: Session) -> list[EsxStorageVolume]:
+    """Find registered disks with one usable mount and filesystem identity.
+
+    Args:
+        db: Active database session containing applied volume registrations.
+    """
     volumes = db.scalars(select(EsxStorageVolume).where(
         EsxStorageVolume.applied.is_(True), EsxStorageVolume.state == "mounted",
     ).order_by(EsxStorageVolume.name)).all()
@@ -49,8 +59,26 @@ def _eligible_volumes(db: Session) -> list[EsxStorageVolume]:
     ]
 
 
+def _storage_path_syntax(value: str) -> bool:
+    """Check absolute storage path components in a single pass.
+
+    Args:
+        value: Submitted or registered Linux path.
+    """
+    return value.startswith("/") and all(
+        part and part[0] not in ".-" and part.isascii()
+        and all(char.isalnum() or char in "_.-" for char in part)
+        for part in value[1:].split("/")
+    )
+
+
 def _data_volume_path(value: str) -> bool:
-    if not _SAFE_PATH.fullmatch(value):
+    """Check whether a registered volume is outside protected system mounts.
+
+    Args:
+        value: Registered volume's absolute mount path.
+    """
+    if not _storage_path_syntax(value):
         return False
     path = PurePosixPath(value)
     return (
@@ -61,7 +89,12 @@ def _data_volume_path(value: str) -> bool:
 
 
 def storage_options(db: Session, role: Role) -> list[dict[str, str]]:
-    """List applied, registered ext4 volumes with stable identities and safe mount paths."""
+    """List applied ext4 registrations with stable identities and safe mount paths.
+
+    Args:
+        db: Active database session.
+        role: Service whose default directory name will be suggested.
+    """
     return [
         {
             "uuid": volume.filesystem_uuid, "name": volume.name, "mount_path": volume.mount_path,
@@ -72,7 +105,12 @@ def storage_options(db: Session, role: Role) -> list[dict[str, str]]:
 
 
 def storage_settings(db: Session, role: Role) -> dict[str, str]:
-    """Read the saved storage selection, including the original installed default."""
+    """Read the saved storage selection or the installed default.
+
+    Args:
+        db: Active database session.
+        role: Service that owns the assignment.
+    """
     settings = _row(db, role)
     if settings is None:
         return {"volume_uuid": "", "mount_path": DEFAULT_PATHS[role]}
@@ -80,6 +118,14 @@ def storage_settings(db: Session, role: Role) -> dict[str, str]:
 
 
 def _assignment(db: Session, role: Role, volume_uuid: str, mount_path: str) -> dict[str, str]:
+    """Validate an assignment against the current volume and share registrations.
+
+    Args:
+        db: Active database session.
+        role: Service that owns the assignment.
+        volume_uuid: Selected registered filesystem UUID, or empty for installed storage.
+        mount_path: Dedicated directory on the selected volume.
+    """
     if not volume_uuid:
         if mount_path not in {"", DEFAULT_PATHS[role]}:
             raise ValueError("Select a registered volume to use a different storage path.")
@@ -88,9 +134,11 @@ def _assignment(db: Session, role: Role, volume_uuid: str, mount_path: str) -> d
     if len(matches) != 1:
         raise ValueError("The selected storage volume is unavailable. Apply its registration in Storage Volumes first.")
     volume = matches[0]
+    if len(mount_path) > 240 or not _storage_path_syntax(mount_path):
+        raise ValueError("Enter a dedicated directory directly under the selected volume's mount path.")
     target = PurePosixPath(mount_path)
     volume_path = PurePosixPath(volume.mount_path)
-    if len(mount_path) > 240 or not _SAFE_PATH.fullmatch(mount_path) or target.parent != volume_path:
+    if target.parent != volume_path:
         raise ValueError("Enter a dedicated directory directly under the selected volume's mount path.")
     other = storage_settings(db, "depot" if role == "backup" else "backup")
     if mount_path == other["mount_path"]:
@@ -106,7 +154,14 @@ def _assignment(db: Session, role: Role, volume_uuid: str, mount_path: str) -> d
 
 
 def save_storage_assignment(db: Session, role: Role, volume_uuid: str, mount_path: str) -> None:
-    """Validate and stage a selection within the caller's desired-state transaction."""
+    """Stage a selection within the caller's desired-state transaction.
+
+    Args:
+        db: Active database session owned by the caller.
+        role: Service that owns the assignment.
+        volume_uuid: Submitted filesystem UUID, or empty for installed storage.
+        mount_path: Submitted directory on the selected volume.
+    """
     acquire_network_objects_write_lock(db)
     assignment = _assignment(db, role, volume_uuid.strip(), mount_path.strip())
     settings = _row(db, role)
@@ -117,13 +172,22 @@ def save_storage_assignment(db: Session, role: Role, volume_uuid: str, mount_pat
 
 
 def storage_assignment(db: Session, role: Role) -> dict[str, str]:
-    """Bind a reviewed assignment to the exact current registration."""
+    """Bind a reviewed assignment to the exact current registration.
+
+    Args:
+        db: Active database session.
+        role: Service that owns the assignment.
+    """
     settings = storage_settings(db, role)
     return _assignment(db, role, settings["volume_uuid"], settings["mount_path"])
 
 
 def storage_config_metadata(assignment: dict[str, str]) -> str:
-    """Render constrained-helper metadata without changing a legacy default preview."""
+    """Render constrained-helper metadata for a registered volume.
+
+    Args:
+        assignment: Validated registration identity, or empty for installed storage.
+    """
     if not assignment:
         return ""
     identity = {key: assignment[key] for key in ("uuid", "path", "volume_path", "device")}
@@ -133,7 +197,14 @@ def storage_config_metadata(assignment: dict[str, str]) -> str:
 def storage_review(
     role: Role, previous: object, proposed: dict[str, str], *, enabled: bool,
 ) -> list[str]:
-    """Describe the change in the existing Apply review independently of config syntax."""
+    """Describe storage changes in the existing Apply review.
+
+    Args:
+        role: Service that owns the assignment.
+        previous: Assignment recorded in the applied baseline.
+        proposed: Validated assignment in this Apply plan.
+        enabled: Whether active service access could be interrupted.
+    """
     current = previous if isinstance(previous, dict) else {}
     if current == proposed:
         return []

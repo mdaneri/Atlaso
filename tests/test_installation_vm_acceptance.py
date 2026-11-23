@@ -80,6 +80,11 @@ Volume: shared"""
 
 
 def test_storage_acceptance_advances_through_combined_layout_once(monkeypatch):
+    """Verify the combined page keeps Custom editing nondestructive.
+
+    Args:
+        monkeypatch: Replaces screen polling with bounded public fixture frames.
+    """
     screen = """Storage layout
 Root installation target
 Mount: /
@@ -101,6 +106,15 @@ Volume: shared"""
     ))
 
     def wait_screen(_qmp, _output, predicate, label, _seconds):
+        """Supply a bounded simulated installer screen.
+
+        Args:
+            _qmp: Fake QMP connection.
+            _output: Fixture screenshot location.
+            predicate: Screen predicate the current frame must satisfy.
+            label: Public acceptance checkpoint.
+            _seconds: Maximum polling interval.
+        """
         observed.append(label)
         current = next(screens)
         assert predicate(current)
@@ -118,12 +132,26 @@ Volume: shared"""
 
 
 def test_storage_acceptance_keeps_published_sequential_screen_support(monkeypatch):
+    """Keep compatibility with published sequential service prompts.
+
+    Args:
+        monkeypatch: Replaces screen polling with bounded public fixture frames.
+    """
     screens = iter(("SFTP backup storage", "VCFDT depot storage"))
     qmp_events = []
     qmp = SimpleNamespace(send_key=lambda key: qmp_events.append(key))
     observed = []
 
     def wait_screen(_qmp, _output, predicate, label, _seconds):
+        """Supply the next published sequential screen.
+
+        Args:
+            _qmp: Fake QMP connection.
+            _output: Fixture screenshot location.
+            predicate: Screen predicate the current frame must satisfy.
+            label: Public acceptance checkpoint.
+            _seconds: Maximum polling interval.
+        """
         screen = next(screens)
         observed.append(label)
         assert predicate(screen)
