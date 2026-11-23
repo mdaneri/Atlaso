@@ -61,6 +61,10 @@ between polls, the browser reconciles the retained task and runs its terminal co
 new active task.
 Directly observed terminal responses, including cancellation races, run the same completion refresh.
 
+Initial Apply retries match a successful component step to the job recorded in its committed baseline. This keeps
+completed work out of the retry after a clock correction. Factory comparison baselines have no Apply job, and older
+baselines written before job provenance use the historical timestamp check.
+
 Submitting transforms the review modal into a live master/child task grid. One `appliance-apply` master owns one child
 execution record per selected component. Every signed-in session sees the blocking grid while the master is pending or
 running. Atlaso rejects other UI and API mutations with HTTP `423 Locked`; read-only pages, authentication/session
