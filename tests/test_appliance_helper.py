@@ -16398,8 +16398,69 @@ def test_vcf_storage_path_syntax_matches_service_and_helper(path, valid):
     assert _storage_path_syntax(path) is valid
 
 
+def test_vcf_storage_depot_initializes_prod_as_atlaso(monkeypatch, tmp_path):
+    """Create the upload root with the service identity before exposing the selected volume.
+
+    Args:
+        monkeypatch: Replace host account, mount and command observations.
+        tmp_path: Isolated volume, registration, and depot paths.
+    """
+    helper = load_helper_module()
+    volume = tmp_path / "volume"
+    source = volume / "depot"
+    source.mkdir(parents=True)
+    prod = source / "PROD"
+    device = tmp_path / "device"
+    device.touch()
+    allowlist = tmp_path / "allowlist"
+    allowlist.write_text(f"uuid\t{device}\t{volume}\n", encoding="utf-8")
+    real_stat = Path.stat
+    calls = []
+
+    def source_stat(path, **kwargs):
+        """Report the simulated service user's ownership for the depot directory.
+
+        Args:
+            path: Fixture path being inspected.
+            **kwargs: Pass-through filesystem stat options.
+        """
+        info = real_stat(path, **kwargs)
+        if path != source:
+            return info
+        return SimpleNamespace(st_uid=123, st_dev=info.st_dev, st_mode=stat.S_IFDIR | 0o755)
+
+    def run(command, *, timeout):
+        """Record how the helper creates PROD and simulate the resulting directory.
+
+        Args:
+            command: External command including its effective user.
+            timeout: Bound for the command.
+        """
+        calls.append(command)
+        assert timeout == 10
+        prod.mkdir()
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(Path, "stat", source_stat)
+    monkeypatch.setattr(helper.pwd, "getpwnam", lambda _: SimpleNamespace(pw_uid=123))
+    monkeypatch.setattr(helper, "ESX_STORAGE_DISK_ALLOWLIST_PATH", allowlist)
+    monkeypatch.setattr(helper, "ESX_STORAGE_EXPORT_ROOT", tmp_path / "exports")
+    monkeypatch.setattr(helper, "_vcf_storage_root_directory", lambda _: None)
+    monkeypatch.setattr(helper, "_vcf_storage_read", lambda _: {})
+    monkeypatch.setattr(helper, "_vcf_storage_find_mount", lambda path, _: [f"uuid ext4 / rw {device}"] if path == volume else [])
+    monkeypatch.setattr(helper, "_run", run)
+    assignment = {"uuid": "uuid", "path": str(source), "volume_path": str(volume), "device": str(device)}
+
+    assert helper._vcf_storage_live_source("depot", assignment) == source
+    assert not prod.exists()
+    assert helper._vcf_storage_live_source("depot", assignment, create=True) == source
+    assert prod.is_dir()
+    assert helper._vcf_storage_live_source("depot", assignment, create=True) == source
+    assert calls == [["runuser", "-u", "atlaso", "-g", "atlaso", "--", "mkdir", "-m", "0755", "--", str(prod)]]
+
+
 @pytest.mark.parametrize("role", ["backup", "depot"])
-@pytest.mark.parametrize("failure", ["bind", "service", None])
+@pytest.mark.parametrize("failure", ["prepare", "bind", "service", None])
 def test_vcf_storage_switch_preserves_previous_assignment(monkeypatch, tmp_path, role, failure):
     """Exercise the previous mount, candidate verification, service step, and boot record.
 
@@ -16444,7 +16505,19 @@ def test_vcf_storage_switch_preserves_previous_assignment(monkeypatch, tmp_path,
     monkeypatch.setattr(helper, "_vcf_storage_root_directory", lambda path: None)
     monkeypatch.setattr(helper, "_vcf_storage_read", lambda selected: old if selected == role else {})
     monkeypatch.setattr(helper, "_vcf_storage_target", lambda _: target)
-    monkeypatch.setattr(helper, "_vcf_storage_live_source", lambda _, assignment, **kwargs: Path(assignment["path"]))
+    def prepare(_role, assignment, **options):
+        """Simulate a filesystem refusal before committing an Apply plan.
+
+        Args:
+            _role: Storage service selected by the Apply step.
+            assignment: Storage assignment being prepared.
+            **options: Optional flags such as whether to prepare missing directories.
+        """
+        if options.get("create") and failure == "prepare":
+            raise ValueError("candidate initialization failed")
+        return Path(assignment["path"])
+
+    monkeypatch.setattr(helper, "_vcf_storage_live_source", prepare)
     monkeypatch.setattr(helper, "_vcf_storage_mounted", lambda source, _: source == state["source"])
     monkeypatch.setattr(helper, "_vcf_storage_bind", bind)
     monkeypatch.setattr(helper, "_vcf_storage_unbind", lambda _: state.update(source=None))
@@ -16455,7 +16528,7 @@ def test_vcf_storage_switch_preserves_previous_assignment(monkeypatch, tmp_path,
         assert result != 0
         assert state["source"] == Path(old["path"])
         assert writes == []
-        assert configured == ([] if failure == "bind" else [Path(desired["path"])])
+        assert configured == ([Path(desired["path"])] if failure == "service" else [])
     else:
         assert result == 0
         assert state["source"] == Path(desired["path"])
