@@ -16,6 +16,17 @@ verification, and media-free boot. The immutable
 [PR #1083](https://github.com/mdaneri/Atlaso/pull/1083) record the completed run; the earlier installation evidence and
 corrected service/protocol database defect are retained in [issue #1087](https://github.com/mdaneri/Atlaso/issues/1087).
 
+<!-- BEGIN GENERATED INTERFACE OVERVIEW -->
+## Interface overview
+
+This verified appliance view provides visual orientation before you begin.
+
+![Atlaso installer Storage layout screen showing an Auto root on /dev/sda and both service roles on shared storage.](../assets/screenshots/installation-storage-layout.webp)
+
+*Figure: Review the root target and both service mount paths before opening the disk erasure review.*
+
+<!-- END GENERATED INTERFACE OVERVIEW -->
+
 This virtual CD/DVD evidence does not establish USB-source acceptance, tracked separately in
 [issue #1069](https://github.com/mdaneri/Atlaso/issues/1069). Physical SATA/NVMe and wired-Ethernet acceptance, a production
 installation ISO release, and the remaining parent #542 acceptance are still pending. This guide does not establish

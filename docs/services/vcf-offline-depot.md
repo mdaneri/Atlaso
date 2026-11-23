@@ -197,6 +197,10 @@ These captures show responsive layouts and useful operational states referenced 
 
 *Figure: VCF Offline Depot review binds the selected profile in the contextual schedule flow.*
 
+![VCF Offline Depot configuration showing the Storage volume selector and /mnt/atlaso-vcf-offline-depot.](../assets/screenshots/vcf-offline-depot-storage.webp)
+
+*Figure: The Depot Storage settings are in the right-hand configuration panel below VCFDT staging.*
+
 ### VCF Offline Depot browser
 
 ![Atlaso public VCF Offline Depot browser showing a directory link in the desktop read-only grid.](../assets/screenshots/vcf-depot-browser-clean-desktop.webp)

@@ -634,6 +634,10 @@ These captures show responsive layouts and useful operational states referenced 
 
 ### VCF Helper
 
+![VCF Helper Backup tab showing the Storage volume selector and /mnt/atlaso-vcf-backups.](../assets/screenshots/vcf-helper-backup-storage.webp)
+
+*Figure: Choose the backup volume and directory in the Backup tab before reviewing Appliance Apply.*
+
 ![Atlaso VCF Helper Certificates tab in the desktop viewport.](../assets/screenshots/vcf-helper-tabs-certificates-desktop.webp)
 
 *Figure: The Certificates tab groups related helpers on the dedicated lab appliance.*

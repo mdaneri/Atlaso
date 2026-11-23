@@ -20,6 +20,21 @@ CANONICAL_BROWSER_ROOTS = {
 
 CAPTURE_OVERRIDES = {
     **{
+        stem: {
+            "source_commit": "76964855888b43b9894d9d6c02ee61914eb524c1",
+            "atlaso_version": "0.9.524",
+            "capture_method": "playwright-chromium",
+        }
+        for stem in ("vcf-helper-backup-storage", "vcf-offline-depot-storage")
+    },
+    "installation-storage-layout": {
+        "source_commit": "76964855888b43b9894d9d6c02ee61914eb524c1",
+        "atlaso_version": "0.9.524",
+        "capture_method": "vmware-workstation-console",
+        "viewport": "1024x768",
+        "brand_variant": "console-light",
+    },
+    **{
         f"settings-time-{state}-{layout}": {
             "source_commit": "6e59ac015f35a56833d0b91c35528feb9cdef14f",
             "atlaso_version": "0.9.507",
@@ -338,6 +353,7 @@ CAPTURE_OVERRIDES = {
 
 DOCUMENTATION_PAGES = {
     "getting-started/index.md": ("login-", "services-"),
+    "getting-started/physical-installation.md": ("installation-storage-",),
     "operate/dashboard.md": ("about-", "dashboard-"),
     "operate/navigation.md": ("primary-navigation-",),
     "operate/audit-log.md": ("audit-log-",),
@@ -616,6 +632,24 @@ SPECIAL = {
         "about-modal",
         "Atlaso About dialog with the deployed version and build identity.",
         "Atlaso About dialog showing version 0.9.21, build identity, and Python version.",
+    ),
+    "vcf-helper-backup-storage": (
+        "/ui/management/vcf-helper",
+        "backup-storage",
+        "Choose the backup volume and directory in the Backup tab before reviewing Appliance Apply.",
+        "VCF Helper Backup tab showing the Storage volume selector and /mnt/atlaso-vcf-backups.",
+    ),
+    "vcf-offline-depot-storage": (
+        "/ui/management/vcf-offline-depot",
+        "depot-storage",
+        "The Depot Storage settings are in the right-hand configuration panel below VCFDT staging.",
+        "VCF Offline Depot configuration showing the Storage volume selector and /mnt/atlaso-vcf-offline-depot.",
+    ),
+    "installation-storage-layout": (
+        "vmware-console",
+        "storage-layout",
+        "Review the root target and both service mount paths before opening the disk erasure review.",
+        "Atlaso installer Storage layout screen showing an Auto root on /dev/sda and both service roles on shared storage.",
     ),
     "appliance-console-applied": (
         "vmware-console",

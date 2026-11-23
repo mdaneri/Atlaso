@@ -691,6 +691,10 @@ Route: `vmware-console`
 
 Figure: VMware console after a successful appliance apply.
 
+![Atlaso installer Storage layout screen showing an Auto root on /dev/sda and both service roles on shared storage.](../assets/screenshots/installation-storage-layout.webp)
+
+Figure: Review the root target and both service mount paths before opening the disk erasure review.
+
 ## Vcf Backups
 
 Route: `/ui/management/vcf-backups`
@@ -739,6 +743,10 @@ Figure: Choose a saved vault credential or request-local manual login before con
 
 Figure: Choose a saved vault credential or request-local manual login before confirming target TLS identity.
 
+![VCF Helper Backup tab showing the Storage volume selector and /mnt/atlaso-vcf-backups.](../assets/screenshots/vcf-helper-backup-storage.webp)
+
+Figure: Choose the backup volume and directory in the Backup tab before reviewing Appliance Apply.
+
 ![Atlaso VCF Helper Certificates tab in the desktop viewport.](../assets/screenshots/vcf-helper-tabs-certificates-desktop.webp)
 
 Figure: The Certificates tab groups related helpers on the dedicated lab appliance.
@@ -770,6 +778,10 @@ Figure: VCFDT Software Depot ID generation ends at Review, which immediately dis
 ![VCF Offline Depot contextual Schedule wizard Review showing Schedule, Timing, State, and Review steps with Binaries fixed as the selected profile.](../assets/screenshots/vcf-offline-depot-schedule-action-desktop.webp)
 
 Figure: VCF Offline Depot review binds the selected profile in the contextual schedule flow.
+
+![VCF Offline Depot configuration showing the Storage volume selector and /mnt/atlaso-vcf-offline-depot.](../assets/screenshots/vcf-offline-depot-storage.webp)
+
+Figure: The Depot Storage settings are in the right-hand configuration panel below VCFDT staging.
 
 ## Vcf Private Registry
 

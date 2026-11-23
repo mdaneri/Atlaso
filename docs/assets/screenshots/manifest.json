@@ -749,6 +749,20 @@
       "sensitive_data_reviewed": true
     },
     {
+      "path": "assets/screenshots/installation-storage-layout.webp",
+      "route": "vmware-console",
+      "state": "storage-layout",
+      "viewport": "1024x768",
+      "source_commit": "76964855888b43b9894d9d6c02ee61914eb524c1",
+      "atlaso_version": "0.9.524",
+      "caption": "Review the root target and both service mount paths before opening the disk erasure review.",
+      "alt": "Atlaso installer Storage layout screen showing an Auto root on /dev/sda and both service roles on shared storage.",
+      "capture_method": "vmware-workstation-console",
+      "documentation_page": "getting-started/physical-installation.md",
+      "brand_variant": "console-light",
+      "sensitive_data_reviewed": true
+    },
+    {
       "path": "assets/screenshots/kmip-recovery-desktop.webp",
       "route": "/ui/management/backup-restore",
       "state": "recovery-maintenance",
@@ -1919,6 +1933,20 @@
       "sensitive_data_reviewed": true
     },
     {
+      "path": "assets/screenshots/vcf-helper-backup-storage.webp",
+      "route": "/ui/management/vcf-helper",
+      "state": "backup-storage",
+      "viewport": "1600x1000",
+      "source_commit": "76964855888b43b9894d9d6c02ee61914eb524c1",
+      "atlaso_version": "0.9.524",
+      "caption": "Choose the backup volume and directory in the Backup tab before reviewing Appliance Apply.",
+      "alt": "VCF Helper Backup tab showing the Storage volume selector and /mnt/atlaso-vcf-backups.",
+      "capture_method": "playwright-chromium",
+      "documentation_page": "services/vcf-helper.md",
+      "brand_variant": "light",
+      "sensitive_data_reviewed": true
+    },
+    {
       "path": "assets/screenshots/vcf-helper-tabs-certificates-desktop.webp",
       "route": "/ui/management/vcf-helper",
       "state": "functional-tabs",
@@ -2015,6 +2043,20 @@
       "caption": "VCF Offline Depot review binds the selected profile in the contextual schedule flow.",
       "alt": "VCF Offline Depot contextual Schedule wizard Review showing Schedule, Timing, State, and Review steps with Binaries fixed as the selected profile.",
       "capture_method": "codex-in-app-browser",
+      "documentation_page": "services/vcf-offline-depot.md",
+      "brand_variant": "light",
+      "sensitive_data_reviewed": true
+    },
+    {
+      "path": "assets/screenshots/vcf-offline-depot-storage.webp",
+      "route": "/ui/management/vcf-offline-depot",
+      "state": "depot-storage",
+      "viewport": "1600x1000",
+      "source_commit": "76964855888b43b9894d9d6c02ee61914eb524c1",
+      "atlaso_version": "0.9.524",
+      "caption": "The Depot Storage settings are in the right-hand configuration panel below VCFDT staging.",
+      "alt": "VCF Offline Depot configuration showing the Storage volume selector and /mnt/atlaso-vcf-offline-depot.",
+      "capture_method": "playwright-chromium",
       "documentation_page": "services/vcf-offline-depot.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
