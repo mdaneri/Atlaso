@@ -133,6 +133,7 @@ def storage_layout_screen(maxy: int, maxx: int, config: dict, initial: dict,
         return eligible, choices
 
     custom_layout = None
+    whole_disk_roles: set[str] = set()
 
     def conflicts(eligible: dict) -> list[str]:
         """Return inline errors for root and service assignments.
@@ -149,7 +150,6 @@ def storage_layout_screen(maxy: int, maxx: int, config: dict, initial: dict,
             found[0] = "Root disk is unavailable or protected. Choose an eligible target."
         if working.get("autopartition") and initial.get(root_disk, {}).get("size", 0) < MINIMUM_DISK_BYTES:
             found[0] = "Automatic installation requires a root disk of at least 64 GiB."
-        assigned: dict[str, int] = {}
         for index, (_title, mountpoint) in enumerate(SERVICE_STORAGE, start=1):
             partition = next((item for item in working["partitions"] if item.get("mountpoint") == mountpoint), None)
             if partition is None:
@@ -157,17 +157,13 @@ def storage_layout_screen(maxy: int, maxx: int, config: dict, initial: dict,
             disk = partition.get("disk", working["disk"])
             if disk not in eligible:
                 found[index] = "Assigned disk is unavailable or protected. Choose another storage volume."
-            if partition.get("size") != 0:
-                continue
-            if disk == root_disk:
+            whole_disk = mountpoint in whole_disk_roles
+            if disk == root_disk and (whole_disk or working.get("autopartition")):
                 found[0] = "Root disk cannot also be assigned to a service role."
                 found[index] = found[0]
-            previous = assigned.get(disk)
-            if previous is not None:
-                found[index] = "This disk is already assigned to another storage role."
-                found[previous] = "This disk is already assigned to another storage role."
-            else:
-                assigned[disk] = index
+            elif whole_disk and any(item is not partition and item.get("disk", root_disk) == disk
+                                    for item in working["partitions"]):
+                found[index] = "This disk already contains another partition in this layout."
         seen_mounts: dict[str, int] = {}
         role_indexes = {mountpoint: index for index, (_title, mountpoint) in enumerate(roles)}
         for partition in working["partitions"]:
@@ -194,6 +190,7 @@ def storage_layout_screen(maxy: int, maxx: int, config: dict, initial: dict,
         _label, action, value = choice
         if action == "keep":
             return
+        whole_disk_roles.discard(mountpoint)
         if action == "shared":
             working["partitions"] = [partition for partition in working["partitions"]
                                      if partition.get("mountpoint") != mountpoint]
@@ -214,6 +211,7 @@ def storage_layout_screen(maxy: int, maxx: int, config: dict, initial: dict,
         working["partitions"] = [partition for partition in working["partitions"]
                                  if partition.get("mountpoint") != mountpoint]
         working["partitions"].append(chosen)
+        whole_disk_roles.add(mountpoint)
 
     role_count = len(roles)
     choice_cursors = [0] * len(SERVICE_STORAGE)
@@ -247,7 +245,7 @@ def storage_layout_screen(maxy: int, maxx: int, config: dict, initial: dict,
                     enclosing = next((item for item in working["partitions"] if item.get("mountpoint") == "/mnt"), None)
                     shared_volume = enclosing.get("disk", working["disk"]) if enclosing else root_volume
                     current = f"Shared storage on {shared_volume}"
-                elif partition.get("size") == 0:
+                elif mountpoint in whole_disk_roles:
                     current = f"Whole disk {partition.get('disk', working['disk'])} (erase after review)"
                 else:
                     current = f"Partition on {partition.get('disk', working['disk'])} ({partition['filesystem']})"

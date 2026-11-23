@@ -176,20 +176,24 @@ def test_named_service_storage_selects_only_explicit_disks(monkeypatch, autopart
         module.revalidate_disks(config, consent, changed)
 
 
-def test_service_storage_assigns_custom_partition_and_preserves_existing_role(monkeypatch):
+@pytest.mark.parametrize(("data_disk", "data_size"), [("/dev/sdb", 8192), ("/dev/sda", 0)])
+def test_service_storage_assigns_custom_partition_and_preserves_existing_role(monkeypatch, data_disk, data_size):
     """Rename only a selected data mount and preserve another service's layout.
 
     Args:
         monkeypatch: Isolated disk inventory and native menu selections.
+        data_disk: Disk containing the Custom partition to assign.
+        data_size: Fixed size or Photon's zero-size remainder.
     """
     module = load_installer(monkeypatch, native_choices=True)
     config = {"disk": "/dev/sda", "partitions": [
-        {"mountpoint": "/", "size": 0, "filesystem": "ext4"},
+        {"mountpoint": "/", "size": 16384, "filesystem": "ext4"},
         {"mountpoint": "/var", "disk": "/dev/sdb", "size": 4096, "filesystem": "ext4"},
-        {"mountpoint": "/mnt/data", "disk": "/dev/sdb", "size": 8192, "filesystem": "xfs"},
+        {"mountpoint": "/mnt/data", "disk": data_disk, "size": data_size, "filesystem": "xfs"},
         {"mountpoint": "/mnt/atlaso-vcf-offline-depot", "disk": "/dev/sdc", "size": 0, "filesystem": "ext4"},
     ]}
     initial = {f"/dev/sd{letter}": {"size": 64 * 1024**3} for letter in "abc"}
+    rendered = []
 
     monkeypatch.setattr(module, "disk_inventory", lambda: initial)
     class Window:
@@ -216,12 +220,12 @@ def test_service_storage_assigns_custom_partition_and_preserves_existing_role(mo
             pass
 
         def addstr(self, *_args):
-            """Ignore rendered text in the storage assignment test.
+            """Collect rendered text in the storage assignment test.
 
             Args:
                 *_args: Coordinates, text, and optional drawing style.
             """
-            pass
+            rendered.append(_args[2])
 
         def refresh(self):
             pass
@@ -232,7 +236,8 @@ def test_service_storage_assigns_custom_partition_and_preserves_existing_role(mo
         def getch(self):
             return next(keys)
 
-    keys = iter((9, ord("e"), 10))
+    # A remainder beside the Custom root cannot share the disk with an Auto root.
+    keys = iter((9, ord("e"), 260, ord("l"), 10, ord("l"), 10) if data_size == 0 else (9, ord("e"), 10))
     module.curses.newwin = lambda *_args: Window()
     module.curses.A_BOLD = 1
     module.curses.A_REVERSE = 2
@@ -246,8 +251,11 @@ def test_service_storage_assigns_custom_partition_and_preserves_existing_role(mo
     module.curses.color_pair = lambda _index: 0
     assert module.storage_layout_screen(25, 80, config, initial)
     assert config["partitions"][1]["mountpoint"] == "/var"
-    assert config["partitions"][2] == {"mountpoint": "/mnt/atlaso-vcf-backups", "disk": "/dev/sdb",
-                                       "size": 8192, "filesystem": "xfs"}
+    assert config["partitions"][2] == {"mountpoint": "/mnt/atlaso-vcf-backups", "disk": data_disk,
+                                       "size": data_size, "filesystem": "xfs"}
+    assert f"Volume: Partition on {data_disk} (xfs)" in rendered
+    if data_size == 0:
+        assert "Root disk cannot also be assigned to a service role." in rendered
     assert config["partitions"][3]["mountpoint"] == "/mnt/atlaso-vcf-offline-depot"
 
 
@@ -289,11 +297,13 @@ def test_service_storage_reserves_native_efi_slot_and_accepts_swap(monkeypatch):
                for _label, action, value in module.service_storage_choices(config, "/mnt/atlaso-vcf-backups", eligible))
 
 
-def test_combined_storage_layout_displays_all_roles_before_review(monkeypatch):
+@pytest.mark.parametrize("whole_disk", [False, True])
+def test_combined_storage_layout_displays_all_roles_before_review(monkeypatch, whole_disk):
     """Keep all three assignments and mount paths visible before review.
 
     Args:
         monkeypatch: Isolate curses drawing and the eligible disk inventory.
+        whole_disk: Assign a whole disk and attempt to move the root to it.
     """
     module = load_installer(monkeypatch, native_choices=True)
     rendered = []
@@ -338,7 +348,7 @@ def test_combined_storage_layout_displays_all_roles_before_review(monkeypatch):
         def getch(self):
             return next(keys)
 
-    keys = iter((9, 9, 10))
+    keys = iter((9, ord("e"), 260, ord("d"), 10, ord("d"), 10) if whole_disk else (9, 9, 10))
     module.curses.newwin = lambda *_args: Window()
     module.curses.A_BOLD = 1
     module.curses.A_REVERSE = 2
@@ -352,6 +362,8 @@ def test_combined_storage_layout_displays_all_roles_before_review(monkeypatch):
     module.curses.KEY_BACKSPACE = 263
     module.curses.color_pair = lambda _index: 0
     initial = {"/dev/sda": {"size": 64 * 1024**3}}
+    if whole_disk:
+        initial["/dev/sdb"] = {"size": 64 * 1024**3}
     monkeypatch.setattr(module, "disk_inventory", lambda: initial)
     config = {"disk": "/dev/sda", "autopartition": True,
               "partitions": [{"mountpoint": "/", "size": 0, "filesystem": "ext4"}]}
@@ -365,6 +377,10 @@ def test_combined_storage_layout_displays_all_roles_before_review(monkeypatch):
     assert "VCFDT depot storage" in rendered
     assert "Mount: /mnt/atlaso-vcf-offline-depot" in rendered
     assert config["autopartition"] is True
+    if whole_disk:
+        assert "Volume: Whole disk /dev/sdb (erase after review)" in rendered
+        assert "Root disk cannot also be assigned to a service role." in rendered
+        assert config["disk"] == "/dev/sda"
 
 
 def test_custom_editor_back_returns_to_combined_page_state(monkeypatch):

@@ -20761,16 +20761,19 @@ def _vcf_storage_unbind(target: Path) -> None:
         raise ValueError("The current VCF storage is busy. Retry after active access has drained.")
 
 
-def _apply_with_vcf_storage(role: str, assignment: dict[str, str], apply: Callable[[], int]) -> int:
+def _apply_with_vcf_storage(
+    role: str, assignment: dict[str, str], apply: Callable[[], int], *, disabled: bool = False,
+) -> int:
     """Verify the candidate before switching and restore the last applied mount on failure.
 
     Args:
         role: Backup or depot service.
         assignment: Reviewed registration identity, or empty for installed storage.
-        apply: Operation that activates the service on the selected storage.
+        apply: Operation that applies the service configuration.
+        disabled: Whether the operation only deactivates the service endpoint.
     """
     try:
-        if not assignment and not os.path.lexists(VCF_STORAGE_STATE_DIR):
+        if disabled or (not assignment and not os.path.lexists(VCF_STORAGE_STATE_DIR)):
             return apply()
         import fcntl
 
@@ -20846,18 +20849,20 @@ def _restore_vcf_storage_at_boot() -> int:
     return 0
 
 
-def _vcf_storage_is_bound(role: str, expected_uuid: str = "") -> bool:
+def _vcf_storage_is_bound(role: str, expected_uuid: str = "", *, expected_volume_path: str = "") -> bool:
     """Check that the observed service mount matches its applied assignment.
 
     Args:
         role: Backup or depot service.
         expected_uuid: Optional filesystem UUID required by the caller.
+        expected_volume_path: Optional primary mount path required by the caller.
     """
     if role not in {"backup", "depot"} or not os.path.lexists(VCF_STORAGE_STATE_DIR):
         return False
     _vcf_storage_root_directory(VCF_STORAGE_STATE_DIR)
     assignment = _vcf_storage_read(role)
-    if not assignment or expected_uuid and assignment["uuid"] != expected_uuid:
+    if (not assignment or (expected_uuid and assignment["uuid"] != expected_uuid)
+            or (expected_volume_path and assignment["volume_path"] != expected_volume_path)):
         return False
     source = _vcf_storage_live_source(role, assignment)
     return _vcf_storage_mounted(source, _vcf_storage_target(role))
@@ -22223,7 +22228,7 @@ def _handle_vcf_offline_depot(action: str, args: list[str]) -> int:
     disabled = "VCF Offline Depot HTTPS endpoint is disabled" in text
     try:
         assignment = _vcf_storage_from_config(text)
-        if assignment:
+        if assignment and not disabled:
             _vcf_storage_live_source("depot", assignment)
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         print(f"VCF depot storage validation failed: {exc}", file=sys.stderr)
@@ -22250,7 +22255,9 @@ def _handle_vcf_offline_depot(action: str, args: list[str]) -> int:
         print(json.dumps({"vcf_offline_depot": "sync command intent recorded", "enabled": not disabled}, sort_keys=True))
         return 0
     if action == "apply-https":
-        result = _apply_with_vcf_storage("depot", assignment, lambda: _apply_vcf_depot_site(text, disabled=disabled))
+        result = _apply_with_vcf_storage(
+            "depot", assignment, lambda: _apply_vcf_depot_site(text, disabled=disabled), disabled=disabled,
+        )
         if result != 0:
             return result
         print(
@@ -30746,6 +30753,7 @@ def _esx_storage_inventory() -> list[dict[str, object]]:
         if line.split()
     } if Path("/proc/swaps").exists() else set()
     inventory: list[dict[str, object]] = []
+    vcf_service_mounts = {str(_vcf_storage_target(role)) for role in ("backup", "depot")}
 
     def walk(item: dict[str, object], parent_disk: str = "") -> None:
         """Perform walk.
@@ -30761,7 +30769,8 @@ def _esx_storage_inventory() -> list[dict[str, object]]:
         primary_mount_path = next(
             (path for path in mountpoints if path.startswith(f"{ESX_STORAGE_MOUNT_ROOT.as_posix().rstrip('/')}/")),
             next(
-                (path for path in mountpoints if not path.startswith(f"{ESX_STORAGE_EXPORT_ROOT.as_posix().rstrip('/')}/")),
+                (path for path in mountpoints if path not in vcf_service_mounts
+                 and not path.startswith(f"{ESX_STORAGE_EXPORT_ROOT.as_posix().rstrip('/')}/")),
                 mountpoints[0] if mountpoints else "",
             ),
         )
@@ -30923,6 +30932,28 @@ def _esx_storage_blank_disk_errors(entry: dict[str, object]) -> list[str]:
     return errors
 
 
+def _esx_storage_vcf_bind_matches(path: str, *, uuid: str, volume_path: str) -> bool:
+    """Recognize an exact VCF service mount backed by the selected ESX volume.
+
+    Args:
+        path: Additional mount path reported for the disk.
+        uuid: Filesystem UUID of the disk under validation.
+        volume_path: Claimed primary mount path of the disk.
+    """
+    if not uuid:
+        return False
+    for role in ("backup", "depot"):
+        target = _vcf_storage_target(role)
+        if path != str(target):
+            continue
+        try:
+            return (_vcf_storage_find_mount(target, "TARGET") == [path]
+                    and _vcf_storage_is_bound(role, uuid, expected_volume_path=volume_path))
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            return False
+    return False
+
+
 def _esx_storage_mounted_disk_errors(entry: dict[str, object], *, mount_path: Path) -> list[str]:
     """Return boot-safety errors for an existing mounted ext4 whole disk.
 
@@ -30937,7 +30968,8 @@ def _esx_storage_mounted_disk_errors(entry: dict[str, object], *, mount_path: Pa
         errors.append("missing stable /dev/disk/by-id identity")
     if str(entry.get("filesystem_type") or "") != "ext4":
         errors.append("not ext4")
-    if not str(entry.get("filesystem_uuid") or ""):
+    uuid = str(entry.get("filesystem_uuid") or "")
+    if not uuid:
         errors.append("missing filesystem UUID")
     selected_mount = str(mount_path)
     mount_paths = [str(path) for path in entry.get("mount_paths", [])]
@@ -30947,6 +30979,7 @@ def _esx_storage_mounted_disk_errors(entry: dict[str, object], *, mount_path: Pa
         path
         for path in mount_paths
         if path != selected_mount and not _esx_storage_managed_bind_fstab_entry_exists(path)
+        and not _esx_storage_vcf_bind_matches(path, uuid=uuid, volume_path=selected_mount)
     ]
     if unexpected_mounts:
         errors.append("has unexpected additional mounts")

@@ -16398,6 +16398,63 @@ def test_vcf_storage_path_syntax_matches_service_and_helper(path, valid):
     assert _storage_path_syntax(path) is valid
 
 
+@pytest.mark.parametrize("role", ["backup", "depot"])
+@pytest.mark.parametrize("mismatch", [None, "uuid", "volume", "source", "target", "ambiguity", "unavailable"])
+def test_esx_storage_admits_only_verified_vcf_service_binds(monkeypatch, tmp_path, role, mismatch):
+    """Accept additional mounts only when the applied VCF assignment matches the live bind.
+
+    Args:
+        monkeypatch: Isolated disk and mount observations.
+        tmp_path: Existing fixture state directory.
+        role: VCF service using the ESX volume.
+        mismatch: Condition that invalidates an otherwise legitimate service bind.
+    """
+    helper = load_helper_module()
+    volume = Path("/mnt/data")
+    target = helper._vcf_storage_target(role)
+    observed = target / "unknown" if mismatch == "target" else target
+    assignment = {"uuid": "different" if mismatch == "uuid" else "uuid",
+                  "volume_path": "/mnt/other" if mismatch == "volume" else str(volume)}
+    device = "/dev/sdz"
+    mountpoints = [str(volume), str(observed)] if mismatch == "target" else [str(observed), str(volume)]
+    inventory = {"blockdevices": [{"type": "disk", "path": device, "kname": "atlaso-test", "fstype": "ext4",
+                                   "uuid": "uuid", "mountpoints": mountpoints}]}
+    source = volume / role
+
+    def live_source(requested_role, requested_assignment):
+        """Return the verified source or model an unavailable registered volume.
+
+        Args:
+            requested_role: Service role to verify against the applied assignment.
+            requested_assignment: Applied assignment under verification.
+        """
+        assert (requested_role, requested_assignment) == (role, assignment)
+        if mismatch == "unavailable":
+            raise ValueError("VCF storage volume mount is unavailable.")
+        return source
+
+    monkeypatch.setattr(helper, "VCF_STORAGE_STATE_DIR", tmp_path)
+    monkeypatch.setattr(helper, "_command_path", lambda command: command)
+    monkeypatch.setattr(helper, "_run", lambda command: subprocess.CompletedProcess(command, 0, json.dumps(inventory), ""))
+    monkeypatch.setattr(helper, "_esx_storage_by_id_map", lambda: {device: "/dev/disk/by-id/data"})
+    monkeypatch.setattr(helper, "_esx_storage_os_devices", set)
+    monkeypatch.setattr(helper, "_esx_storage_mount_is_writable", lambda path: path == str(volume))
+    monkeypatch.setattr(helper, "_esx_storage_uuid_fstab_entry_exists", lambda uuid, path: (uuid, path) == ("uuid", str(volume)))
+    monkeypatch.setattr(helper, "_esx_storage_managed_bind_fstab_entry_exists", lambda _: False)
+    monkeypatch.setattr(helper, "_vcf_storage_root_directory", lambda _: None)
+    monkeypatch.setattr(helper, "_vcf_storage_read", lambda _: assignment)
+    monkeypatch.setattr(helper, "_vcf_storage_live_source", live_source)
+    monkeypatch.setattr(helper, "_vcf_storage_find_mount",
+                        lambda path, _: [str(path)] * (2 if mismatch == "ambiguity" else 1))
+    monkeypatch.setattr(helper, "_vcf_storage_mounted",
+                        lambda src, dest: (src, dest) == (source, target) and mismatch != "source")
+
+    entry, = helper._esx_storage_inventory()
+    assert entry["mount_path"] == str(volume)
+    errors = helper._esx_storage_mounted_disk_errors(entry, mount_path=volume)
+    assert errors == (["has unexpected additional mounts"] if mismatch else [])
+
+
 def test_vcf_storage_depot_initializes_prod_as_atlaso(monkeypatch, tmp_path):
     """Create the upload root with the service identity before exposing the selected volume.
 
@@ -17680,12 +17737,14 @@ def test_vcf_offline_depot_helper_applies_vcfdt_application_properties(monkeypat
     assert helper._handle_vcf_offline_depot("apply-properties", [str(outside_path)]) == 2
 
 
-def test_vcf_offline_depot_helper_removes_disabled_nginx_site(monkeypatch, tmp_path):
+@pytest.mark.parametrize("assigned", [False, True])
+def test_vcf_offline_depot_helper_removes_disabled_nginx_site(monkeypatch, tmp_path, assigned):
     """Verify that vcf offline depot helper removes disabled nginx site.
 
     Args:
         monkeypatch: Pytest fixture used to replace dependencies for the test.
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        assigned: Keep a registered storage assignment whose volume is unavailable.
     """
     helper = load_helper_module()
     monkeypatch.setattr(helper, "_vcf_depot_endpoint_ready", lambda _text: True)
@@ -17696,7 +17755,16 @@ def test_vcf_offline_depot_helper_removes_disabled_nginx_site(monkeypatch, tmp_p
     monkeypatch.setattr(helper, "VCF_DEPOT_HTPASSWD_PATH", tmp_path / "depot.htpasswd")
     apply_dir.mkdir(parents=True)
     site_dir.mkdir(parents=True)
-    config_path.write_text("# VCF Offline Depot HTTPS endpoint is disabled.\n", encoding="utf-8")
+    config_text = "# VCF Offline Depot HTTPS endpoint is disabled.\n"
+    state_dir = tmp_path / "applied-storage"
+    record = state_dir / "depot.json"
+    if assigned:
+        assignment = json.dumps({"uuid": "12345678-1234-0000-9000-123456789abc", "path": "/mnt/data/depot",
+                                 "volume_path": "/mnt/data", "device": "/dev/disk/by-id/data"})
+        config_text += f"{helper.VCF_STORAGE_COMMENT}{assignment}\n"
+        state_dir.mkdir()
+        record.write_text(assignment, encoding="utf-8")
+    config_path.write_text(config_text, encoding="utf-8")
     site_path.write_text("server { listen 443 ssl; }\n", encoding="utf-8")
     commands: list[list[str]] = []
 
@@ -17715,12 +17783,18 @@ def test_vcf_offline_depot_helper_removes_disabled_nginx_site(monkeypatch, tmp_p
     monkeypatch.setattr(helper, "NGINX_MAIN_CONFIG_PATH", tmp_path / "nginx" / "nginx.conf")
     monkeypatch.setattr(helper, "NGINX_SITES_DIR", site_dir)
     monkeypatch.setattr(helper, "VCF_DEPOT_SITE_PATH", site_path)
+    monkeypatch.setattr(helper, "VCF_STORAGE_STATE_DIR", state_dir)
     monkeypatch.setattr(helper, "_run", fake_run)
     monkeypatch.setattr(helper.shutil, "which", lambda command: "/usr/sbin/nginx" if command == "nginx" else None)
+    monkeypatch.setattr(helper, "_vcf_storage_live_source",
+                        lambda *_args, **_kwargs: pytest.fail("Disabling the depot probed its storage volume"))
 
+    assert helper._handle_vcf_offline_depot("validate", [str(config_path)]) == 0
     assert helper._handle_vcf_offline_depot("apply-https", [str(config_path)]) == 0
 
     assert not site_path.exists()
+    if assigned:
+        assert record.read_text(encoding="utf-8") == assignment
     assert ["/usr/sbin/nginx", "-t"] in commands
 
 
