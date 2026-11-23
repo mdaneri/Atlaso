@@ -601,7 +601,7 @@ def installed_identity_command(attribute: str, expected_name: str) -> str:
 
 
 def check_installed_application(qmp: Qmp, output: Path, version: str, commit: str) -> None:
-    """Verify installed build metadata and both service states in the authenticated shell.
+    """Verify installed build metadata, services, and local diagnostic execution.
 
     Args:
         qmp: Control connection for the authenticated guest.
@@ -632,6 +632,23 @@ def check_installed_application(qmp: Qmp, output: Path, version: str, commit: st
         else:
             raise AcceptanceError(f"{service} did not become active in the media-free boot")
     print("The installed version, source commit and both Atlaso services verified.", flush=True)
+
+    # Exercise the installed implementation as the service account, with the ISO
+    # removed and no network peer. Keep console evidence to a public status line.
+    run_console_command(
+        qmp,
+        "runuser -u atlaso -- env ATLASO_DRY_RUN_SYSTEM_ADAPTERS=false $P -BI -c "
+        "'from atlaso.app.services.network_diagnostics import run_check as r;"
+        "assert all(r(k,a,a,\"auto\").state==\"reply\" for a in (\"127.0.0.1\",\"::1\") "
+        "for k in (\"ping\",\"traceroute\"));"
+        "assert r(\"dns\",\"localhost\",\"\",\"auto\").state==\"resolved\"' "
+        ">/dev/null 2>&1 && echo PROBES-OK || echo PROBES-FAILED",
+    )
+    probe_status = re.compile(r"(?im)^[ \t]*PROBES-(OK|FAILED)[ \t]*$")
+    result = wait_screen(qmp, output, probe_status.search, "installed network diagnostics", 55)
+    if [status.upper() for status in probe_status.findall(result)] != ["OK"]:
+        raise AcceptanceError("the installed Atlaso service account could not run its local network diagnostics")
+    print("IPv4 and IPv6 loopback probes and localhost lookup verified.", flush=True)
 
 
 def verify_installed(qmp: Qmp, output: Path, version: str, commit: str, password: str) -> None:

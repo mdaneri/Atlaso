@@ -13,6 +13,9 @@ throughput, unique-device disk activity, interface state, and virtual-machine co
 policy rules, interfaces, forwarding, gateway neighbors, and a kernel route lookup. **Services & Clock** reports
 observed service state, restart counts, verified listener addresses, and the effective clock source.
 
+Select **Network Diagnostics** beside **Route lookup** when you need to send a probe from the appliance. Administrators
+and Network Administrators can also open [Network Diagnostics](network-diagnostics.md) from **Operations**.
+
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
 
