@@ -28,7 +28,7 @@ from scripts.virtualization.prepare_photon_ovf import (
 from scripts.virtualization.validate_ova import EXPECTED_PAYLOADS, OVF, VMW
 
 SOURCE = Path(__file__).resolve().parents[2]
-ASSETS = SOURCE / "image/photon-ova"
+ASSETS = Path("image/photon-ova")
 PHOTON_URL = "https://packages.broadcom.com/photon/5.0/GA/ova/photon-hw15-5.0-dde71ec57.x86_64.ova"
 PHOTON_SHA512 = (
     "6bd6a307745adb00b8452013f2c308c9abefd24a9d82611e8a1551afb965873388e"
@@ -43,14 +43,16 @@ ESP = "/dev/sda3"
 SEED = "/var/tmp/atlaso-ova-build"
 SERVICE = "atlaso-ova-build.service"
 RECEIPT = "/var/lib/atlaso-ova-build/complete"
-# Match the staging inputs of the canonical Workstation provisioner.
+REPOSITORY_HELPER = Path("image/common/scripts/configure_photon_repositories.py")
+BOOTSTRAP_INPUTS = (ASSETS / "provision.sh", ASSETS / SERVICE, ASSETS / "bootstrap-kernel.sh", REPOSITORY_HELPER)
+# Include the canonical Workstation provisioning inputs and the trial bootstrap files.
 SOURCE_PATHS = (
     "atlaso", "pyproject.toml", "requirements-appliance.lock", "README.md",
     "scripts/appliance", "scripts/check_photon_compatibility.py",
     "scripts/generate_third_party_notices.py", "scripts/third_party_notices.json",
     "scripts/version.py", "scripts/run_tdnf_with_progress.py",
     "third_party/ipxe", "image/inventory-linux/README.md",
-    "image/vmware-workstation/systemd", "image/common",
+    "image/vmware-workstation/systemd", "image/common", ASSETS.as_posix(),
 )
 
 
@@ -152,13 +154,35 @@ def fish(disk: Path, *actions: tuple[str, ...], readonly: bool = False, second: 
     return run(*args, capture=True)
 
 
-def setup_disk(disk: Path, original: Path, source_archive: Path) -> dict[str, str]:
+def stage_source(work: Path, commit: str) -> tuple[Path, Path]:
+    """Archive the admitted commit and materialize its offline bootstrap inputs.
+
+    Args:
+        work: Run-owned scratch directory.
+        commit: Exact Git commit recorded in the build provenance.
+    """
+    source_archive = work / "source.tar"
+    source_files = work / "source"
+    run("git", "-C", str(SOURCE), "archive", "--format=tar", "-o", str(source_archive), commit, *SOURCE_PATHS)
+    with tarfile.open(source_archive, "r:") as archive:
+        try:
+            members = [archive.getmember(path.as_posix()) for path in BOOTSTRAP_INPUTS]
+        except KeyError as error:
+            raise ValueError(f"Missing Photon OVA bootstrap input in the source archive: {error}") from error
+        if not all(member.isfile() for member in members):
+            raise ValueError("Photon OVA bootstrap inputs must be regular files in the source archive")
+        archive.extractall(source_files, members=members, filter="data")
+    return source_archive, source_files
+
+
+def setup_disk(disk: Path, original: Path, source_archive: Path, source_files: Path) -> dict[str, str]:
     """Preserve the Photon partition identifiers, expand root and seed the guest.
 
     Args:
         disk: New qcow2 root image to create.
         original: Verified upstream VMDK.
         source_archive: Commit-bound Atlaso provisioning files for the guest.
+        source_files: Offline bootstrap inputs extracted from the same archive.
     """
     run("qemu-img", "convert", "-f", "vmdk", "-O", "qcow2", str(original), str(disk))
     checks = (
@@ -196,19 +220,18 @@ def setup_disk(disk: Path, original: Path, source_archive: Path) -> dict[str, st
                r"&& grep -q 'terminal_output console$' /boot/grub2/grub.cfg "
                r"&& grep -q 'console=ttyS0,115200n8 ' /boot/grub2/grub.cfg"),
         ("upload", str(source_archive), f"{SEED}/source.tar"),
-        ("upload", str(ASSETS / "provision.sh"), f"{SEED}/provision.sh"),
-        ("upload", str(ASSETS / SERVICE), f"/etc/systemd/system/{SERVICE}"),
+        ("upload", str(source_files / ASSETS / "provision.sh"), f"{SEED}/provision.sh"),
+        ("upload", str(source_files / ASSETS / SERVICE), f"/etc/systemd/system/{SERVICE}"),
         ("mkdir-p", "/etc/systemd/system/multi-user.target.wants"),
         ("ln-s", f"/etc/systemd/system/{SERVICE}", f"/etc/systemd/system/multi-user.target.wants/{SERVICE}"),
     ).strip().lower().splitlines()
     if normalized != expected[:5]:
         raise ValueError("Photon partition identity changed while growing the disk")
-    repository_helper = SOURCE / "image/common/scripts/configure_photon_repositories.py"
     run(
         "virt-customize", "--network", "--no-logfile", "--memsize", "3072",
         "--format=qcow2", "-a", str(disk),
-        "--upload", f"{repository_helper}:{SEED}/configure_photon_repositories.py",
-        "--run", str(ASSETS / "bootstrap-kernel.sh"),
+        "--upload", f"{source_files / REPOSITORY_HELPER}:{SEED}/configure_photon_repositories.py",
+        "--run", str(source_files / ASSETS / "bootstrap-kernel.sh"),
         seconds=20 * 60,
     )
     return {"partition_table": "gpt", "root_partuuid": metadata[1], "esp_partuuid": metadata[2]}
@@ -320,11 +343,10 @@ def build_artifact(output: Path, scratch: Path, firmware: Path, override: Path |
             fetch_photon(archive)
         original = work / PHOTON_DISK
         extract_photon(archive, original)
-        source_archive = work / "source.tar"
-        run("git", "-C", str(SOURCE), "archive", "--format=tar", "-o", str(source_archive), commit, *SOURCE_PATHS)
+        source_archive, source_files = stage_source(work, commit)
 
         disk = work / "root.qcow2"
-        disk_layout = setup_disk(disk, original, source_archive)
+        disk_layout = setup_disk(disk, original, source_archive, source_files)
         content = work / "system.qcow2"
         run("qemu-img", "create", "-f", "qcow2", str(content), "20G")
         build_info, system_uuid = provision(work, disk, content, firmware)

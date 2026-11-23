@@ -147,7 +147,9 @@ def test_upstream_member_inventory_fails_closed(tmp_path: Path, monkeypatch: pyt
 
 def test_build_sources_use_the_persistent_seed_directory() -> None:
     """Keep the staged sources and their cleanup bound to the same directory."""
-    script = (build_photon_ova.ASSETS / "provision.sh").read_text(encoding="utf-8").splitlines()
+    script = (build_photon_ova.SOURCE / build_photon_ova.ASSETS / "provision.sh").read_text(
+        encoding="utf-8"
+    ).splitlines()
     assert f"build={build_photon_ova.SEED}" in script
     assert 'export ATLASO_SRC="$build/source"' in script
     assert 'chmod 0711 "$build"' in script
@@ -157,7 +159,55 @@ def test_build_sources_use_the_persistent_seed_directory() -> None:
 
 def test_trial_restores_grub_before_installing_appliance_branding() -> None:
     """The shared provisioner needs the inherited graphical theme declaration."""
-    script = (build_photon_ova.ASSETS / "provision.sh").read_text(encoding="utf-8")
+    script = (build_photon_ova.SOURCE / build_photon_ova.ASSETS / "provision.sh").read_text(encoding="utf-8")
     restore_menu = script.index('"$build/grub.cfg" > /boot/grub2/grub.cfg')
     provision_appliance = script.index('sh "$ATLASO_SRC/image/common/scripts/provision-atlaso.sh"')
     assert restore_menu < provision_appliance
+
+
+def test_guest_bootstrap_uses_the_admitted_source_archive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Use archived commit bytes for every offline provisioning input.
+
+    Args:
+        tmp_path: Run-owned staging directory.
+        monkeypatch: Replace guest disk commands with capture-only stand-ins.
+    """
+    builder = build_photon_ova
+    commit = builder.run("git", "-C", str(builder.SOURCE), "rev-parse", "HEAD", capture=True).strip()
+    source_archive, source_files = builder.stage_source(tmp_path, commit)
+    # The checkout no longer needs to be available after source staging.
+    monkeypatch.setattr(builder, "SOURCE", tmp_path / "unavailable-checkout")
+    commands: list[tuple[str, ...]] = []
+    uploads: list[tuple[str, ...]] = []
+
+    def capture_command(*args: str, **_kwargs: object) -> str:
+        commands.append(args)
+        return ""
+
+    def capture_guestfish(_disk: Path, *actions: tuple[str, ...], readonly: bool = False) -> str:
+        uploads.extend(action[1:] for action in actions if action[0] == "upload")
+        layout = ["gpt", "c724cded-cf33-4d1c-b510-59478c322f84", "df4477b9-3574-4e94-9729-c60d1b211fc7", "ext4", "vfat"]
+        return "\n".join([*layout, "true"] if readonly else layout)
+
+    monkeypatch.setattr(builder, "run", capture_command)
+    monkeypatch.setattr(builder, "fish", capture_guestfish)
+    builder.setup_disk(tmp_path / "root.qcow2", tmp_path / "photon.vmdk", source_archive, source_files)
+
+    provisioner = "image/photon-ova/provision.sh"
+    service = "image/photon-ova/atlaso-ova-build.service"
+    repository_helper = "image/common/scripts/configure_photon_repositories.py"
+    kernel = "image/photon-ova/bootstrap-kernel.sh"
+    assert uploads == [
+        (str(source_archive), f"{builder.SEED}/source.tar"),
+        (str(source_files / provisioner), f"{builder.SEED}/provision.sh"),
+        (str(source_files / service), "/etc/systemd/system/atlaso-ova-build.service"),
+    ]
+    customize = next(command for command in commands if command[0] == "virt-customize")
+    assert customize[customize.index("--upload") + 1] == (
+        f"{source_files / repository_helper}:{builder.SEED}/configure_photon_repositories.py"
+    )
+    assert customize[customize.index("--run") + 1] == str(source_files / kernel)
+    with tarfile.open(source_archive) as archive:
+        for name in (provisioner, service, repository_helper, kernel):
+            with archive.extractfile(name) as member:
+                assert (source_files / name).read_bytes() == member.read()
