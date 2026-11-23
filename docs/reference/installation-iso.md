@@ -64,12 +64,16 @@ reboot, payload, first-boot and host OpenAPI acceptance. Record physical USB 2/3
 ## Installer image contract
 
 The installation image reuses the pinned Photon 5.0 ISO and Photon installer 2.2. Remastering preserves the source EFI
-boot image and native installer flow. The Atlaso deployment source comes from an immutable Git archive at the
-selected full commit. The signed software release, its exact application wheel, locked CPython wheelhouse, shared
-provisioning inputs, PowerCLI modules, trust material, notices, firmware, and a signed offline Photon RPM repository
-are embedded and inventoried. Dependency closure is resolved during authorized ISO preparation; installation does
-not use network package repositories. Shared provisioning explicitly installs `iproute2` for the console and diagnostics;
-the final package-state verifier requires it. The complete captured RPM closure must include its dependencies.
+boot image and native installer flow. It excludes the stock Photon RPM repository and OSTree archive, and retains
+the upstream license text as a gzip-compressed file. The completed ISO must be smaller than 2,000,000,000 bytes.
+The Atlaso deployment source comes from an immutable Git archive at the selected full commit. The image embeds
+and inventories the signed software release, its exact application wheel, the locked CPython wheelhouse, shared
+provisioning inputs, PowerCLI modules, trust material, notices, firmware, and the signed offline Photon RPM repository.
+Dependency closure is resolved during authorized ISO preparation. Installation uses only the embedded repository.
+Shared provisioning explicitly installs `iproute2`, `iputils`, and `traceroute` for the console and network
+diagnostics, as required by the final package-state verifier. The complete captured RPM closure includes their
+dependencies. The hosted media-free boot check runs Ping and Traceroute against IPv4 and IPv6 loopback and resolves
+`localhost` as the Atlaso service account.
 The base package selection also requires Photon's signed `iana-etc` package, which supplies `/etc/services`
 and `/etc/protocols`. NTPsec's local verification uses these databases to resolve standard service and protocol
 names. A capture missing this package fails admission; regenerate it through the canonical native capture workflow.
@@ -322,11 +326,10 @@ otherwise the native console remains available.
 Native logger propagation and Python prints are isolated from the progress terminal; detailed output remains available
 on the separate terminal or in the private volatile log.
 The VM-window installer keeps the kernel's detected terminal size; only the serial harness uses a fixed 80×25 size.
-Concealed account fields accept printable ASCII characters and preserve spaces exactly. Rejected password input is
-cleared before retrying. **Go Back** on confirmation returns to the first password field for that account; **Go Back**
-on the first admin field returns to the full disk review and requires a new **Yes** (the default remains **No**).
-**Go Back** on the first root field returns to admin password entry and discards collected passwords. No disk writes
-occur during these setup screens. Explicitly declining the disk review still cancels installation.
+The **Account passwords** screen collects and confirms both local account passwords in masked fields. Printable ASCII
+including spaces is compared exactly. A validation error identifies the account and returns focus to the affected field.
+**Go Back** discards the form and returns to the full disk review. Choose **Yes** again to continue. No disk writes occur
+during setup screens, and declining the disk review cancels installation.
 **Go Back** from Custom partitioning returns to disk/layout selection and discards the abandoned partition plan.
 For the automated serial-console harness, add `--serial-console` to the development build command to make the serial
 entry the default; both entries remain available. The build result's `console` field records that default as

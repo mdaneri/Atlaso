@@ -45,7 +45,10 @@
     </div>
   </article>
   <article class="panel monitor-runtime-panel">
-    <div class="panel-head compact"><div><h2>Route lookup</h2><p class="muted">Check which route the kernel would select. This lookup sends no packets.</p></div></div>
+    <div class="panel-head compact">
+      <div><h2>Route lookup</h2><p class="muted">Check which route the kernel would select. This lookup sends no packets.</p></div>
+      {% if identity.can("write:routes") %}<a class="button secondary" href="{{ management_ui_path('/network-diagnostics') }}">Network Diagnostics</a>{% endif %}
+    </div>
     <form class="monitor-route-lookup" data-monitor-route-lookup novalidate>
       <label>Destination <input name="destination" required inputmode="url" autocomplete="off" placeholder="203.0.113.10"></label>
       <label>Source address <input name="source" inputmode="url" autocomplete="off" placeholder="Optional"></label>

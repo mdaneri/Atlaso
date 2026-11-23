@@ -214,7 +214,7 @@ until its exact writer/version, image checksum and native USB boot/install resul
    disk or disks and review their identities and complete proposed layout. The source USB and other USB storage are
    excluded from installation targets. Disks you do not select must remain unchanged.
 4. At **Erase selected disks?**, confirm **Yes** only for the disks whose contents may be erased. The default is **No**.
-   Complete the installer's concealed password prompts. No appliance web UI or separate USB installer is needed.
+   Complete the installer's concealed **Account passwords** screen. No appliance web UI or separate USB installer is needed.
 5. Remove the USB when installation completes, then boot from the installed internal disk.
 6. Complete the existing tty1 management-network setup. Verify the installed payload identity and the host-facing
    `/openapi.json` endpoint as described in the [physical installation guide](physical-installation.md).

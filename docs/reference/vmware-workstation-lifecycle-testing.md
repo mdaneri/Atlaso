@@ -986,7 +986,14 @@ deletes the marker. A resurrected post-crash marker remains non-actionable while
 absence check.
 
 The wrapper uses the shared Photon ISO remastering, kickstart rendering, checksum validation, and Packer var-file
-generation. `image/common/source` holds the original Photon ISO download cache. The canonical image installs
+generation. `image/common/source` holds the original Photon ISO download cache.
+Each invocation installs and verifies the pinned VMware plugin in its disposable Packer workspace under
+`-BuildStateRoot`. Packer uses that workspace for plugin lookup, cached downloads, and temporary files during
+initialization, validation, and the monitored build. The wrapper supplies these paths even when the caller sets
+`PACKER_PLUGIN_PATH` or `PACKER_CACHE_DIR`. The existing build cleanup removes the workspace after the bounded child
+exits. Each invocation needs access to the pinned plugin download.
+
+The canonical image installs
 `open-vm-tools` and stages the locked offline RPM closures used by the provider-neutral first-boot guest-agent selector.
 On VMware builds, provisioning removes an installed legacy `net-tools` package without autoremove and verifies its
 absence before package installation. Photon 5's updated `hostname` package conflicts with `net-tools`; the build then

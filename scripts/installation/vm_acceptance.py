@@ -406,6 +406,48 @@ def is_credential_prompt(text: str, account: str, confirmation: bool) -> bool:
     return re.search(rf"\b{action} {re.escape(account)} pass[wu]ord\b", text, re.I) is not None
 
 
+def enter_installer_passwords(qmp: Qmp, output: Path, passwords: dict[str, str]) -> None:
+    """Enter credentials after recognizing either supported installer layout.
+
+    Args:
+        qmp: Control connection for the disconnected installer fixture.
+        output: Fixture directory used for transient screen observations.
+        passwords: Dedicated administrator and root passwords for the fixture.
+    """
+    def is_account_form(text: str) -> bool:
+        """Recognize the full new form before entering any credential.
+
+        Args:
+            text: Recognized text from the current installer screen.
+        """
+        return all(re.search(pattern, text, re.I) for pattern in (
+            r"account pass[wu]ords",
+            r"confir[mn] ad[mn]in pass[wu]ord",
+            r"confir[mn] root pass[wu]ord",
+            r"continue",
+        ))
+
+    screen = wait_screen(
+        qmp, output, lambda text: is_account_form(text) or is_credential_prompt(text, "admin", False),
+        "concealed installer credential", 180,
+    )
+    if is_account_form(screen):
+        for account in ("admin", "root"):
+            type_text(qmp, passwords[account])
+            type_text(qmp, passwords[account])
+        qmp.send_key("ret")
+        return
+
+    for account, confirmation in (("admin", False), ("admin", True), ("root", False), ("root", True)):
+        if (account, confirmation) != ("admin", False):
+            wait_screen(
+                qmp, output,
+                lambda text, account=account, confirmation=confirmation: is_credential_prompt(text, account, confirmation),
+                "concealed installer credential", 180,
+            )
+        type_text(qmp, passwords[account])
+
+
 def wait_for_installer_reboot(qmp: Qmp, output: Path, deadline: float) -> None:
     """Wait for the successful installer's own reset before disconnecting its media.
 
@@ -559,7 +601,7 @@ def installed_identity_command(attribute: str, expected_name: str) -> str:
 
 
 def check_installed_application(qmp: Qmp, output: Path, version: str, commit: str) -> None:
-    """Verify installed build metadata and both service states in the authenticated shell.
+    """Verify installed build metadata, services, and local diagnostic execution.
 
     Args:
         qmp: Control connection for the authenticated guest.
@@ -590,6 +632,23 @@ def check_installed_application(qmp: Qmp, output: Path, version: str, commit: st
         else:
             raise AcceptanceError(f"{service} did not become active in the media-free boot")
     print("The installed version, source commit and both Atlaso services verified.", flush=True)
+
+    # Exercise the installed implementation as the service account, with the ISO
+    # removed and no network peer. Keep console evidence to a public status line.
+    run_console_command(
+        qmp,
+        "runuser -u atlaso -- env ATLASO_DRY_RUN_SYSTEM_ADAPTERS=false $P -BI -c "
+        "'from atlaso.app.services.network_diagnostics import run_check as r;"
+        "assert all(r(k,a,a,\"auto\").state==\"reply\" for a in (\"127.0.0.1\",\"::1\") "
+        "for k in (\"ping\",\"traceroute\"));"
+        "assert r(\"dns\",\"localhost\",\"\",\"auto\").state==\"resolved\"' "
+        ">/dev/null 2>&1 && echo PROBES-OK || echo PROBES-FAILED",
+    )
+    probe_status = re.compile(r"(?im)^[ \t]*PROBES-(OK|FAILED)[ \t]*$")
+    result = wait_screen(qmp, output, probe_status.search, "installed network diagnostics", 55)
+    if [status.upper() for status in probe_status.findall(result)] != ["OK"]:
+        raise AcceptanceError("the installed Atlaso service account could not run its local network diagnostics")
+    print("IPv4 and IPv6 loopback probes and localhost lookup verified.", flush=True)
 
 
 def verify_installed(qmp: Qmp, output: Path, version: str, commit: str, password: str) -> None:
@@ -663,12 +722,7 @@ def install(iso: Path, output: Path, args: argparse.Namespace, passwords: dict[s
             raise AcceptanceError("destructive review did not identify only the intended 64 GiB target")
         qmp.send_key("left")
         qmp.send_key("ret")
-        for account in ("admin", "root"):
-            secret = passwords[account]
-            for confirmation in (False, True):
-                wait_screen(qmp, output, lambda text, confirmation=confirmation, account=account: is_credential_prompt(text, account, confirmation),
-                            "concealed installer credential", 180)
-                type_text(qmp, secret)
+        enter_installer_passwords(qmp, output, passwords)
         wait_for_installer_reboot(qmp, output, timeout)
     finally:
         stop_qemu(process, qmp)

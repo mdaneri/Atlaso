@@ -65,6 +65,8 @@ function Invoke-PackerValidateFixture {
     $startInfo.Environment['CHECKPOINT_DISABLE'] = '1'
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
+    $timeoutSeconds = 60
+    $timeoutMilliseconds = $timeoutSeconds * 1000
     $deadline = [System.Diagnostics.Stopwatch]::StartNew()
     try {
         if (-not $process.Start()) {
@@ -73,15 +75,15 @@ function Invoke-PackerValidateFixture {
         # Drain both pipes while Packer runs so pipe capacity cannot stall the child.
         $stdout = $process.StandardOutput.ReadToEndAsync()
         $stderr = $process.StandardError.ReadToEndAsync()
-        $remaining = [Math]::Max(0, 30000 - [int]$deadline.ElapsedMilliseconds)
+        $remaining = [Math]::Max(0, $timeoutMilliseconds - [int]$deadline.ElapsedMilliseconds)
         if (-not $process.WaitForExit($remaining)) {
             $process.Kill($true)
             [void]$process.WaitForExit(1000)
-            throw 'Packer validation fixture exceeded its 30-second deadline.'
+            throw "Packer validation fixture exceeded its ${timeoutSeconds}-second deadline."
         }
-        $remaining = [Math]::Max(0, 30000 - [int]$deadline.ElapsedMilliseconds)
+        $remaining = [Math]::Max(0, $timeoutMilliseconds - [int]$deadline.ElapsedMilliseconds)
         if (-not [System.Threading.Tasks.Task]::WaitAll(@($stdout, $stderr), $remaining)) {
-            throw 'Packer validation fixture output did not close within its 30-second deadline.'
+            throw "Packer validation fixture output did not close within its ${timeoutSeconds}-second deadline."
         }
         return [pscustomobject]@{
             ExitCode = $process.ExitCode

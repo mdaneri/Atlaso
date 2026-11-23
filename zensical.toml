@@ -22,6 +22,7 @@ nav = [
     { "Dashboard" = "operate/dashboard.md" },
     { "Primary navigation" = "operate/navigation.md" },
     { "Monitor" = "operate/monitor.md" },
+    { "Network Diagnostics" = "operate/network-diagnostics.md" },
     { "Operational logs" = "operate/logs.md" },
     { "Audit log" = "operate/audit-log.md" },
     { "Tasks" = "operate/tasks.md" },

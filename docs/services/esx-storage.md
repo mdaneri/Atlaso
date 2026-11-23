@@ -85,8 +85,8 @@ command uses the generated AAAA target. Resolver preference therefore cannot cho
 
 Atlaso never replaces an operator-owned A or AAAA record. A collision blocks ESX Storage apply. Changing the interface,
 addresses, enabled families, service hostname, or enabled state removes stale app-owned records and marks `esx_storage`,
-`dnsmasq`, and `firewall` pending together. DNS desired state must be enabled and valid before ESX Storage can be
-applied.
+`dnsmasq`, and `firewall` pending together. DNS desired state must be enabled and valid before ESX Storage publishes
+datastores.
 
 ## Volumes and disk initialization
 
@@ -99,6 +99,15 @@ Storage Volumes supports two sources:
    persistence, no partitions or holders, and an active UUID-matching mount. Apply revalidates the complete contract and
    writes its exact UUID, stable identity, and mount to root-owned `/etc/atlaso/esx-storage-disks.conf`. Filesystems
    reserved for VCF Backups or VCF Offline Depot / VCFDT are never eligible, including paths below those mount roots.
+
+You can prepare a volume before creating an NFS datastore:
+
+1. In **ESX Storage** → **Storage Volumes**, choose **Add storage volume here** and complete the wizard.
+2. Open **Review appliance changes** and select **ESX Storage**. For a blank disk, verify the displayed disk identity
+   and enter `FORMAT <volume-name>` before submitting.
+3. After Apply succeeds, confirm in **Storage Volumes** that the volume has a filesystem UUID and mount path.
+   With zero enabled datastores, Apply publishes no NFS exports and leaves NFS services inactive.
+4. When ready to publish the volume, add an enabled share in **NFS Datastores** and review and apply the new changes.
 
 A newly initialized disk becomes a whole-device ext4 filesystem mounted by filesystem UUID at
 `/mnt/atlaso-esx-storage/<volume-slug>`. `/dev/sdX` names are never persisted. The global review displays the complete

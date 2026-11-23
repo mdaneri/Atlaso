@@ -88,6 +88,76 @@ def render(**kwargs):
     return render_manifest(settings, volumes, shares, interfaces, dns_enabled=True, dns_naming_mode="ip")
 
 
+@pytest.mark.parametrize("has_disabled_share", [False, True])
+def test_volume_only_manifest_does_not_require_dns_or_publish_nfs(has_disabled_share):
+    """Allow volume preparation when every datastore is inactive or absent.
+
+    Args:
+        has_disabled_share: Include a saved datastore that is disabled.
+    """
+    settings, volumes, shares, interfaces = state()
+    if has_disabled_share:
+        shares[0].enabled = False
+    else:
+        shares.clear()
+
+    manifest = render_manifest(settings, volumes, shares, interfaces, dns_enabled=False)
+
+    assert manifest["validation"]["errors"] == []
+    assert manifest["validation"]["warnings"] == []
+    assert manifest["volumes"][0]["requires_format"] is True
+    assert not any(share["enabled"] for share in manifest["shares"])
+    assert desired_dns_records(manifest) == []
+    assert firewall_rule_specs(manifest) == []
+
+
+def test_helper_accepts_volume_only_manifest_with_job_scoped_format_authorization():
+    """Preserve the exact job-bound format authorization for volume-only apply."""
+    helper = load_helper_module()
+    settings, volumes, _, _ = state()
+    manifest = render_manifest(settings, volumes, [], {}, dns_enabled=False)
+
+    assert helper._esx_storage_manifest_errors(manifest, require_authorization=True) == [
+        "volume esx-data is missing job-scoped format authorization"
+    ]
+
+    manifest["format_authorizations"] = [
+        format_authorization(
+            job_id="job-123",
+            manifest=manifest,
+            volume=manifest["volumes"][0],
+            confirmation="FORMAT esx-data",
+        )
+    ]
+
+    assert helper._esx_storage_manifest_errors(manifest, require_authorization=True) == []
+
+
+def test_enabled_datastore_requires_dns():
+    """Keep DNS required when Apply would publish an NFS datastore."""
+    settings, volumes, shares, interfaces = state()
+
+    manifest = render_manifest(settings, volumes, shares, interfaces, dns_enabled=False)
+
+    assert manifest["validation"]["errors"] == [
+        "DNS desired state must be enabled before publishing ESX Storage datastores."
+    ]
+
+
+@pytest.mark.parametrize("shares", [None, [None]])
+def test_helper_rejects_malformed_share_list(shares):
+    """Reject a malformed share list before initializing volumes.
+
+    Args:
+        shares: Invalid manifest field that cannot represent zero datastores.
+    """
+    helper = load_helper_module()
+    manifest = render()
+    manifest["shares"] = shares
+
+    assert helper._esx_storage_manifest_errors(manifest) == ["ESX Storage shares must be a list of objects"]
+
+
 def test_dual_stack_share_renders_equal_family_endpoints_and_commands():
     """Verify that dual stack share renders equal family endpoints and commands."""
     manifest = render()

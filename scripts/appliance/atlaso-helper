@@ -30642,7 +30642,10 @@ def _esx_storage_manifest_errors(payload: dict[str, object], *, require_authoriz
     validation = payload.get("validation") if isinstance(payload.get("validation"), dict) else {}
     errors.extend(str(error) for error in validation.get("errors", []) if str(error))
     volumes = payload.get("volumes") if isinstance(payload.get("volumes"), list) else []
-    shares = payload.get("shares") if isinstance(payload.get("shares"), list) else []
+    shares = payload.get("shares")
+    if not isinstance(shares, list) or any(not isinstance(share, dict) for share in shares):
+        errors.append("ESX Storage shares must be a list of objects")
+        shares = []
     volumes_by_id: dict[object, dict[str, object]] = {}
     for volume in volumes:
         if not isinstance(volume, dict):
@@ -30663,9 +30666,7 @@ def _esx_storage_manifest_errors(payload: dict[str, object], *, require_authoriz
             owner = _esx_storage_reserved_mount_owner(mount_value)
             if owner:
                 errors.append(f"existing volume {volume.get('name')} mount path is reserved for {owner}")
-    enabled_shares = [share for share in shares if isinstance(share, dict) and share.get("enabled")]
-    if payload.get("enabled") and not enabled_shares:
-        errors.append("enabled ESX Storage requires at least one enabled share")
+    enabled_shares = [share for share in shares if share.get("enabled")]
     for share in enabled_shares:
         if share.get("volume_id") not in volumes_by_id:
             errors.append(f"share {share.get('datastore_name')} references an unknown volume")
