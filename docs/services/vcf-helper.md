@@ -461,6 +461,14 @@ the environment; complete the real guest boot and readiness check as well.
 
 ## Configure VCF Offline Depot
 
+The **VCF Helper → Backup** tab exposes the same SFTP backup storage assignment as the **VCF Backups** page. Select a
+registered **Storage Volumes** volume and set a dedicated directory for backup files. The Offline Depot has its own
+volume and directory assignment under **VCF Offline Depot → Depot Settings**. Both changes save desired state and
+require review and submission through global Appliance Apply. Existing files remain on the current volume, and a failed
+mount keeps the current service assignment active.
+
+The rest of this section describes configuring an external VCF target to use Atlaso's Offline Depot.
+
 The standalone helper is available only when the local depot is enabled, applied, CA-backed, has a generated software
 depot ID, and has a selected HTTP user. Its wizard follows **Credential**, **Server**, **TLS fingerprint**, and
 **Login** before collecting the one-time depot HTTP password and reading the current sanitized depot configuration.

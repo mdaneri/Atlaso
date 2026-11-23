@@ -12478,6 +12478,11 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
     """
     from atlaso.app.services.network_boot import load_esxi_applied_runtime
     from atlaso.app.services.reverse_proxies import ServiceDnsAliasConflict
+    from atlaso.app.services.vcf_service_storage import (
+        storage_assignment,
+        storage_config_metadata,
+        storage_review,
+    )
 
     if not reconcile and db.scalar(select(CaSettings)) is None:
         raise ValueError("Read-only Apply capture requires existing CA settings; initialize appliance state before capture.")
@@ -12514,6 +12519,17 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
     ldap = ldap_context(db, reconcile=reconcile)
     vcf_backup = vcf_backup_context(db, reconcile=reconcile)
     vcf_depot = vcf_offline_depot_context(db, reconcile=reconcile)
+    for role, context, prefix in (
+        ("backup", vcf_backup, "vcf_backup"), ("depot", vcf_depot, "vcf_depot"),
+    ):
+        try:
+            assignment = storage_assignment(db, role)
+        except ValueError as error:
+            context[f"{prefix}_validation_errors"].append(str(error))
+            assignment = {}
+        context["storage_assignment"] = assignment
+        preview_key = f"{prefix}_{'https_' if role == 'depot' else ''}config_preview"
+        context[preview_key] += storage_config_metadata(assignment)
     vcf_registry = vcf_private_registry_context(db, reconcile=reconcile)
     public_services = public_services_context(db, reconcile=reconcile)
     if reconcile:
@@ -12985,6 +13001,7 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
             config_path=vcf_backup["vcf_backup_settings"].config_path,
             config_preview=vcf_backup["vcf_backup_config_preview"],
             baseline=baselines.get("vcf_backups"),
+            snapshot_marker=vcf_backup["storage_assignment"] or None,
         ),
         make_appliance_apply_unit(
             unit_id="vcf_offline_depot",
@@ -13000,6 +13017,7 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
             config_path=vcf_depot["vcf_depot_settings"].config_path,
             config_preview=f"{vcf_depot['vcf_depot_https_config_preview']}\n\n{vcf_depot_tool_snapshot(vcf_depot)}\n\n{vcf_depot_secret_snapshot(vcf_depot)}\n\n{vcf_depot_application_properties_snapshot(vcf_depot)}\n\n# VCFDT command preview\n{vcf_depot['vcf_depot_command_preview']}",
             baseline=baselines.get("vcf_offline_depot"),
+            snapshot_marker=vcf_depot["storage_assignment"] or None,
         ),
         make_appliance_apply_unit(
             unit_id="vcf_private_registry",
@@ -13040,6 +13058,16 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
             baselines.get(unit["id"]),
         )
     unit_map = {unit["id"]: unit for unit in units}
+    for role, unit_id, settings_key in (
+        ("backup", "vcf_backups", "vcf_backup_settings"),
+        ("depot", "vcf_offline_depot", "vcf_depot_settings"),
+    ):
+        unit = unit_map[unit_id]
+        previous = baselines.get(unit_id) or {}
+        unit["summary"].extend(storage_review(
+            role, previous.get("snapshot_marker"), unit["context"]["storage_assignment"],
+            enabled=unit["context"][settings_key].enabled or "service enabled" in (previous.get("summary") or []),
+        ))
     legacy_source_errors = network_legacy_listener_source_errors(db, unit_map)
     if legacy_source_errors:
         network_unit["validation_errors"].extend(legacy_source_errors)

@@ -144,6 +144,14 @@
         </div>
         <p id="vcf-backup-settings-status" class="autosave-status" data-state="idle">Changes save automatically.</p>
       </form>
+      {% set storage_heading = "Backup Storage" %}
+      {% set storage_action = "vcf-backups/settings" %}
+      {% set storage_assignment = vcf_backup_storage_assignment %}
+      {% set storage_options = vcf_backup_storage_options %}
+      {% set storage_writable = identity.can("write:vcf-backups") %}
+      {% set storage_default_path = "/mnt/atlaso-vcf-backups" %}
+      {% set storage_status_id = "vcf-backup-storage-status" %}
+      {% include "partials/vcf_service_storage_settings.html" %}
     </div>
 
     {% include "partials/appliance_apply_status.html" %}

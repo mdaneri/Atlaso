@@ -17,6 +17,7 @@ import html
 import json
 import os
 import re
+import runpy
 import shutil
 import socket
 import sqlite3
@@ -106,6 +107,7 @@ COMMANDS: dict[str, set[str]] = {
     "ntpd": {"validate", "apply", "status", "logs", "capabilities", "reconcile", "guard"},
     "nginx": {"logs", "access-logs", "error-logs"},
     "vcf-backups": {"validate", "preflight", "apply", "status"},
+    "vcf-storage": {"boot", "is-bound", "verify-installation"},
     "vcf-private-registry": {"validate", "apply", "relocate-bundles"},
     "vcf-offline-depot": {"validate", "stage-tool", "reset-tool", "generate-software-depot-id", "read-software-depot-id", "sync", "apply-https", "apply-properties", "apply-ceip"},
     "esxi-pxe": {"validate", "apply"},
@@ -200,6 +202,8 @@ _IPV4LL_DISABLE_ONLY_LINKS: ContextVar[frozenset[str]] = ContextVar("ipv4ll_disa
 _IPV4LL_REENABLE_ONLY_LINKS: ContextVar[frozenset[str]] = ContextVar("ipv4ll_reenable_only_links", default=frozenset())
 UPDATE_RELEASE_NOTES_URL_MAX_LENGTH = 2048
 NO_PATH_ACTIONS = {
+    ("vcf-storage", "boot"),
+    ("vcf-storage", "verify-installation"),
     ("diagnostics", "listeners"),
     ("vcf-backups", "status"),
     ("public-services", "reverse-proxy-status"),
@@ -258,6 +262,7 @@ NO_PATH_ACTIONS = {
     ("appliance-update", "wheel-deploy-lock-v1"),
 }
 NON_PATH_ARGUMENT_ACTIONS = {
+    ("vcf-storage", "is-bound"),
     ("dnsmasq", "verify-pool"),
     ("console", "recover-management-plane"),
     ("network", "recover"),
@@ -600,6 +605,9 @@ VCF_BACKUPS_CONFIG_DIR = Path("/etc/ssh/sshd_config.d")
 VCF_BACKUPS_CONFIG_PATH = VCF_BACKUPS_CONFIG_DIR / "atlaso-vcf-backups.conf"
 VCF_BACKUPS_AUTHORIZED_KEYS_DIR = Path("/etc/atlaso/ssh/authorized_keys")
 VCF_BACKUPS_DEFAULT_STORAGE_PATH = Path("/mnt/atlaso-vcf-backups")
+VCF_STORAGE_STATE_DIR = Path("/etc/atlaso/vcf-storage")
+VCF_STORAGE_COMMENT = "# Atlaso VCF storage: "
+VCF_STORAGE_INSTALLATION_LAYOUT = Path("/opt/atlaso/scripts/installation/layout.py")
 VCF_BACKUPS_DEFAULT_REMOTE_DIRECTORY = "/backups"
 VCF_BACKUPS_DEFAULT_USERNAME = "vcf-backup"
 VCF_BACKUPS_USERNAME_PATTERN = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
@@ -20540,6 +20548,261 @@ def _apply_vcf_backups_dropins(candidates: dict[Path, str | None]) -> int:
         return 2
 
 
+def _vcf_storage_target(role: str) -> Path:
+    return {"backup": VCF_BACKUPS_DEFAULT_STORAGE_PATH, "depot": VCF_DEPOT_STORE_PATH}[role]
+
+
+def _vcf_storage_metadata(value: object) -> dict[str, str]:
+    if not isinstance(value, dict) or set(value) != {"uuid", "path", "volume_path", "device"}:
+        raise ValueError("Invalid VCF storage assignment.")
+    if not all(isinstance(field, str) for field in value.values()):
+        raise ValueError("Invalid VCF storage assignment fields.")
+    path = value["path"]
+    volume_path = value["volume_path"]
+    path_pattern = r"(?:/[A-Za-z0-9_][A-Za-z0-9_.-]*)+"
+    if (len(path) > 240 or not re.fullmatch(path_pattern, path)
+            or not re.fullmatch(path_pattern, volume_path) or str(PurePosixPath(path).parent) != volume_path
+            or _esx_storage_reserved_mount_owner(volume_path)):
+        raise ValueError("VCF storage must be a dedicated directory on a registered data volume.")
+    volume = PurePosixPath(volume_path)
+    system_roots = {"bin", "boot", "dev", "etc", "home", "lib", "lib64", "opt", "proc", "root", "run", "sbin",
+                    "sys", "tmp", "usr", "var"}
+    if ((volume.parts[1] in system_roots and not volume.is_relative_to("/var/srv"))
+            or volume.is_relative_to("/srv/atlaso") or volume.is_relative_to("/var/srv/atlaso")):
+        raise ValueError("VCF storage cannot use a protected system mount.")
+    if (not re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", value["uuid"])
+            or not re.fullmatch(r"/dev/disk/by-id/[A-Za-z0-9_.:+-]+", value["device"])):
+        raise ValueError("VCF storage requires an exact UUID and stable disk identity.")
+    return value
+
+
+def _vcf_storage_from_config(text: str) -> dict[str, str]:
+    entries = [line.removeprefix(VCF_STORAGE_COMMENT) for line in text.splitlines()
+               if line.startswith(VCF_STORAGE_COMMENT)]
+    if not entries:
+        return {}
+    if len(entries) != 1 or len(entries[0]) > 1500:
+        raise ValueError("Ambiguous VCF storage metadata.")
+    return _vcf_storage_metadata(json.loads(entries[0]))
+
+
+def _vcf_storage_read(role: str) -> dict[str, str]:
+    path = VCF_STORAGE_STATE_DIR / f"{role}.json"
+    if not os.path.lexists(path):
+        return {}
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("Applied VCF storage record is unsafe.")
+    info = path.stat()
+    if info.st_uid != 0 or info.st_mode & 0o022 or info.st_nlink != 1 or info.st_size > 1500:
+        raise ValueError("Applied VCF storage record is unsafe.")
+    value = json.loads(path.read_bytes())
+    return _vcf_storage_metadata(value) if value != {} else {}
+
+
+def _vcf_storage_root_directory(path: Path) -> None:
+    for candidate in (path, *path.parents):
+        info = candidate.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+            raise ValueError("VCF storage ancestry must be root-owned and protected from writes.")
+
+
+def _vcf_storage_find_mount(path: Path, field: str) -> list[str]:
+    result = _run(["findmnt", "-nro", field, "--mountpoint", str(path)], timeout=10)
+    if result.returncode not in {0, 1}:
+        raise ValueError("Unable to inspect VCF storage mounts.")
+    return result.stdout.splitlines()
+
+
+def _vcf_storage_live_source(
+    role: str, assignment: dict[str, str], *, create: bool = False, boot: bool = False,
+) -> Path:
+    source = Path(assignment["path"])
+    primary = Path(assignment["volume_path"])
+    _vcf_storage_root_directory(primary)
+    _vcf_storage_root_directory(ESX_STORAGE_DISK_ALLOWLIST_PATH.parent)
+    registrations = ESX_STORAGE_DISK_ALLOWLIST_PATH.read_text(encoding="utf-8").splitlines()
+    claim = [assignment["uuid"], assignment["device"], str(primary)]
+    if sum(line.split("\t")[:3] == claim for line in registrations) != 1:
+        raise ValueError("VCF storage volume is absent from the applied Storage Volumes registrations.")
+    identities = _vcf_storage_find_mount(primary, "UUID,FSTYPE,FSROOT,OPTIONS,SOURCE")
+    if not identities and boot and _esx_storage_uuid_fstab_entry_exists(assignment["uuid"], str(primary)):
+        _run(["mount", str(primary)], timeout=30)
+        identities = _vcf_storage_find_mount(primary, "UUID,FSTYPE,FSROOT,OPTIONS,SOURCE")
+    if len(identities) != 1 or len(fields := identities[0].split()) != 5:
+        raise ValueError("VCF storage volume mount is unavailable or ambiguous.")
+    fs_uuid, filesystem, mount_root, options, device = fields
+    if ([fs_uuid, filesystem, mount_root] != [assignment["uuid"], "ext4", "/"]
+            or "rw" not in options.split(",")
+            or Path(device).resolve(strict=True) != Path(assignment["device"]).resolve(strict=True)):
+        raise ValueError("VCF storage mount does not match the registered writable disk.")
+    other = _vcf_storage_read("depot" if role == "backup" else "backup")
+    if other.get("path") == str(source):
+        raise ValueError("The other VCF service is already using this storage directory.")
+    exports = ESX_STORAGE_EXPORT_ROOT
+    if exports.is_dir():
+        for child in exports.iterdir():
+            for location in _vcf_storage_find_mount(child, "UUID,FSROOT"):
+                fs, _, root = location.partition(" ")
+                shared = PurePosixPath(root.strip())
+                service = PurePosixPath("/") / source.name
+                if fs == fs_uuid and (service.is_relative_to(shared) or shared.is_relative_to(service)):
+                    raise ValueError("VCF storage directory overlaps an active ESX Storage export.")
+    if not os.path.lexists(source):
+        if not create:
+            return source
+        source.mkdir(mode=0o755)
+        if role == "depot":
+            shutil.chown(source, user="atlaso", group="atlaso")
+    if not stat.S_ISDIR(source.lstat().st_mode) or _vcf_storage_find_mount(source, "TARGET"):
+        raise ValueError("VCF storage directory must be an ordinary directory on the registered filesystem.")
+    if source.stat().st_dev != primary.stat().st_dev:
+        raise ValueError("VCF storage directory resolves outside the registered filesystem.")
+    if role == "backup":
+        _vcf_storage_root_directory(source)
+        if (source / "backups").is_symlink():
+            raise ValueError("The SFTP backup directory cannot be a symbolic link.")
+    else:
+        import pwd
+
+        info = source.stat()
+        if info.st_uid != pwd.getpwnam("atlaso").pw_uid or not info.st_mode & 0o200 or info.st_mode & 0o022:
+            raise ValueError("The depot directory must be writable by Atlaso and only Atlaso.")
+        if (source / "PROD").is_symlink():
+            raise ValueError("The depot PROD directory cannot be a symbolic link.")
+    return source
+
+
+def _vcf_storage_mounted(source: Path, target: Path) -> bool:
+    return source.is_dir() and target.is_dir() and os.path.samestat(source.stat(), target.stat())
+
+
+def _vcf_storage_bind(source: Path, target: Path) -> None:
+    result = _run(["mount", "--bind", str(source), str(target)], timeout=15)
+    if result.returncode or not _vcf_storage_mounted(source, target):
+        raise ValueError("Could not attach and verify the selected VCF storage.")
+
+
+def _vcf_storage_unbind(target: Path) -> None:
+    if _run(["umount", str(target)], timeout=15).returncode:
+        raise ValueError("The current VCF storage is busy. Retry after active access has drained.")
+
+
+def _apply_with_vcf_storage(role: str, assignment: dict[str, str], apply: Callable[[], int]) -> int:
+    """Verify the candidate before switching and restore the last applied mount on failure."""
+    try:
+        if not assignment and not os.path.lexists(VCF_STORAGE_STATE_DIR):
+            return apply()
+        import fcntl
+
+        VCF_STORAGE_STATE_DIR.mkdir(mode=0o755, exist_ok=True)
+        _vcf_storage_root_directory(VCF_STORAGE_STATE_DIR)
+        lock_fd = os.open(VCF_STORAGE_STATE_DIR / ".lock", os.O_CREAT | os.O_NOFOLLOW | os.O_RDWR, 0o600)
+        with os.fdopen(lock_fd, "r+b") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            previous = _vcf_storage_read(role)
+            target = _vcf_storage_target(role)
+            candidate = _vcf_storage_live_source(role, assignment, create=True) if assignment else None
+            if previous == assignment:
+                if candidate and not _vcf_storage_mounted(candidate, target):
+                    raise ValueError("The applied VCF storage mount is unavailable.")
+                return apply()
+            old_source = _vcf_storage_live_source(role, previous) if previous else None
+            _vcf_storage_root_directory(target.parent)
+            if not stat.S_ISDIR(target.lstat().st_mode):
+                raise ValueError("The installed VCF service mount path is unsafe.")
+            if old_source and not _vcf_storage_mounted(old_source, target):
+                raise ValueError("The current VCF storage does not match the applied record.")
+            candidate_attached = False
+            old_removed = False
+            succeeded = False
+            try:
+                if old_source:
+                    _vcf_storage_unbind(target)
+                    old_removed = True
+                if candidate:
+                    _vcf_storage_bind(candidate, target)
+                    candidate_attached = True
+                status = apply()
+                if status:
+                    return status
+                record = VCF_STORAGE_STATE_DIR / f"{role}.json"
+                try:
+                    _durable_management_handoff_state_write(assignment, record)
+                except OSError:
+                    # A directory sync failure can occur after the rename.
+                    _durable_management_handoff_state_write(previous, record)
+                    raise
+                succeeded = True
+                return 0
+            finally:
+                if not succeeded:
+                    if candidate_attached or (candidate and _vcf_storage_mounted(candidate, target)):
+                        _vcf_storage_unbind(target)
+                    if old_removed and old_source:
+                        _vcf_storage_bind(old_source, target)
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        print(f"VCF storage apply failed: {exc}", file=sys.stderr)
+        return 2
+
+
+def _restore_vcf_storage_at_boot() -> int:
+    if not os.path.lexists(VCF_STORAGE_STATE_DIR):
+        return 0
+    try:
+        _vcf_storage_root_directory(VCF_STORAGE_STATE_DIR)
+        for role in ("backup", "depot"):
+            assignment = _vcf_storage_read(role)
+            if assignment:
+                source = _vcf_storage_live_source(role, assignment, boot=True)
+                target = _vcf_storage_target(role)
+                _vcf_storage_root_directory(target.parent)
+                if not source.is_dir() or not stat.S_ISDIR(target.lstat().st_mode):
+                    raise ValueError("Applied VCF storage directory is unavailable.")
+                if not _vcf_storage_mounted(source, target):
+                    _vcf_storage_bind(source, target)
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        print(f"VCF storage startup failed: {exc}", file=sys.stderr)
+        return 2
+    return 0
+
+
+def _vcf_storage_is_bound(role: str, expected_uuid: str = "") -> bool:
+    if role not in {"backup", "depot"} or not os.path.lexists(VCF_STORAGE_STATE_DIR):
+        return False
+    _vcf_storage_root_directory(VCF_STORAGE_STATE_DIR)
+    assignment = _vcf_storage_read(role)
+    if not assignment or expected_uuid and assignment["uuid"] != expected_uuid:
+        return False
+    source = _vcf_storage_live_source(role, assignment)
+    return _vcf_storage_mounted(source, _vcf_storage_target(role))
+
+
+def _vcf_storage_verify_installation() -> None:
+    """Keep checking the original ISO filesystems after a service bind covers one."""
+    path = VCF_STORAGE_INSTALLATION_LAYOUT
+    _vcf_storage_root_directory(path.parent)
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+        raise ValueError("The installed layout verifier is unsafe.")
+    verifier = runpy.run_path(str(path))
+    if not verifier["installation_profile"]():
+        raise ValueError("The installed storage profile is unavailable.")
+    layout = verifier["load_layout"]()
+    roles = {str(_vcf_storage_target(role)): role for role in ("backup", "depot")}
+    for mount in layout["mounts"]:
+        target = Path(mount["target"])
+        if target.resolve(strict=True) != target:
+            raise ValueError("The installed filesystem mount ancestry changed.")
+        command = ["findmnt", "--json", "--mountpoint", str(target), "--output", "UUID,FSTYPE"]
+        role = roles.get(str(target))
+        if role and _vcf_storage_is_bound(role):
+            command.append("--shadowed")
+        result = _run(command, timeout=10)
+        expected = [{"uuid": mount["uuid"], "fstype": mount["filesystem"]}]
+        if result.returncode or json.loads(result.stdout).get("filesystems") != expected:
+            raise ValueError("The installed filesystem mount differs from its receipt.")
+
+
 def _handle_vcf_backups(action: str, args: list[str]) -> int:
     """Handle VCF backups.
 
@@ -20572,6 +20835,15 @@ def _handle_vcf_backups(action: str, args: list[str]) -> int:
             print(error, file=sys.stderr)
         return 2
     values = _vcf_backups_config_values(config_path)
+    try:
+        assignment = _vcf_storage_from_config(config_path.read_text(encoding="utf-8"))
+        if assignment:
+            if values["storage_path"] != str(VCF_BACKUPS_DEFAULT_STORAGE_PATH):
+                raise ValueError("A VCF backup volume assignment requires the managed SFTP storage path.")
+            _vcf_storage_live_source("backup", assignment)
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        print(f"VCF backup storage validation failed: {exc}", file=sys.stderr)
+        return 2
     if action == "validate":
         print(
             json.dumps(
@@ -20598,6 +20870,10 @@ def _handle_vcf_backups(action: str, args: list[str]) -> int:
     if prospective.returncode:
         print(prospective.stderr, end="", file=sys.stderr)
         return prospective.returncode
+    return _apply_with_vcf_storage("backup", assignment, lambda: _apply_vcf_backups_service(values, candidates))
+
+
+def _apply_vcf_backups_service(values: dict[str, str | bool], candidates: dict[Path, str | None]) -> int:
     VCF_BACKUPS_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     if not values["enabled"]:
         return _apply_vcf_backups_dropins(candidates)
@@ -21853,6 +22129,13 @@ def _handle_vcf_offline_depot(action: str, args: list[str]) -> int:
         return 2
     text = config_path.read_text(encoding="utf-8")
     disabled = "VCF Offline Depot HTTPS endpoint is disabled" in text
+    try:
+        assignment = _vcf_storage_from_config(text)
+        if assignment:
+            _vcf_storage_live_source("depot", assignment)
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        print(f"VCF depot storage validation failed: {exc}", file=sys.stderr)
+        return 2
     if not disabled and action in {"validate", "apply-https"}:
         admission_error = _vcf_depot_listener_admission(text)
         if admission_error:
@@ -21875,7 +22158,7 @@ def _handle_vcf_offline_depot(action: str, args: list[str]) -> int:
         print(json.dumps({"vcf_offline_depot": "sync command intent recorded", "enabled": not disabled}, sort_keys=True))
         return 0
     if action == "apply-https":
-        result = _apply_vcf_depot_site(text, disabled=disabled)
+        result = _apply_with_vcf_storage("depot", assignment, lambda: _apply_vcf_depot_site(text, disabled=disabled))
         if result != 0:
             return result
         print(
@@ -30667,6 +30950,20 @@ def _esx_storage_manifest_errors(payload: dict[str, object], *, require_authoriz
             if owner:
                 errors.append(f"existing volume {volume.get('name')} mount path is reserved for {owner}")
     enabled_shares = [share for share in shares if share.get("enabled")]
+    if os.path.lexists(VCF_STORAGE_STATE_DIR):
+        try:
+            _vcf_storage_root_directory(VCF_STORAGE_STATE_DIR)
+            service_paths = [
+                PurePosixPath(assignment["path"])
+                for role in ("backup", "depot") if (assignment := _vcf_storage_read(role))
+            ]
+        except (OSError, ValueError):
+            errors.append("The applied VCF service storage assignments could not be verified.")
+            service_paths = []
+        for share in enabled_shares:
+            source = PurePosixPath(str(share.get("source_path") or ""))
+            if any(source.is_relative_to(path) or path.is_relative_to(source) for path in service_paths):
+                errors.append(f"share {share.get('datastore_name')} overlaps applied VCF service storage")
     for share in enabled_shares:
         if share.get("volume_id") not in volumes_by_id:
             errors.append(f"share {share.get('datastore_name')} references an unknown volume")
@@ -38627,6 +38924,24 @@ def main(argv: list[str]) -> int:
 
     if (group, action) == ("logs", "page"):
         return _read_log_history(args)
+    if (group, action) == ("vcf-storage", "boot"):
+        return _restore_vcf_storage_at_boot() if real_apply and not args and os.geteuid() == 0 else 2
+    if (group, action) == ("vcf-storage", "verify-installation"):
+        if not real_apply or args or os.geteuid() != 0:
+            return 2
+        try:
+            _vcf_storage_verify_installation()
+        except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+            print(f"Installed storage validation failed: {exc}", file=sys.stderr)
+            return 2
+        return 0
+    if (group, action) == ("vcf-storage", "is-bound"):
+        if not real_apply or os.geteuid() != 0 or len(args) not in {1, 2}:
+            return 2
+        try:
+            return 0 if _vcf_storage_is_bound(*args) else 1
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            return 2
 
     if (group, action) not in NO_PATH_ACTIONS and not args:
         print(f"{group} {action} requires a config or artifact path", file=sys.stderr)

@@ -62,46 +62,7 @@ SERVICE_STORAGE = (
     ("SFTP backup storage", "/mnt/atlaso-vcf-backups"),
     ("VCFDT depot storage", "/mnt/atlaso-vcf-offline-depot"),
 )
-
-
-def storage_choice(maxy: int, maxx: int, title: str, mountpoint: str, choices: list[tuple]) -> int | None:
-    """Reuse Photon's native scrolling menu for one named storage assignment.
-
-    Args:
-        maxy: Console rows.
-        maxx: Console columns.
-        title: Fixed service label.
-        mountpoint: Fixed appliance mount path.
-        choices: Public labels and exact proposed assignment actions.
-
-    Returns:
-        Explicit selected row, or None for Back.
-    """
-    from actionresult import ActionResult
-    from menu import Menu
-    from window import Window
-
-    def select(index):
-        """Return an explicit native menu selection.
-
-        Args:
-            index: Selected row bound by the native menu.
-        """
-        return ActionResult(True, {"choice": index})
-
-    height, width = 18, 70
-    window = Window(height, width, maxy, maxx, title, True)
-    window.addstr(0, 0, f"Mount: {mountpoint}\nChoose storage; new disks are erased only after review.")
-    items = [(textwrap.shorten(f"{index + 1}. {label}", width - 8), select, index)
-             for index, (label, *_action) in enumerate(choices)]
-    window.set_action_panel(Menu((maxy - height) // 2 + 5, maxx, items, 7))
-    result = window.do_action()
-    if not result.success:
-        return None
-    index = result.result["choice"]
-    if type(index) is not int or not 0 <= index < len(choices):
-        raise ValueError("storage selection is invalid")
-    return index
+ROOT_STORAGE = ("Root installation target", "/")
 
 
 def service_storage_choices(config: dict, mountpoint: str, eligible: dict) -> list[tuple]:
@@ -115,14 +76,19 @@ def service_storage_choices(config: dict, mountpoint: str, eligible: dict) -> li
     existing = next((p for p in config["partitions"] if p.get("mountpoint") == mountpoint), None)
     label = f"Keep existing partition on {existing.get('disk', config['disk'])}" if existing else "Keep shared storage (no separate partition)"
     choices = [(label, "keep", None)]
+    if existing is not None:
+        choices.append(("Use shared storage (no separate partition)", "shared", None))
     reserved = {path for _label, path in SERVICE_STORAGE}
     for index, partition in enumerate(config["partitions"]):
         target = partition.get("mountpoint") or ""
+        disk = partition.get("disk", config["disk"])
         if (target.startswith("/mnt/") and target not in reserved
-                and partition.get("filesystem") in {"ext4", "xfs", "btrfs"}):
-            disk = partition.get("disk", config["disk"])
+                and partition.get("filesystem") in {"ext4", "xfs", "btrfs"}
+                and disk in eligible):
             choices.append((f"Partition {target} on {disk}", "partition", index))
-    used = set(selected_disks(config))
+    used = {config["disk"]}
+    used.update(partition.get("disk", config["disk"]) for partition in config["partitions"]
+                 if partition is not existing)
     # The persisted layout admits 32 mounts, including Photon's generated EFI
     # mount. Reassigning an existing role does not consume another mount slot.
     mounted = sum(bool(p.get("mountpoint")) and p.get("filesystem") not in {"swap", "bios"}
@@ -133,43 +99,223 @@ def service_storage_choices(config: dict, mountpoint: str, eligible: dict) -> li
     return choices
 
 
-def assign_service_storage(maxy: int, maxx: int, config: dict, initial: dict, source: SourceMedia | None = None) -> bool:
-    """Collect reversible service assignments before any destructive consent.
+def storage_layout_screen(maxy: int, maxx: int, config: dict, initial: dict,
+                          source: SourceMedia | None = None, custom_editor=None) -> bool:
+    """Review all storage roles together and edit them on one native console page.
 
     Args:
         maxy: Console rows.
         maxx: Console columns.
-        config: Auto or Custom native layout to update only after both choices.
+        config: Tentative Auto or Custom layout, updated only on Continue.
         initial: Original read-only eligible disk identities.
         source: Captured physical installation-source binding.
+        custom_editor: Native Custom partition editor callback.
+
+    Returns:
+        True after all three rows pass conflict checks, or False for Go Back.
     """
+    height, width = 20, min(maxx - 4, 76)
+    if height > maxy or width < 56:
+        raise ValueError("storage layout exceeds the console page size")
+    window = curses.newwin(height, width, (maxy - height) // 2, (maxx - width) // 2)
+    window.bkgd(" ", curses.color_pair(2))
+    window.keypad(True)
+    keys = ConsoleInputKeys(window)
     working = copy.deepcopy(config)
-    snapshots = []
-    index = 0
-    while index < len(SERVICE_STORAGE):
-        title, mountpoint = SERVICE_STORAGE[index]
+    focused = 0
+    roles = (ROOT_STORAGE, *SERVICE_STORAGE)
+    errors = [""] * len(roles)
+
+    def fresh_choices() -> tuple[dict, list[list[tuple]]]:
         current = bound_disk_inventory(source)
         eligible = {path: item for path, item in current.items() if path in initial and item == initial[path]}
-        choices = service_storage_choices(working, mountpoint, eligible)
-        selected = storage_choice(maxy, maxx, title, mountpoint, choices)
-        if selected is None:
-            if index == 0:
+        choices = [service_storage_choices(working, mountpoint, eligible) for _title, mountpoint in SERVICE_STORAGE]
+        return eligible, choices
+
+    custom_layout = None
+
+    def conflicts(eligible: dict) -> list[str]:
+        found = [""] * len(roles)
+        root_disk = working["disk"]
+        root = next((item for item in working["partitions"] if item.get("mountpoint") == "/"), None)
+        if root is None or root.get("disk", root_disk) != root_disk:
+            found[0] = "Root target must contain the selected root partition."
+        elif root_disk not in eligible:
+            found[0] = "Root disk is unavailable or protected. Choose an eligible target."
+        if working.get("autopartition") and initial.get(root_disk, {}).get("size", 0) < MINIMUM_DISK_BYTES:
+            found[0] = "Automatic installation requires a root disk of at least 64 GiB."
+        assigned: dict[str, int] = {}
+        for index, (_title, mountpoint) in enumerate(SERVICE_STORAGE, start=1):
+            partition = next((item for item in working["partitions"] if item.get("mountpoint") == mountpoint), None)
+            if partition is None:
+                continue
+            disk = partition.get("disk", working["disk"])
+            if disk not in eligible:
+                found[index] = "Assigned disk is unavailable or protected. Choose another storage volume."
+            if partition.get("size") != 0:
+                continue
+            if disk == root_disk:
+                found[0] = "Root disk cannot also be assigned to a service role."
+                found[index] = found[0]
+            previous = assigned.get(disk)
+            if previous is not None:
+                found[index] = "This disk is already assigned to another storage role."
+                found[previous] = "This disk is already assigned to another storage role."
+            else:
+                assigned[disk] = index
+        seen_mounts: dict[str, int] = {}
+        role_indexes = {mountpoint: index for index, (_title, mountpoint) in enumerate(roles)}
+        for partition in working["partitions"]:
+            mountpoint = partition.get("mountpoint")
+            if not mountpoint:
+                continue
+            index = role_indexes.get(mountpoint, 0)
+            if mountpoint in seen_mounts:
+                previous = seen_mounts[mountpoint]
+                found[index] = "This mount path is assigned more than once."
+                found[previous] = "This mount path is assigned more than once."
+            else:
+                seen_mounts[mountpoint] = index
+        return found
+
+    def apply_choice(mountpoint: str, choice: tuple, partitions: list[dict]) -> None:
+        _label, action, value = choice
+        if action == "keep":
+            return
+        if action == "shared":
+            working["partitions"] = [partition for partition in working["partitions"]
+                                     if partition.get("mountpoint") != mountpoint]
+            return
+        chosen = copy.deepcopy(partitions[value]) if action == "partition" else {
+            "disk": value, "size": 0, "filesystem": "ext4",
+        }
+        working["partitions"] = [partition for partition in working["partitions"]
+                                 if partition.get("mountpoint") != mountpoint]
+        chosen["mountpoint"] = mountpoint
+        if action == "disk":
+            working["partitions"].append(chosen)
+
+    role_count = len(roles)
+    choice_cursors = [0] * len(SERVICE_STORAGE)
+    try:
+        while True:
+            eligible, choices_by_role = fresh_choices()
+            errors = conflicts(eligible)
+            root_disks = sorted(eligible)
+            if working["disk"] not in root_disks:
+                root_disks.insert(0, working["disk"])
+            window.erase()
+            window.box()
+            window.addstr(1, 2, "Storage layout", curses.A_BOLD)
+            window.addstr(2, 2, "Choose all three storage assignments before destructive review.")
+            row = 4
+            title, mountpoint = ROOT_STORAGE
+            root_partition = next((item for item in working["partitions"] if item.get("mountpoint") == "/"), None)
+            root_volume = root_partition.get("disk", working["disk"]) if root_partition else working["disk"]
+            root_size = eligible.get(root_volume, initial.get(root_volume, {})).get("size", 0) // 1024**3
+            root_label = f"{root_volume} ({root_size} GiB) - {'Auto' if working.get('autopartition') else 'Custom'}"
+            window.addstr(row, 2, title, curses.A_BOLD)
+            window.addstr(row + 1, 4, f"Mount: {mountpoint}")
+            window.addstr(row + 2, 4, f"Volume: {textwrap.shorten(root_label, width - 12)}",
+                          curses.A_REVERSE if focused == 0 else curses.A_UNDERLINE)
+            if errors[0]:
+                window.addstr(row + 3, 4, textwrap.shorten(errors[0], width - 7), curses.color_pair(4))
+            for index, ((title, mountpoint), _choices) in enumerate(zip(SERVICE_STORAGE, choices_by_role, strict=True), start=1):
+                row = 8 + (index - 1) * 4
+                partition = next((item for item in working["partitions"] if item.get("mountpoint") == mountpoint), None)
+                if partition is None:
+                    enclosing = next((item for item in working["partitions"] if item.get("mountpoint") == "/mnt"), None)
+                    shared_volume = enclosing.get("disk", working["disk"]) if enclosing else root_volume
+                    current = f"Shared storage on {shared_volume}"
+                elif partition.get("size") == 0:
+                    current = f"Whole disk {partition.get('disk', working['disk'])} (erase after review)"
+                else:
+                    current = f"Partition on {partition.get('disk', working['disk'])} ({partition['filesystem']})"
+                current = textwrap.shorten(current, width - 13)
+                window.addstr(row, 2, title, curses.A_BOLD)
+                window.addstr(row + 1, 4, f"Mount: {mountpoint}")
+                window.addstr(row + 2, 4, f"Volume: {current}",
+                              curses.A_REVERSE if focused == index else curses.A_UNDERLINE)
+                message = errors[index] or "Press E to change this assignment."
+                window.addstr(row + 3, 4, textwrap.shorten(message, width - 7),
+                              curses.color_pair(4) if errors[index] else 0)
+            window.addstr(16, 2, "Tab/Right next. Up/Left previous.")
+            window.addstr(17, 2, "E changes role storage. D disk. L layout.")
+            window.addstr(18, 2, "Enter review. Esc cancels installation setup.")
+            window.refresh()
+            key = keys.getch()
+
+            if key == 27:
                 return False
-            index -= 1
-            working["partitions"] = snapshots.pop()
-            continue
-        snapshots.append(copy.deepcopy(working["partitions"]))
-        _label, action, value = choices[selected]
-        if action != "keep":
-            partition = (working["partitions"][value] if action == "partition"
-                         else {"disk": value, "size": 0, "filesystem": "ext4"})
-            working["partitions"] = [p for p in working["partitions"] if p.get("mountpoint") != mountpoint]
-            partition["mountpoint"] = mountpoint
-            if action == "disk":
-                working["partitions"].append(partition)
-        index += 1
-    config["partitions"] = working["partitions"]
-    return True
+            if key in (9, curses.KEY_RIGHT, curses.KEY_DOWN):
+                focused = (focused + 1) % role_count
+                continue
+            if key in (curses.KEY_BTAB, curses.KEY_LEFT, curses.KEY_UP):
+                focused = (focused - 1) % role_count
+                continue
+            if key in (10, curses.KEY_ENTER):
+                if not any(errors):
+                    config.update(working)
+                    return True
+            if focused == 0 and key in (ord("d"), ord("D")):
+                if root_disks:
+                    selected_disk = root_disks[(root_disks.index(working["disk"]) + 1) % len(root_disks)]
+                    working["disk"] = selected_disk
+                    root = next((item for item in working["partitions"] if item.get("mountpoint") == "/"), None)
+                    if root is not None:
+                        root["disk"] = selected_disk
+                    if working.get("autopartition"):
+                        service_partitions = [item for item in working["partitions"]
+                                              if item.get("mountpoint") in {mount for _title, mount in SERVICE_STORAGE}]
+                        working["partitions"] = [{"mountpoint": "/", "size": 0, "filesystem": "ext4"},
+                                                  *service_partitions]
+                    if custom_layout is not None:
+                        custom_root = next((item for item in custom_layout if item.get("mountpoint") == "/"), None)
+                        if custom_root is not None:
+                            custom_root["disk"] = selected_disk
+            if focused == 0 and key in (ord("l"), ord("L")):
+                if working.get("autopartition"):
+                    editor_state = copy.deepcopy(working)
+                    if custom_layout is not None:
+                        working["partitions"] = copy.deepcopy(custom_layout)
+                        custom_root = next((item for item in working["partitions"] if item.get("mountpoint") == "/"), None)
+                        if custom_root is not None:
+                            custom_root["disk"] = working["disk"]
+                    else:
+                        service_partitions = [item for item in working["partitions"]
+                                              if item.get("mountpoint") in {mount for _title, mount in SERVICE_STORAGE}]
+                        working["partitions"] = [{"mountpoint": "/", "size": 0, "filesystem": "ext4"},
+                                                  *service_partitions]
+                    working["autopartition"] = False
+                    if custom_editor is not None:
+                        if custom_editor(working):
+                            custom_layout = copy.deepcopy(working["partitions"])
+                        else:
+                            working = editor_state
+                else:
+                    custom_layout = copy.deepcopy(working["partitions"])
+                    working["partitions"] = [{"mountpoint": "/", "size": 0, "filesystem": "ext4"},
+                                              *[item for item in working["partitions"]
+                                                if item.get("mountpoint") in {mount for _title, mount in SERVICE_STORAGE}]]
+                    working["autopartition"] = True
+            if focused > 0 and key in (ord("e"), ord("E")):
+                role_index = focused - 1
+                options = choices_by_role[role_index]
+                if options:
+                    mountpoint = SERVICE_STORAGE[role_index][1]
+                    selected_index = (choice_cursors[role_index] + 1) % len(options)
+                    apply_choice(mountpoint, options[selected_index], working["partitions"])
+                    choice_cursors[role_index] = selected_index
+                    if custom_layout is not None:
+                        service_partition = next((item for item in working["partitions"]
+                                                  if item.get("mountpoint") == mountpoint), None)
+                        custom_layout = [item for item in custom_layout if item.get("mountpoint") != mountpoint]
+                        if service_partition is not None:
+                            custom_layout.append(copy.deepcopy(service_partition))
+                    errors = conflicts(eligible)
+    finally:
+        window.clear()
+        window.refresh()
 
 
 def require_network_adapter(sysfs: Path = Path("/sys/class/net")) -> None:
@@ -641,7 +787,6 @@ def configure_console(screen, initial: dict[str, dict], mount_aliases: dict[str,
     from custompartition import CustomPartition
     from device import Device
     from partitionpane import PartitionPane
-    from selectdisk import SelectDisk
 
     maxy, maxx = screen.getmaxyx()
     if maxy < 25 or maxx < 80:
@@ -650,6 +795,7 @@ def configure_console(screen, initial: dict[str, dict], mount_aliases: dict[str,
         curses.init_pair(index, foreground, background)
     screen.bkgd(" ", curses.color_pair(1))
     curses.curs_set(0)
+    custom_service_mount_count = 0
 
     class MultiDiskPane(PartitionPane):
         """Keep native table rendering but show each partition's selected disk."""
@@ -691,13 +837,22 @@ def configure_console(screen, initial: dict[str, dict], mount_aliases: dict[str,
             Args:
                 *args: Arguments forwarded to the wrapped operation."""
             super().__init__(*args)
-            self.partition_disks = {}
+            config = args[2]
+            partitions = config.get("partitions", [])
+            selected_disk = config.get("disk")
+            self.partition_disks = {
+                index: partition.get("disk", selected_disk)
+                for index, partition in enumerate(partitions)
+                if partition.get("disk", selected_disk) is not None
+            }
 
         def initialize_devices(self):
             if not self.disk_to_index:
                 super().initialize_devices()
 
         def create_function(self):
+            from selectdisk import SelectDisk
+
             selection = {}
             if not SelectDisk(maxy, maxx, selection).display().success:
                 return self.display()
@@ -721,6 +876,8 @@ def configure_console(screen, initial: dict[str, dict], mount_aliases: dict[str,
                 planned = [{"filesystem": self.cp_config.get(f"{index}partition_info1"),
                             "mountpoint": self.cp_config.get(f"{index}partition_info2")}
                            for index in range(self.cp_config["partitionsnumber"])]
+                planned.extend({"filesystem": "ext4", "mountpoint": f"/mnt/atlaso-service-reserved-{index}"}
+                               for index in range(custom_service_mount_count))
                 try:
                     require_mount_capacity([*planned, {"filesystem": values[1], "mountpoint": values[2]}])
                 except ValueError as error:
@@ -755,52 +912,49 @@ def configure_console(screen, initial: dict[str, dict], mount_aliases: dict[str,
             self.partition_disks.clear()
             return super().delete()
 
-    while True:
-        config = {"arch": "x86_64", "bootmode": "efi"}
-        if not SelectDisk(maxy, maxx, config).display().success:
-            raise Cancelled()
-        if not config.get("autopartition"):
-            if not MultiDiskPartitions(maxy, maxx, config).display().success:
-                # Back from Custom returns to disk/layout selection. A fresh
-                # configuration drops every abandoned partition mapping.
-                continue
-        else:
-            config["partitions"] = [{"mountpoint": "/", "size": 0, "filesystem": "ext4"}]
+    def edit_custom_layout(config: dict) -> bool:
+        """Open Photon's existing Custom partition editor for the current target.
+
+        Args:
+            config: Tentative layout edited in place by Photon's native control.
+        """
+        nonlocal custom_service_mount_count
+        service_mounts = {mountpoint for _title, mountpoint in SERVICE_STORAGE}
+        current_partitions = config.get("partitions", [])
+        service_partitions = [partition for partition in current_partitions
+                              if partition.get("mountpoint") in service_mounts]
+        custom_service_mount_count = len(service_partitions)
+        config["partitions"] = [partition for partition in current_partitions
+                                if partition.get("mountpoint") not in service_mounts]
+        if not MultiDiskPartitions(maxy, maxx, config).display().success:
+            return False
         for partition in config["partitions"]:
             if partition.get("mountpoint"):
                 validate_custom_mountpoint(partition["mountpoint"], mount_aliases)
-        paths = selected_disks(config)
-        consent = {path: initial[path] for path in paths}
-        revalidate_disks(config, consent, bound_disk_inventory(source))
-        if not config.get("autopartition") or consent[config["disk"]]["size"] >= MINIMUM_DISK_BYTES:
-            if not assign_service_storage(maxy, maxx, config, initial, source):
-                continue
-            for partition in config["partitions"]:
-                if partition.get("mountpoint"):
-                    validate_custom_mountpoint(partition["mountpoint"], mount_aliases)
-            paths = selected_disks(config)
-            consent = {path: initial[path] for path in paths}
-            break
+        config["partitions"].extend(service_partitions)
+        custom_service_mount_count = 0
+        return True
 
-        # Keep the admission error inside Photon's native informational dialog.
-        # Dismissing it returns to explicit disk selection; its cancel key exits
-        # through the same pre-write cancellation path as other installer dialogs.
-        from confirmwindow import ConfirmWindow
-
-        selected = config["disk"]
-        size = consent[selected]["size"]
-        message = "\n".join((
-            "Insufficient disk capacity.",
-            "default installation requires a disk of at least 64 GiB",
-            f"Selected {selected} has {size} bytes.",
-            "Press Enter to choose another disk, or Esc to cancel.",
-        ))
-        height = len(message.splitlines()) + 7
-        width = maxx - 4
-        starty = (maxy - height) // 2 + height - 4
-        result = ConfirmWindow(height, width, maxy, maxx, starty, message, info=True).do_action()
-        if not result.success:
-            raise Cancelled()
+    if not initial:
+        raise ValueError("No eligible installation disk is available.")
+    eligible_paths = sorted(initial)
+    root_disk = next((path for path in eligible_paths
+                      if initial[path].get("size", 0) >= MINIMUM_DISK_BYTES), eligible_paths[0])
+    config = {
+        "arch": "x86_64",
+        "bootmode": "efi",
+        "disk": root_disk,
+        "autopartition": True,
+        "partitions": [{"mountpoint": "/", "size": 0, "filesystem": "ext4"}],
+    }
+    if not storage_layout_screen(maxy, maxx, config, initial, source, edit_custom_layout):
+        raise Cancelled()
+    for partition in config["partitions"]:
+        if partition.get("mountpoint"):
+            validate_custom_mountpoint(partition["mountpoint"], mount_aliases)
+    paths = selected_disks(config)
+    consent = {path: initial[path] for path in paths}
+    revalidate_disks(config, consent, bound_disk_inventory(source))
     summary_lines = ["Erase selected disks?"]
     layout_lines = []
     for path in paths:

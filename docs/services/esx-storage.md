@@ -115,6 +115,13 @@ model, serial, WWN, size, and stable identity and requires the exact text `FORMA
 authorization belongs only to that appliance-apply job and the exact manifest hash/device identity; it is not desired
 state and is not placed in baselines or settings backups.
 
+Registered volumes can also hold VCF Backup files or the VCF Offline Depot. Configure those assignments in **VCF
+Backups → SFTP Settings** or **VCF Offline Depot → Service Settings** after the volume is registered. Each service uses
+its own directory on the selected volume, and the two services may share a volume. Review a reassignment through the
+service's global Appliance Apply plan. Existing data remains on its current volume, and changing an assignment does not
+format a volume or copy files. After successful Apply, verify the service reads and writes under its selected directory,
+then reboot and confirm the assignment remains active.
+
 When a virtual SCSI controller does not expose a serial or WWN, the appliance udev policy creates a stable
 topology-derived `atlaso-path-*` link under `/dev/disk/by-id`. The complete topology identity and fingerprint are still
 reviewed and revalidated; `/dev/sdX` is never accepted.

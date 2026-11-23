@@ -30,11 +30,25 @@ This verified appliance view provides visual orientation before you begin.
 The wizard is enabled only when the Atlaso **VCF Backups** SFTP service is ready. Configure the receiver at
 `/ui/management/vcf-backups`, then apply its current settings before returning to VCF Helper. The selected local SFTP
 user must be enabled, have its current Photon OS password synchronized by **Local Users**, and have no pending password
-change. The receiver also requires the fixed `/mnt/atlaso-vcf-backups` volume, chroot and password authentication, the
+change. The receiver also requires available installed or assigned storage, chroot and password authentication, the
 applied VCF Backups configuration, an active `sshd` listener, and the appliance's required public SSH host keys. The
-wizard checks the mount, rendered applied configuration, and live listener before each workflow action; saving intent
-alone is not enough. Apply **Local Users** first when the selected account or password needs synchronization, then apply
-**VCF Backups** through the shared [Appliance Apply](../operate/appliance-apply.md) workflow.
+wizard checks the active storage mount, rendered applied configuration, and live listener before each workflow action.
+Apply **Local Users** first when the selected account or password needs
+synchronization, then apply **VCF Backups** through the shared [Appliance Apply](../operate/appliance-apply.md) workflow.
+
+### Choose backup storage
+
+On **VCF Backups → SFTP Settings**, select a registered **Storage Volumes** volume and enter the directory on that
+volume that should hold backups. The **VCF Helper → Backup** tab offers the same volume and directory settings. Register
+or attach additional volumes under **ESX Storage → Storage Volumes** first. Installed storage remains available at
+`/mnt/atlaso-vcf-backups`.
+
+The selected directory is saved as desired state. Review the current and proposed volume and directory under **Review
+appliance changes**, then submit **VCF Backups** through global Appliance Apply. Atlaso preserves the existing backup
+files and does not format the selected volume. If the new mount cannot be applied, the current assignment remains in
+service. After Apply succeeds, confirm the selected volume and directory in VCF Backups, reboot the appliance, and
+check again that the assignment and SFTP writes persist. VCF clients continue to use the stable `/backups` remote
+directory when chroot is enabled.
 
 The SFTP server must present the ECDSA key used for fingerprint confirmation and advertise a modern RSA-SHA2 host-key
 algorithm as well as an ECDSA host-key algorithm. These are separate requirements: an ECDSA fingerprint alone does not

@@ -21,7 +21,6 @@
       <div class="metric">
         <span>Depot store</span>
         <strong data-vcf-depot-store>{{ vcf_depot_settings.depot_store_path }}</strong>
-        <small>fixed volume mount</small>
       </div>
       <div class="metric">
         <span>Access</span>
@@ -212,10 +211,6 @@
           <span class="field-label"><span>VMware CEIP</span><button class="help-icon" type="button" data-help="VCF Download Tool follows the appliance-wide VMware CEIP preference. Change it under Settings; Atlaso writes the matching telemetry flag before appliance apply actions and every manual or scheduled download.">i</button></span>
           <strong>{{ "enabled" if vmware_ceip_enabled else "disabled" }} · <a href="{{ management_ui_root }}/settings#vmware-product-preferences">manage in Settings</a></strong>
         </div>
-        <div class="derived-field fixed-value-field">
-          <span class="field-label"><span>Depot store volume</span><button class="help-icon" type="button" data-help="Fixed appliance volume mount used as the VCFDT --depot-store and HTTPS document root. Attach or size this disk separately from the root filesystem.">i</button></span>
-          <strong data-vcf-depot-store>{{ vcf_depot_settings.depot_store_path }}</strong>
-        </div>
         <div class="settings-subsection">
           <div>
             <h3>VCFDT staging</h3>
@@ -236,6 +231,14 @@
         </div>
         <p id="vcf-depot-settings-status" class="autosave-status" data-state="idle">Changes save automatically.</p>
       </form>
+      {% set storage_heading = "Depot Storage" %}
+      {% set storage_action = "vcf-offline-depot/settings" %}
+      {% set storage_assignment = vcf_depot_storage_assignment %}
+      {% set storage_options = vcf_depot_storage_options %}
+      {% set storage_writable = identity.can("write:repository") %}
+      {% set storage_default_path = "/mnt/atlaso-vcf-offline-depot" %}
+      {% set storage_status_id = "vcf-depot-storage-status" %}
+      {% include "partials/vcf_service_storage_settings.html" %}
       <div class="settings-list">
           <div><span>Version</span><strong data-vcf-depot-tool-version>{{ vcf_depot_tool_display_version or "unknown" }}</strong></div>
           <div class="settings-action-row">

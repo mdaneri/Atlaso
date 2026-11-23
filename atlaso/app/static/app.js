@@ -14345,6 +14345,16 @@ function initializeAutosaveForms(root = document) {
     }
     if (form.dataset.autosaveInitialized === "1") return;
     form.dataset.autosaveInitialized = "1";
+    if (form.hasAttribute("data-vcf-service-storage")) {
+      const volume = form.elements.namedItem("storage_volume_uuid");
+      const path = form.elements.namedItem("storage_volume_path");
+      if (volume instanceof HTMLSelectElement && path instanceof HTMLInputElement) {
+        volume.addEventListener("change", () => {
+          const suggested = volume.selectedOptions[0]?.dataset.suggestedPath;
+          if (suggested) path.value = suggested;
+        });
+      }
+    }
     form.addEventListener("atlaso:autosave-success", (event) => {
       updateDerivedListenAddressSummary(form, event.detail || {});
     });

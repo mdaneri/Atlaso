@@ -13,6 +13,7 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tarfile
 from contextlib import nullcontext
 from ipaddress import ip_network
@@ -16366,6 +16367,94 @@ def vcf_backups_config_text(*, enabled: bool = True) -> str:
             "",
         ]
     )
+
+
+@pytest.mark.parametrize("role", ["backup", "depot"])
+@pytest.mark.parametrize("failure", ["bind", "service", None])
+def test_vcf_storage_switch_preserves_previous_assignment(monkeypatch, tmp_path, role, failure):
+    """Exercise the previous mount, candidate verification, service step and boot record."""
+    helper = load_helper_module()
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    old = {"path": str(tmp_path / "old"), "uuid": "old"}
+    desired = {"path": str(tmp_path / "candidate"), "uuid": "next"}
+    target = tmp_path / "service"
+    target.mkdir()
+    state = {"source": Path(old["path"])}
+    writes = []
+    configured = []
+
+    def bind(source, destination):
+        assert destination == target
+        if source == Path(desired["path"]) and failure == "bind":
+            raise ValueError("candidate bind failed")
+        state["source"] = source
+
+    def apply_service():
+        configured.append(state["source"])
+        return int(failure == "service")
+
+    monkeypatch.setitem(sys.modules, "fcntl", SimpleNamespace(
+        flock=lambda handle, flags: None, LOCK_EX=1, LOCK_NB=2,
+    ))
+    monkeypatch.setattr(helper.os, "O_NOFOLLOW", 0, raising=False)
+    monkeypatch.setattr(helper, "VCF_STORAGE_STATE_DIR", state_dir)
+    monkeypatch.setattr(helper, "_vcf_storage_root_directory", lambda path: None)
+    monkeypatch.setattr(helper, "_vcf_storage_read", lambda selected: old if selected == role else {})
+    monkeypatch.setattr(helper, "_vcf_storage_target", lambda _: target)
+    monkeypatch.setattr(helper, "_vcf_storage_live_source", lambda _, assignment, **kwargs: Path(assignment["path"]))
+    monkeypatch.setattr(helper, "_vcf_storage_mounted", lambda source, _: source == state["source"])
+    monkeypatch.setattr(helper, "_vcf_storage_bind", bind)
+    monkeypatch.setattr(helper, "_vcf_storage_unbind", lambda _: state.update(source=None))
+    monkeypatch.setattr(helper, "_durable_management_handoff_state_write", lambda assignment, _: writes.append(assignment))
+
+    result = helper._apply_with_vcf_storage(role, desired, apply_service)
+    if failure:
+        assert result != 0
+        assert state["source"] == Path(old["path"])
+        assert writes == []
+        assert configured == ([] if failure == "bind" else [Path(desired["path"])])
+    else:
+        assert result == 0
+        assert state["source"] == Path(desired["path"])
+        assert writes == [desired]
+        monkeypatch.setattr(helper, "_vcf_storage_read", lambda selected: desired if selected == role else {})
+        state["source"] = None
+        Path(desired["path"]).mkdir()
+        assert helper._restore_vcf_storage_at_boot() == 0
+        assert state["source"] == Path(desired["path"])
+
+
+@pytest.mark.parametrize("approved_bind", [False, True])
+def test_vcf_storage_rechecks_the_original_installation_mount(monkeypatch, tmp_path, approved_bind):
+    """Use the installed receipt with or without an independently verified overlay."""
+    helper = load_helper_module()
+    verifier = tmp_path / "layout.py"
+    mount = {"target": str(tmp_path), "uuid": "original-uuid", "filesystem": "ext4"}
+    monkeypatch.setattr(helper, "VCF_STORAGE_INSTALLATION_LAYOUT", verifier)
+    monkeypatch.setattr(helper, "_vcf_storage_root_directory", lambda _: None)
+    monkeypatch.setattr(helper, "_vcf_storage_target", lambda role: tmp_path if role == "backup" else verifier)
+    monkeypatch.setattr(helper, "_vcf_storage_is_bound", lambda _: approved_bind)
+    monkeypatch.setattr(helper.runpy, "run_path", lambda _: {
+        "installation_profile": lambda: True,
+        "load_layout": lambda: {"mounts": [mount]},
+    })
+    original_lstat = Path.lstat
+
+    def lstat(path):
+        if path == verifier:
+            return SimpleNamespace(st_mode=stat.S_IFREG | 0o644, st_uid=0)
+        return original_lstat(path)
+
+    def findmnt(command, **kwargs):
+        assert ("--shadowed" in command) == approved_bind
+        return subprocess.CompletedProcess(command, 0, json.dumps({
+            "filesystems": [{"uuid": "original-uuid", "fstype": "ext4"}],
+        }))
+
+    monkeypatch.setattr(Path, "lstat", lstat)
+    monkeypatch.setattr(helper, "_run", findmnt)
+    helper._vcf_storage_verify_installation()
 
 
 def test_vcf_backups_helper_validates_staged_config(monkeypatch, tmp_path, capsys):

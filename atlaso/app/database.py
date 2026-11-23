@@ -97,6 +97,7 @@ def _create_database_schema(bind: Engine) -> None:
                 _reconcile_ntp_time_source_column(connection)
                 _reconcile_dhcp_availability_column(connection)
                 _reconcile_vcf_backup_probe_column(connection)
+                _reconcile_vcf_service_storage_columns(connection)
                 _reconcile_vault_service_type_column(connection)
                 _reconcile_default_powercli_pin(connection)
             except Exception:
@@ -118,6 +119,7 @@ def _create_database_schema(bind: Engine) -> None:
             _reconcile_ntp_time_source_column(connection)
             _reconcile_dhcp_availability_column(connection)
             _reconcile_vcf_backup_probe_column(connection)
+            _reconcile_vcf_service_storage_columns(connection)
             _reconcile_vault_service_type_column(connection)
             _reconcile_default_powercli_pin(connection)
         return
@@ -130,6 +132,7 @@ def _create_database_schema(bind: Engine) -> None:
         _reconcile_ntp_time_source_column(connection)
         _reconcile_dhcp_availability_column(connection)
         _reconcile_vcf_backup_probe_column(connection)
+        _reconcile_vcf_service_storage_columns(connection)
         _reconcile_vault_service_type_column(connection)
         _reconcile_default_powercli_pin(connection)
 
@@ -233,6 +236,18 @@ def _reconcile_vcf_backup_probe_column(connection: Connection) -> None:
     columns = {column["name"] for column in inspect(connection).get_columns("vcf_backup_settings")}
     if "trusted_backup_sources" not in columns:
         connection.execute(text("ALTER TABLE vcf_backup_settings ADD COLUMN trusted_backup_sources VARCHAR(1024) NOT NULL DEFAULT ''"))
+
+
+def _reconcile_vcf_service_storage_columns(connection: Connection) -> None:
+    """Keep installed storage as the default for appliances with older schemas."""
+    inspector = inspect(connection)
+    for table in ("vcf_backup_settings", "vcf_offline_depot_settings"):
+        columns = {column["name"] for column in inspector.get_columns(table)}
+        for field, length in (("storage_volume_uuid", 120), ("storage_volume_path", 240)):
+            if field not in columns:
+                connection.execute(text(
+                    f"ALTER TABLE {table} ADD COLUMN {field} VARCHAR({length}) NOT NULL DEFAULT ''"
+                ))
 
 
 def _reconcile_dhcp_availability_column(connection: Connection) -> None:

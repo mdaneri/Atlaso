@@ -112,6 +112,8 @@ For ISO appliance address changes, use the explicit
 - [Getting started](docs/getting-started/index.md) — choose an appliance path and complete initial configuration.
 - [Physical installation](docs/getting-started/physical-installation.md) — review the planned signed offline ISO installation
   flow; physical hardware validation is pending.
+- [Storage volumes](docs/services/esx-storage.md#volumes-and-disk-initialization) — register additional volumes after
+  installation for ESX Storage, VCF Backups, or VCF Offline Depot.
 - [Operate](docs/operate/index.md) — manage daily appliance tasks, changes, updates, and troubleshooting.
 - [Services](docs/services/index.md) — configure infrastructure, identity, storage, and VCF integrations.
 - [Reference](docs/reference/index.md) — review APIs, image building, interoperability, and technical behavior.

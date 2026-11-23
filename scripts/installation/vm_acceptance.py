@@ -22,6 +22,13 @@ COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 DISK_ROW = re.compile(r"(?im)^\s*.*?\b(64|4)\s*GiB\s*@\s*/d(?:ev|eu)/sd[a-z]\b")
 REVIEW_DISK = re.compile(r"(?im)^[ \t]*[/f]de[vu]/sd[a-z]: [^\r\n]{1,72}\b(64|4)\s*GiB[ \t]*$")
+STORAGE_LAYOUT_LABELS = (
+    r"\broot installation target\b",
+    r"\bsftp backup storage\b",
+    r"\bvy?cfdt depot storage\b",
+)
+STORAGE_LAYOUT_MOUNTS = ("/", "/mnt/atlaso-vcf-backups", "/mnt/atlaso-vcf-offline-depot")
+STORAGE_ROOT_DISK = re.compile(r"/d(?:ev|eu)/sd[a-z]\b", re.I)
 CHECKS = [
     "disconnected_uefi_install",
     "selected_64g_target",
@@ -394,6 +401,142 @@ def is_disk_selection_screen(text: str) -> bool:
     return "select a disk" in text.casefold()
 
 
+def is_combined_storage_layout_screen(text: str) -> bool:
+    """Recognize the combined native storage page and each fixed role mount.
+
+    Args:
+        text: OCR text from one native Photon installer frame.
+    """
+    folded = text.casefold()
+    root_start = folded.find("root installation target")
+    service_start = folded.find("sftp backup storage")
+    root_section = folded[root_start:service_start] if 0 <= root_start < service_start else ""
+    return (
+        "storage layout" in folded
+        and all(re.search(pattern, text, re.I) is not None for pattern in STORAGE_LAYOUT_LABELS)
+        and re.search(r"(?im)^\s*(?:x|\|)?\s*mount\s*:\s*/\s*(?:x|\|)?\s*$", root_section) is not None
+        and all(re.search(rf"(?i)mount\s*:\s*{re.escape(mount)}(?:\s|$)", text) for mount in STORAGE_LAYOUT_MOUNTS[1:])
+        and len(re.findall(r"(?im)^\s*(?:x|\|)?\s*volume\s*:", text)) >= 3
+        and re.search(r"\b(auto|custom)\b", root_section) is not None
+    )
+
+
+def storage_layout_root_section(text: str) -> str:
+    """Extract the displayed root assignment without relying on screen position.
+
+    Args:
+        text: OCR text from the combined native storage page.
+    """
+    folded = text.casefold()
+    root_start = folded.find("root installation target")
+    service_start = folded.find("sftp backup storage")
+    if root_start < 0 or service_start <= root_start:
+        return ""
+    return text[root_start:service_start]
+
+
+def is_auto_storage_layout_screen(text: str) -> bool:
+    """Recognize the Auto layout after returning from the Custom editor.
+
+    Args:
+        text: OCR text from the combined native storage page.
+    """
+    return is_combined_storage_layout_screen(text) and re.search(
+        r"\bauto\b", storage_layout_root_section(text), re.I,
+    ) is not None
+
+
+def initial_installer_screen(text: str) -> bool:
+    """Recognize either current combined entry or a published disk selector.
+
+    Args:
+        text: OCR text from the first post-menu native installer page.
+    """
+    return is_combined_storage_layout_screen(text) or is_disk_selection_screen(text)
+
+
+def storage_layout_root_disk(text: str) -> str | None:
+    """Return the assigned root device shown on the combined storage page.
+
+    Args:
+        text: OCR text from the combined native storage page.
+    """
+    match = STORAGE_ROOT_DISK.search(storage_layout_root_section(text))
+    return match.group(0).replace("/deu/", "/dev/") if match else None
+
+
+def is_storage_layout_or_legacy_choice(text: str) -> bool:
+    """Recognize the current combined page and the first published service page.
+
+    Args:
+        text: OCR text from one native Photon installer frame.
+    """
+    if "storage layout" in text.casefold():
+        return is_combined_storage_layout_screen(text)
+    return re.search(r"\bsftp backup storage\b", text, re.I) is not None
+
+
+def is_custom_partition_editor_screen(text: str) -> bool:
+    """Recognize Photon's editor after entering Custom from Storage layout.
+
+    Args:
+        text: OCR text from one native Photon installer frame.
+    """
+    return (
+        "storage layout" not in text.casefold()
+        and re.search(r"\bpartitions?\b", text, re.I) is not None
+    )
+
+
+def configure_storage_assignments(
+    qmp: Qmp, output: Path, expected_root_disk: str, initial_screen: str | None = None,
+) -> None:
+    """Continue through the combined storage page or older sequential prompts.
+
+    Args:
+        qmp: Control connection for the disconnected installation fixture.
+        output: Fixture directory used for transient screen observations.
+        expected_root_disk: Exact device that the final review must erase.
+        initial_screen: Already-observed combined page or legacy SFTP prompt.
+    """
+    screen = initial_screen or wait_screen(
+        qmp, output, is_storage_layout_or_legacy_choice, "installer storage layout", 180,
+    )
+    if is_combined_storage_layout_screen(screen):
+        for _ in range(2):
+            if storage_layout_root_disk(screen) == expected_root_disk:
+                break
+            qmp.send_key("d")
+            screen = wait_screen(
+                qmp, output, is_combined_storage_layout_screen, "root installation target", 30,
+            )
+        if storage_layout_root_disk(screen) != expected_root_disk:
+            raise AcceptanceError("combined storage layout did not select the exact 64 GiB installation target")
+        if not is_auto_storage_layout_screen(screen):
+            raise AcceptanceError("the disconnected Auto fixture did not begin in Auto layout mode")
+        qmp.send_key("l")
+        wait_screen(qmp, output, is_custom_partition_editor_screen, "Custom partition editor", 60)
+        qmp.send_key("esc")
+        screen = wait_screen(qmp, output, is_auto_storage_layout_screen, "Auto storage layout after Custom", 60)
+        if storage_layout_root_disk(screen) != expected_root_disk:
+            raise AcceptanceError("returning from Custom changed the selected Auto root device")
+        for label in ("SFTP backup storage", "VCFDT depot storage"):
+            qmp.send_key("tab")
+            wait_screen(
+                qmp, output, is_combined_storage_layout_screen, f"combined {label} assignment", 30,
+            )
+        qmp.send_key("ret")
+        return
+
+    qmp.send_key("ret")
+    wait_screen(
+        qmp, output,
+        lambda text: re.search(r"\bvy?cfdt depot storage\b", text, re.I) is not None,
+        "legacy VCFDT depot storage", 180,
+    )
+    qmp.send_key("ret")
+
+
 def is_credential_prompt(text: str, account: str, confirmation: bool) -> bool:
     """Recognize only the expected concealed field in the signed installer sequence.
 
@@ -686,20 +829,18 @@ def install(iso: Path, output: Path, args: argparse.Namespace, passwords: dict[s
         timeout = time.monotonic() + INSTALL_SECONDS
         screen = wait_screen(qmp, output, lambda text: "Install Atlaso offline" in text, "UEFI installer menu", 180)
         qmp.send_key("ret")
-        screen = wait_screen(qmp, output, is_disk_selection_screen, "native disk selection", 600)
-        rows = list(DISK_ROW.finditer(screen))
-        sizes = [row.group(1) for row in rows]
-        if sizes.count("64") != 1 or sizes.count("4") != 1:
-            raise AcceptanceError("native Photon menu did not expose one 64 GiB target and one 4 GiB decoy")
-        target_index = sizes.index("64")
-        for key in ("up", "up", *("down" for _ in range(target_index)), "ret"):
-            qmp.send_key(key)
-        for title, pattern in (
-            ("SFTP backup storage", r"\bsftp backup storage\b"),
-            ("VCFDT depot storage", r"\bvy?cfdt depot storage\b"),
-        ):
-            wait_screen(qmp, output, lambda text, pattern=pattern: re.search(pattern, text, re.I), title, 180)
-            qmp.send_key("ret")
+        screen = wait_screen(qmp, output, initial_installer_screen, "native storage layout or legacy disk selector", 600)
+        if is_disk_selection_screen(screen):
+            rows = list(DISK_ROW.finditer(screen))
+            sizes = [row.group(1) for row in rows]
+            if sizes.count("64") != 1 or sizes.count("4") != 1:
+                raise AcceptanceError("native Photon menu did not expose one 64 GiB target and one 4 GiB decoy")
+            target_index = sizes.index("64")
+            for key in ("up", "up", *("down" for _ in range(target_index)), "ret"):
+                qmp.send_key(key)
+            configure_storage_assignments(qmp, output, "/dev/sda")
+        else:
+            configure_storage_assignments(qmp, output, "/dev/sda", screen)
         review = wait_screen(qmp, output, lambda text: "erase selected disks" in text.casefold(), "destructive layout review", 90)
         if REVIEW_DISK.findall(review) != ["64"]:
             raise AcceptanceError("destructive review did not identify only the intended 64 GiB target")

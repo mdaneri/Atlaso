@@ -96,13 +96,18 @@ Apply executes the reviewed helper operations. Completion refuses a missing, sim
 This does not automatically apply pending configuration during installation. Existing appliances installed with an
 older ISO retain their original setting; producing a replacement ISO does not modify them.
 
-Auto and Custom both offer named **SFTP backup storage** and **VCFDT depot storage** screens before destructive review.
-Keep the default to preserve an existing service partition or shared storage. Other choices explicitly assign a
-compatible Custom `/mnt/` partition, or an otherwise unused disk as a full-disk ext4 partition at the fixed service
-mount. The installer does not infer roles from capacity, order, labels, or old filesystems. A previously selected disk
-cannot also be chosen for whole-disk replacement, and the two roles cannot take the same partition. Returning Back
-discards tentative choices; all selected identities and mount layouts still require the complete No-default review.
-These choices create the installation layout only; they do not enable the SFTP or depot service or expose credentials.
+The first storage screen is **Storage layout**. It shows the root installation target and Auto or Custom layout,
+**SFTP backup storage** at
+`/mnt/atlaso-vcf-backups`, and **VCFDT depot storage** at `/mnt/atlaso-vcf-offline-depot` together on one native
+**Storage layout** screen before destructive review. Each row displays the assigned volume and mount path. Operators
+can keep shared or compatible existing storage, assign a compatible Custom `/mnt/` partition, or choose an otherwise
+unused disk for a full-disk ext4 service partition. The installer does not infer roles from capacity, order, labels, or
+old filesystems. Source media, protected devices, and conflicting disk or partition assignments remain ineligible.
+Press **D** to cycle root targets, **Tab** or **Right** to move focus through service rows, and **Enter** on the last
+row to continue. Press **L** on the root row to open the Custom partition editor. **Esc** on Storage layout cancels
+setup and discards tentative choices. In the Custom editor, **Esc** returns to Storage layout. All selected
+identities and mount layouts still require the complete No-default review. Configure and enable the SFTP and depot
+services separately after installation.
 
 The shared boot-branding installer handles both native Photon kernel paths. The root-only Auto layout uses
 `/boot/$photon_linux` and points GRUB at `/boot/grub2/themes/atlaso/theme.txt`; a Custom layout with a separate `/boot`

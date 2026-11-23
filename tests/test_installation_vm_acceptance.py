@@ -52,6 +52,91 @@ def test_native_disk_rows_include_model_before_the_capacity():
     assert [match.group(1) for match in vm_acceptance.DISK_ROW.finditer(text)] == ["64", "4"]
 
 
+def test_combined_storage_layout_requires_all_assignments_and_mounts():
+    screen = """Storage layout
+Root installation target
+Mount: /
+Volume: /dev/sda (64 GiB) - Auto
+SFTP backup storage
+Mount: /mnt/atlaso-vcf-backups
+Volume: shared
+VCFDT depot storage
+Mount: /mnt/atlaso-vcf-offline-depot
+Volume: shared"""
+
+    assert vm_acceptance.is_combined_storage_layout_screen(screen)
+    incomplete = screen.replace("Mount: /mnt/atlaso-vcf-offline-depot", "")
+    assert not vm_acceptance.is_combined_storage_layout_screen(incomplete)
+    assert not vm_acceptance.is_storage_layout_or_legacy_choice(incomplete)
+    assert vm_acceptance.is_combined_storage_layout_screen(screen.replace("Auto", "Custom"))
+    bordered = screen.replace("Storage layout", "x Storage layout x").replace(
+        "Root installation target", "x Root installation target x",
+    ).replace("Mount:", "x Mount:").replace("Volume:", "x Volume:").replace(
+        "SFTP backup storage", "x SFTP backup storage x",
+    ).replace("VCFDT depot storage", "x VCFDT depot storage x")
+    assert vm_acceptance.is_combined_storage_layout_screen(bordered)
+    missing_root_mount = screen.replace("Mount: /\nVolume:", "Mount: /mnt/elsewhere\nVolume:")
+    assert not vm_acceptance.is_combined_storage_layout_screen(missing_root_mount)
+
+
+def test_storage_acceptance_advances_through_combined_layout_once(monkeypatch):
+    screen = """Storage layout
+Root installation target
+Mount: /
+Volume: /dev/sda (64 GiB) - Auto
+SFTP backup storage
+Mount: /mnt/atlaso-vcf-backups
+Volume: shared
+VCFDT depot storage
+Mount: /mnt/atlaso-vcf-offline-depot
+Volume: shared"""
+    qmp_events = []
+    qmp = SimpleNamespace(send_key=lambda key: qmp_events.append(key))
+    observed = []
+    screens = iter((
+        "Custom partition editor\nEdit Partitions",
+        screen,
+        screen,
+        screen,
+    ))
+
+    def wait_screen(_qmp, _output, predicate, label, _seconds):
+        observed.append(label)
+        current = next(screens)
+        assert predicate(current)
+        return current
+
+    monkeypatch.setattr(vm_acceptance, "wait_screen", wait_screen)
+
+    vm_acceptance.configure_storage_assignments(qmp, Path("fixture"), "/dev/sda", screen)
+
+    assert qmp_events == ["l", "esc", "tab", "tab", "ret"]
+    assert observed == [
+        "Custom partition editor", "Auto storage layout after Custom",
+        "combined SFTP backup storage assignment", "combined VCFDT depot storage assignment",
+    ]
+
+
+def test_storage_acceptance_keeps_published_sequential_screen_support(monkeypatch):
+    screens = iter(("SFTP backup storage", "VCFDT depot storage"))
+    qmp_events = []
+    qmp = SimpleNamespace(send_key=lambda key: qmp_events.append(key))
+    observed = []
+
+    def wait_screen(_qmp, _output, predicate, label, _seconds):
+        screen = next(screens)
+        observed.append(label)
+        assert predicate(screen)
+        return screen
+
+    monkeypatch.setattr(vm_acceptance, "wait_screen", wait_screen)
+
+    vm_acceptance.configure_storage_assignments(qmp, Path("fixture"), "/dev/sda")
+
+    assert qmp_events == ["ret", "ret"]
+    assert observed == ["installer storage layout", "legacy VCFDT depot storage"]
+
+
 def test_concealed_credential_prompt_matches_the_expected_account_and_step():
     assert vm_acceptance.is_credential_prompt("Set admin passuord", "admin", False)
     assert vm_acceptance.is_credential_prompt("Confirn root password", "root", True)
