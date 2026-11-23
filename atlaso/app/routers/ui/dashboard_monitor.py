@@ -6,13 +6,18 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy.orm import Session
 
+from atlaso.app.audit import record_audit
 from atlaso.app.database import get_db
 from atlaso.app.security import Identity, require_session_identity
-from atlaso.app.services import monitor_runtime, monitor_update_comparison
+from atlaso.app.services import (
+    monitor_runtime,
+    monitor_update_comparison,
+    network_diagnostics,
+)
 from atlaso.app.ui_routes import MANAGEMENT_UI_ROOT
 
 Endpoint = Callable[..., Any]
@@ -24,6 +29,7 @@ class DashboardMonitorUiDependencies:
     """Provide facade-owned helpers without importing the compatibility facade."""
 
     require_management_ui_request: Endpoint
+    verify_csrf: Endpoint
     render: Endpoint
     dashboard_snapshot: Endpoint
     require_monitoring_read: Endpoint
@@ -230,6 +236,103 @@ def build_router(
             raise HTTPException(status_code=422, detail=str(exc), headers=NO_STORE) from exc
         return JSONResponse(result, headers=NO_STORE)
 
+    def require_probe_operator(identity: Identity = Depends(require_session_identity)) -> Identity:
+        """Require network operation authority for active probes.
+
+        Args:
+            identity: Session identity requesting Network Diagnostics.
+        """
+        if not identity.can("write:routes"):
+            raise HTTPException(status_code=403, detail="Routing write access is required")
+        return identity
+
+    def render_diagnostics(
+        request: Request,
+        identity: Identity,
+        *,
+        check: network_diagnostics.Check = "ping",
+        target: str = "",
+        source: str = "",
+        family: network_diagnostics.Family = "auto",
+        result: network_diagnostics.Result | None = None,
+    ) -> HTMLResponse:
+        """Render the form and any result without caching network information.
+
+        Args:
+            request: Management request used to render the page.
+            identity: Authorized operator.
+            check: Selected diagnostic.
+            target: Submitted destination or hostname.
+            source: Selected local address, or empty for automatic selection.
+            family: Requested address family or automatic selection.
+            result: Completed check to display, if available.
+        """
+        try:
+            sources = network_diagnostics.local_sources()[:network_diagnostics.MAX_SOURCES]
+        except (ValueError, OSError):
+            sources = []
+        response: HTMLResponse = render(request, "network_diagnostics.html", {
+            "identity": identity,
+            "check": check,
+            "target": target,
+            "source": source,
+            "family": family,
+            "sources": sources,
+            "result": result,
+        })
+        response.headers.update(NO_STORE)
+        return response
+
+    @router.get("/network-diagnostics", response_class=HTMLResponse, include_in_schema=False)
+    def network_diagnostics_page(
+        request: Request, identity: Identity = Depends(require_probe_operator),
+    ) -> HTMLResponse:
+        """Render the probe form without starting a check.
+
+        Args:
+            request: Management request for the form.
+            identity: Authorized operator.
+        """
+        return render_diagnostics(request, identity)
+
+    @router.post("/network-diagnostics", response_class=HTMLResponse, include_in_schema=False)
+    def network_diagnostics_run(
+        request: Request,
+        check: Annotated[network_diagnostics.Check, Form()],
+        target: Annotated[str, Form(max_length=254)],
+        csrf: Annotated[str, Form(max_length=128)],
+        source: Annotated[str, Form(max_length=45)] = "",
+        family: Annotated[network_diagnostics.Family, Form()] = "auto",
+        identity: Identity = Depends(require_probe_operator),
+        db: Session = Depends(get_db),
+    ) -> HTMLResponse:
+        """Run a single check from a CSRF-protected management form submission.
+
+        Args:
+            request: Management request containing the browser session.
+            check: Diagnostic to run.
+            target: Destination address or hostname to validate.
+            csrf: Submitted token to compare with the session token.
+            source: Requested local address, or empty for automatic selection.
+            family: Requested address family or automatic selection.
+            identity: Authorized operator recorded in the audit event.
+            db: Session used to persist the audit event.
+        """
+        dependencies.verify_csrf(request, csrf)
+        result = network_diagnostics.run_check(check, target, source, family)
+        record_audit(
+            db,
+            actor=identity.username,
+            action="network_diagnostics.run",
+            resource_type="network_diagnostics",
+            resource_id=check,
+            success=result.state in {"reply", "resolved", "partial", "no_reply", "unreachable"},
+            detail=result.state,
+        )
+        return render_diagnostics(
+            request, identity, check=check, target=target, source=source, family=family, result=result,
+        )
+
     @router.get("/monitor/network/updates/{job_id}", dependencies=[Depends(require_network)], response_model=None)
     def monitor_update_data(job_id: str, db: Session = Depends(get_db)) -> JSONResponse:
         """Return the comparison for one Appliance Update install task.
@@ -277,6 +380,8 @@ def build_router(
             monitor_data,
             monitor_network_data,
             monitor_network_lookup,
+            network_diagnostics_page,
+            network_diagnostics_run,
             monitor_update_data,
             monitor_services_data,
             server_time,

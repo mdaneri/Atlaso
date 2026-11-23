@@ -11,6 +11,7 @@ import stat
 import subprocess
 import tarfile
 from pathlib import Path, PurePosixPath, PureWindowsPath
+from typing import TYPE_CHECKING
 
 from image.common.scripts.configure_photon_repositories import DEFAULT_GPG_KEY_PATH
 from scripts.installation.assets import _safe_name
@@ -25,15 +26,20 @@ from scripts.installation.manifest import (
     inventory,
 )
 
+if TYPE_CHECKING:
+    from scripts.installation.photon_snapshot import Package
+
 MEDIA = "/mnt/atlaso-install/atlaso"
 BASE_PACKAGES = {"filesystem", "bash", "linux", "initramfs", "linux-firmware", "photon-release", "rpm", "tdnf", "systemd", "util-linux", "ca-certificates", "grub2", "grub2-efi-image", "xfsprogs", "btrfs-progs", "dosfstools", "iana-etc"}
 
 
-def package_selection(source: Path) -> list[str]:
+def package_selection(source: Path, *, base_packages: set[str] | None = None) -> list[str]:
     """Reuse the shared provisioner's package selection, adding native boot assets.
 
     Args:
-        source: Input source file or directory."""
+        source: Input source file or directory.
+        base_packages: Exact base package requirements read from a target release tree.
+    """
     text = (source / "image/common/scripts/provision-atlaso.sh").read_text()
     commands = re.findall(r'run_tdnf "Photon appliance package installation" \\\n  install ([^\n]+)', text)
     if len(commands) != 1:
@@ -41,7 +47,8 @@ def package_selection(source: Path) -> list[str]:
     packages = commands[0].replace("$GUEST_INTEGRATION_PACKAGES", "").split()
     if not packages or not all(re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9+._-]*", name) for name in packages):
         raise ValueError("shared appliance package selection is invalid")
-    return sorted(BASE_PACKAGES | set(packages))
+    base = BASE_PACKAGES if base_packages is None else base_packages
+    return sorted(base | set(packages))
 
 
 def source_archive(repository: Path, commit: str) -> dict[str, bytes]:
@@ -87,14 +94,19 @@ def verify_source(source: Path, expected: dict[str, bytes]) -> None:
             raise ValueError("installation deployment source differs from Git")
 
 
-def verify_rpms(root: Path, source: Path, scratch: Path, *, allow_guest_tools: bool = False) -> list[dict]:
+def verify_rpms(
+    root: Path, source: Path, scratch: Path, *, allow_guest_tools: bool = False,
+    photon_inventory: set[Package] | None = None,
+) -> list[dict]:
     """Reuse the release RPM verification tool boundary and admitted Photon keys.
 
     Args:
         root: Root directory containing the files being checked.
         source: Input source file or directory.
         scratch: Existing private directory for temporary validation data.
-        allow_guest_tools: Admit the companion directory only while validating original capture inputs."""
+        allow_guest_tools: Admit the companion directory only while validating original capture inputs.
+        photon_inventory: Approved snapshot identities, if supplied by protected release staging.
+    """
     from scripts.verify_virtualization_guest_wheel import (
         _photon_repository_inventory,
         _require_admitted_runtime_package,
@@ -126,7 +138,7 @@ def verify_rpms(root: Path, source: Path, scratch: Path, *, allow_guest_tools: b
     if not imported_keys:
         raise ValueError("no admitted Photon RPM key is supported by the builder")
     records = []
-    admitted = _photon_repository_inventory()
+    admitted = _photon_repository_inventory() if photon_inventory is None else photon_inventory
     for package in packages:
         checksum = digest(package)
         # The summary format is stable across RPM versions; verbose output uses
@@ -165,13 +177,16 @@ def verify_rpms(root: Path, source: Path, scratch: Path, *, allow_guest_tools: b
     return records
 
 
-def verify_guest_tools(root: Path, source: Path, scratch: Path) -> None:
+def verify_guest_tools(
+    root: Path, source: Path, scratch: Path, *, photon_inventory: set[Package] | None = None,
+) -> None:
     """Authenticate Photon closures and constrain the media-authenticated Atlaso QEMU RPM.
 
     Args:
         root: Captured guest-tools tree, separate from the installable Photon repository.
         source: Exact-commit source used by the native image builder.
         scratch: Existing private directory for independent RPM verification state.
+        photon_inventory: Approved snapshot identities, if supplied by protected release staging.
     """
     from scripts.installation.guest_tools import PROFILES
     from scripts.verify_virtualization_guest_wheel import (
@@ -193,7 +208,7 @@ def verify_guest_tools(root: Path, source: Path, scratch: Path) -> None:
         imported += 1
     if not imported:
         raise ValueError("guest-tools verification requires an admitted Photon key")
-    admitted = _photon_repository_inventory()
+    admitted = _photon_repository_inventory() if photon_inventory is None else photon_inventory
     spec = (source / "image/common/guest-agents/atlaso-qemu-guest-agent.spec").read_text()
     versions = re.findall(r"^Version:\s+([0-9.]+)\s*$", spec, re.MULTILINE)
     if len(versions) != 1:
@@ -345,7 +360,10 @@ def unpack_inputs(archive: Path, destination: Path) -> None:
                 raise ValueError("candidate archive entry length differs")
 
 
-def validate_candidate(root: Path, *, repository: Path, commit: str, version: str, trust_key: Path, scratch: Path) -> dict:
+def validate_candidate(
+    root: Path, *, repository: Path, commit: str, version: str, trust_key: Path, scratch: Path,
+    photon_inventory: set[Package] | None = None,
+) -> dict:
     """Revalidate an untrusted staged candidate before accessing a signing key.
 
     Args:
@@ -354,7 +372,9 @@ def validate_candidate(root: Path, *, repository: Path, commit: str, version: st
         commit: Full source commit SHA being prepared.
         version: Software release version expected in the candidate.
         trust_key: Trusted public key used to verify signed metadata.
-        scratch: Existing private directory for temporary validation data."""
+        scratch: Existing private directory for temporary validation data.
+        photon_inventory: Approved snapshot identities, if supplied by protected release staging.
+    """
     from scripts.prepare_virtualization_source import verify_directory
 
     source = root / "source"
@@ -370,9 +390,10 @@ def validate_candidate(root: Path, *, repository: Path, commit: str, version: st
     if {path.name for path in (root / "rpm-repos").iterdir()} != {"atlaso-installation.repo"}:
         raise ValueError("candidate contains an unexpected RPM repository definition")
     software = verify_directory(root / "software", trust_key, version, commit)
-    records = verify_rpms(root / "rpms", source, scratch)
+    verification = {} if photon_inventory is None else {"photon_inventory": photon_inventory}
+    records = verify_rpms(root / "rpms", source, scratch, **verification)
     if (root / "guest-tools").exists() or source_requires_payload(source):
-        verify_guest_tools(root / "guest-tools", source, scratch)
+        verify_guest_tools(root / "guest-tools", source, scratch, **verification)
     subprocess.run(
         ["pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", "-File", str(repository / "image/common/powershell/provision-powercli.ps1"), "-Mode", "Validate", "-ModuleRoot", str(root / "powercli")],
         check=True,

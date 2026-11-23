@@ -41,9 +41,9 @@ explains ownership and measurement. Private vulnerability remediation follows [S
 2. Update relevant documentation with the smallest focused implementation.
 3. Run focused tests plus applicable repository, documentation, and static checks, and `git diff --check`.
    The complete Python test suite belongs to GitHub CI except where the private security workflow requires it locally.
-4. Synchronize the next patch using `python scripts/version.py bump` or `scripts/version.ps1`; never edit individual
-   version sources. Explicit targets may be only the current version or exact next patch, never skip a patch or change
-   major/minor. With an available base checkout use `--base-root` to enforce exactly one patch above the PR base.
+4. Use `python scripts/version.py bump` or `scripts/version.ps1` to synchronize the next patch. Never edit version
+   sources by hand. Use `--base-root` when the PR base is available. Explicit targets are the current version or
+   next patch, or a [maintainer-selected 1.0.0 bump](docs/contribute/release-policy.md#version-transition).
 5. Open a ready pull request with `Closes #<issue>` and validation evidence, following
    [PR review and delivery](docs/contribute/pr-workflow.md). Never commit directly to `main`.
 

@@ -64,12 +64,16 @@ reboot, payload, first-boot and host OpenAPI acceptance. Record physical USB 2/3
 ## Installer image contract
 
 The installation image reuses the pinned Photon 5.0 ISO and Photon installer 2.2. Remastering preserves the source EFI
-boot image and native installer flow. The Atlaso deployment source comes from an immutable Git archive at the
-selected full commit. The signed software release, its exact application wheel, locked CPython wheelhouse, shared
-provisioning inputs, PowerCLI modules, trust material, notices, firmware, and a signed offline Photon RPM repository
-are embedded and inventoried. Dependency closure is resolved during authorized ISO preparation; installation does
-not use network package repositories. Shared provisioning explicitly installs `iproute2` for the console and diagnostics;
-the final package-state verifier requires it. The complete captured RPM closure must include its dependencies.
+boot image and native installer flow. It excludes the stock Photon RPM repository and OSTree archive, and retains
+the upstream license text as a gzip-compressed file. The completed ISO must be smaller than 2,000,000,000 bytes.
+The Atlaso deployment source comes from an immutable Git archive at the selected full commit. The image embeds
+and inventories the signed software release, its exact application wheel, the locked CPython wheelhouse, shared
+provisioning inputs, PowerCLI modules, trust material, notices, firmware, and the signed offline Photon RPM repository.
+Dependency closure is resolved during authorized ISO preparation. Installation uses only the embedded repository.
+Shared provisioning explicitly installs `iproute2`, `iputils`, and `traceroute` for the console and network
+diagnostics, as required by the final package-state verifier. The complete captured RPM closure includes their
+dependencies. The hosted media-free boot check runs Ping and Traceroute against IPv4 and IPv6 loopback and resolves
+`localhost` as the Atlaso service account.
 The base package selection also requires Photon's signed `iana-etc` package, which supplies `/etc/services`
 and `/etc/protocols`. NTPsec's local verification uses these databases to resolve standard service and protocol
 names. A capture missing this package fails admission; regenerate it through the canonical native capture workflow.
@@ -122,10 +126,25 @@ Starting with `v0.9.506`, **Publish appliance release** builds the signed x86-64
 signed appliance software for each eligible main commit. Both asset sets go to the same hidden `vX.Y.Z` draft. The
 draft's workflow summary reports the full ISO SHA-256. Earlier published versions retain their software-only assets.
 
-Use the [native refresh workflow](installation-iso-refresh.md) to capture the approved Photon RPM closure, guest
-tools and PowerCLI. From a trusted checkout containing the export command, use the original successful capture state
-to export the retained inputs and provenance to an absent archive path. Export verifies the original receipt,
-complete inventory, and source input fingerprint against the checkout before writing:
+Use the [native refresh workflow](installation-iso-refresh.md) to capture and review the Photon RPM closure, guest
+tools and PowerCLI. A compatible admitted capture is an approved Photon snapshot for protected release staging.
+Its private, digest-pinned GHCR archive retains the authenticated Photon 5.0 repository metadata used for admission,
+including `repomd.xml` and its primary package metadata. Keeping that catalog with the exact package bytes lets a
+release verify against the admitted snapshot after upstream repositories have moved forward. Protected staging still
+checks each RPM signature and identity against the retained metadata, validates the complete offline RPM transaction,
+and revalidates PowerCLI, reviewed runtime inputs, and the pinned boot ISO. A separate drift review compares the
+snapshot with current Photon repositories. An upstream package publication alone does not expire the snapshot or
+block routine software releases.
+
+The snapshot remains approved for 30 days from its original native capture. A new capture is required when the
+reviewed package selection, pinned Photon boot ISO, Photon signing keys, PowerCLI lock, guest-tools source, or
+reviewed runtime RPM identities change. Refresh an expired snapshot or withdraw one when an applicable security
+advisory affects a captured package or its signing trust. Legacy capture archives without retained repository
+metadata remain eligible only through the earlier live-metadata admission path and cannot use snapshot-based reuse.
+
+From the exact trusted checkout used for the successful native capture and admission, export the retained inputs,
+snapshot metadata, and provenance to an absent archive path. Export verifies the original receipts, complete inventory,
+and admission report before writing:
 
 ```text
 python -m scripts.installation.release_capture pack --capture-state <original-capture-state-directory> --archive <absent-capture.tar.gz>
@@ -146,18 +165,47 @@ Set `INSTALLATION_CAPTURE_DIGEST` to the OCI manifest digest (including `sha256:
 environment. Set `INSTALLATION_CAPTURE_TOKEN` there as an environment secret using a classic GitHub token with
 `read:packages` from an account with read access to the package. Keep the package private and give no Actions access
 to the public repository. Rotate both pins together after a new compatible capture is admitted.
-CI checks the manifest and archive digests, capture fingerprint for the release source, RPM signatures and
-transactions, PowerCLI lock, pinned Photon source, and free space. An admission failure leaves the version
-unpublished. Once inputs are fixed, dispatch the workflow from `main` with the full release commit and blank
-approval fields to retry staging.
+CI checks the manifest and archive digests, capture compatibility, retained Photon metadata, RPM signatures and
+transactions, PowerCLI lock, pinned Photon source, snapshot age, and free space. Drift results are diagnostic and do
+not replace package authentication or complete-transaction checks. An expired, incompatible, withdrawn, or incomplete
+snapshot leaves the version unpublished. Once compatible inputs are fixed, dispatch the workflow from `main` with the
+full release commit to retry staging and acceptance.
 
-Download the complete signed draft and verify and reconstruct the ISO as described below. Record disconnected UEFI
-installation, boot without media, Appliance Update and rollback persistence, unselected-disk preservation, and
-representative physical acceptance for that exact SHA-256 on an Atlaso issue or PR. Dispatch **Publish appliance
-release** from `main` with `release_sha`, `validated_iso_sha256`, and `installation_acceptance_evidence` set to that
-record's GitHub URL. Publication rechecks the draft bytes and verifies the public asset inventory and digests before
-advancing `development`. A later dispatch with the same evidence can recover the channel after publication. An older
-approval can publish its release without moving Latest or `development` backward.
+Audit an approved archive separately on a host with RPM tools. Use the original archive SHA-256 and the exact
+release checkout to review. The command compares selected RPMs with current Photon metadata and reports published
+Photon security advisories that specify a newer package for an installed name and architecture.
+
+```sh
+GITHUB_REPOSITORY=mdaneri/Atlaso python -m scripts.installation.release_capture audit \
+  --archive <approved-capture.tar.gz> --sha256 <archive-sha256> --target <release-source-checkout>
+```
+
+Review advisories independently of staging. If an advisory or signing-trust change requires withdrawal, remove the
+protected capture pins until a replacement is approved. Review pending drafts built from a withdrawn snapshot before
+retrying release publication. The signed installation artifact index records the snapshot digest.
+
+GitHub Actions downloads the signed draft's ISO parts, verifies the signed index and reconstructs the exact installer.
+The QEMU/OVMF job checks disconnected UEFI installation to a 64 GiB disk, preservation of a second 4 GiB disk, boot
+without installation media, active Atlaso services and matching application version and source commit. The runner reads
+the installed identity and service state through the appliance's authenticated native console. The disk-only boot uses
+isolated virtual DHCP with no forwarded ports. Its receipt
+binds all checkpoints to the ISO SHA-256 and the workflow attempt that ran them. A failed or incomplete run leaves
+the draft hidden. A passing run publishes the same draft as a prerelease and verifies the public assets before
+advancing `development`. To retry, dispatch **Publish appliance release** from `main` with the full `release_sha`.
+
+Before the first hosted test, configure the protected `installation-acceptance` GitHub environment for `main`.
+Set `OP_ENVIRONMENT_ID` to the dedicated `Atlaso Installer CI` 1Password Environment and save its read-only service
+account token as `OP_SERVICE_ACCOUNT_TOKEN`. Scope the service account to that Environment and leave vault access
+empty. Follow the [credential policy](../contribute/credential-policy.md) for the VM credentials.
+
+Only versions `1.0.0` and later can advance `stable`. Record disconnected UEFI installation, boot without media,
+Appliance Update and rollback persistence, unselected-disk preservation and representative physical hardware results
+for the exact signed ISO.
+A maintainer posts those results and the full ISO SHA-256 in an issue or PR comment with a separate line reading
+`Representative physical acceptance: PASS`. Dispatch **Promote appliance release** from `main` with `stable`, the
+version without its `v` prefix and the comment URL as `physical_acceptance_evidence`. The workflow revalidates the
+signed ISO and evidence, advances and verifies the signed stable channel, then marks the same GitHub release stable.
+GitHub Latest advances only when that version is the highest stable software release.
 
 Keep any partial or conflicting draft for maintainer reconciliation. Compare its asset names, sizes, and digests with
 the original successful build evidence before correcting the draft. A complete verified draft can be reused without a
@@ -278,11 +326,10 @@ otherwise the native console remains available.
 Native logger propagation and Python prints are isolated from the progress terminal; detailed output remains available
 on the separate terminal or in the private volatile log.
 The VM-window installer keeps the kernel's detected terminal size; only the serial harness uses a fixed 80×25 size.
-Concealed account fields accept printable ASCII characters and preserve spaces exactly. Rejected password input is
-cleared before retrying. **Go Back** on confirmation returns to the first password field for that account; **Go Back**
-on the first admin field returns to the full disk review and requires a new **Yes** (the default remains **No**).
-**Go Back** on the first root field returns to admin password entry and discards collected passwords. No disk writes
-occur during these setup screens. Explicitly declining the disk review still cancels installation.
+The **Account passwords** screen collects and confirms both local account passwords in masked fields. Printable ASCII
+including spaces is compared exactly. A validation error identifies the account and returns focus to the affected field.
+**Go Back** discards the form and returns to the full disk review. Choose **Yes** again to continue. No disk writes occur
+during setup screens, and declining the disk review cancels installation.
 **Go Back** from Custom partitioning returns to disk/layout selection and discards the abandoned partition plan.
 For the automated serial-console harness, add `--serial-console` to the development build command to make the serial
 entry the default; both entries remain available. The build result's `console` field records that default as
@@ -631,10 +678,10 @@ private child, or other verification flag fails this initial-installation profil
 The kernel-index profile binds the exact Linux, kmod and kmod-binary RPMs. It first admits the complete public module
 namespace from original package metadata before reading file contents, then compares all 1,235 immutable directory
 and file records through retained, no-follow descriptors. Missing, extra, linked or changed inputs fail.
-The current profile pins Linux `6.12.116-3.ph5`, with 37,927,808 immutable input bytes. Its complete signed native RPM-header
+The current profile pins Linux `6.12.116-4.ph5`, with 38,028,176 immutable input bytes. Its complete signed native RPM-header
 audit found 1,235 immutable records and the same eleven generated index paths. The kmod and kmod-binary inputs are unchanged.
-The shared no-follow snapshot verifier also passed against the authenticated, extracted Linux RPM inputs on Photon 5.0,
-matching all 37,927,808 immutable bytes. This extraction check does not establish boot or complete installation acceptance.
+The signed RPM payload independently reproduced the immutable input digest from the native RPM header,
+matching all 38,028,176 immutable bytes. Native boot and installation acceptance follow the procedure above.
 After ordinary RPM file verification, the profile invokes the authenticated `kmod` executable as `depmod`, selecting
 its native compatibility entry point with explicit input, configuration and output selectors. It writes only to
 private, descriptor-pinned scratch directories on verified
@@ -700,7 +747,7 @@ boot file or relax the RPM comparison.
 The admitted OpenLDAP server package contributes only its public service unit and two declared directories to this
 registry. Their fixed indices can identify missing entries, modes and verification flags. LDAP databases, configuration
 values and private children are never read or emitted, and the diagnostic does not accept a discrepancy.
-The pinned Linux package's `/boot/linux-6.12.116-3.ph5.cfg` and `/lib/modules/6.12.116-3.ph5/modules.alias` are also
+The pinned Linux package's `/boot/linux-6.12.116-4.ph5.cfg` and `/lib/modules/6.12.116-4.ph5/modules.alias` are also
 fixed public diagnostic entries. Only their indices, types, modes and RPM verification flags can be reported;
 contents stay private and any discrepancy still fails. The native kernel install script runs `depmod`; the diagnostic
 does not treat that fact alone as proof of correct generated indexes.

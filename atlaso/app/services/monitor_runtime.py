@@ -282,7 +282,7 @@ def _ip_arguments(*args: str) -> list[str]:
     Args:
         *args: Operation and options following the fixed output flags.
     """
-    return ["ip", "-N", "-j", "-details", *args]
+    return ["-N", "-j", "-details", *args]
 
 
 def _json_rows(args: list[str], deadline: float) -> list[Any]:
@@ -292,7 +292,7 @@ def _json_rows(args: list[str], deadline: float) -> list[Any]:
         args: Native command and argument list.
         deadline: Monotonic deadline shared with other observations.
     """
-    code, output = run_native(args, deadline)
+    code, output = run_native("ip", args, deadline)
     if code:
         raise ObservationUnavailable
     decoded = json.loads(output)
@@ -526,7 +526,7 @@ def route_lookup(destination: str, source: str, ingress: str) -> Section:
         query.extend(("iif", ingress))
     arguments = _ip_arguments("-4" if family == 4 else "-6", "-batch", "-")
     try:
-        code, output = run_native(arguments, deadline, input_data=(" ".join(query) + "\n").encode("ascii"))
+        code, output = run_native("ip", arguments, deadline, input_data=(" ".join(query) + "\n").encode("ascii"))
         if code:
             if "Network is unreachable" in output or "No route to host" in output:
                 return _section([], "unreachable")
@@ -546,7 +546,7 @@ def _service_properties() -> dict[str, dict[str, str]]:
     props = "Id,LoadState,ActiveState,ActiveEnterTimestampMonotonic,NRestarts"
     try:
         code, output = run_native(
-            ["systemctl", "show", "--no-pager", f"--property={props}", *SERVICE_UNITS],
+            "systemctl", ["show", "--no-pager", f"--property={props}", *SERVICE_UNITS],
             time.monotonic() + 3,
         )
     except ObservationUnavailable:

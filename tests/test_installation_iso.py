@@ -136,6 +136,14 @@ def _source_iso(path: Path, *, unshare: bool = True) -> tuple[str, bytes]:
         ("/ISOLINUX", "isolinux"),
     ):
         image.add_directory(iso_path=path_name, rr_name=rr_name)
+    image.add_directory(iso_path="/RPMS", rr_name="RPMS")
+    image.add_directory(iso_path="/RPMS/X86_64", rr_name="x86_64")
+    _add_iso_file(image, "/RPMS/X86_64/UNUSED.RPM;1", "unused.rpm", b"stock RPM")
+    _add_iso_file(image, "/OSTREE_REPO.TGZ;1", "ostree-repo.tar.gz", b"stock OSTree repository")
+    _add_iso_file(
+        image, "/OPEN_SOURCE_LICENSE_PHOTON_.TX;1", "open_source_license_Photon_OS_5.0_GA.txt", b"Photon licenses"
+    )
+    _add_iso_file(image, "/NOTICE_APACHEV2.;1", "NOTICE-Apachev2", b"Photon notice")
     _add_iso_file(image, "/BOOT/GRUB2/GRUB.CFG;1", "grub.cfg", b"set timeout=10\n")
     _add_iso_file(image, "/EFI/BOOT/GRUB.CFG;1", "grub.cfg", b"set timeout=10\n")
     _add_iso_file(image, "/ISOLINUX/INITRD.IMG;1", "initrd.img", initrd)
@@ -212,6 +220,15 @@ def test_remaster_preserves_efi_boot_and_embeds_interactive_offline_installer(
         if remastered.joliet_vd is not None:
             assert remastered.joliet_vd.volume_identifier == installation_iso.VOLUME_IDENTIFIER
         assert remastered.get_record(iso_path="/BOOT.CAT;1")
+        root_names = {
+            record.rock_ridge.name()
+            for record in remastered.list_children(rr_path="/")
+            if not record.is_dot() and not record.is_dotdot() and record.rock_ridge is not None
+        }
+        assert not {b"RPMS", b"ostree-repo.tar.gz", b"open_source_license_Photon_OS_5.0_GA.txt"} & root_names
+        licenses = _extract(remastered, rr_path="/open_source_license_Photon_OS_5.0_GA.txt.gz")
+        assert gzip.decompress(licenses) == b"Photon licenses"
+        assert _extract(remastered, rr_path="/NOTICE-Apachev2") == b"Photon notice"
         assert _extract(remastered, rr_path="/efi/boot/efiboot.img") == _efi_image()
         assert _extract(remastered, rr_path="/boot/grub2/grub.cfg") == installation_iso._GRUB_CONFIG.encode()
         assert _extract(remastered, rr_path="/efi/boot/grub.cfg") == installation_iso._GRUB_CONFIG.encode()
@@ -244,6 +261,23 @@ def test_remaster_preserves_efi_boot_and_embeds_interactive_offline_installer(
         assert mbr[450] == 0x17
         assert mbr[466] == 0xEF
         assert mbr[478:510] == bytes(32)
+
+
+def test_remaster_removes_output_that_exceeds_the_iso_budget(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail before handing off an ISO that reaches the size limit.
+
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+        monkeypatch: Pytest fixture for supplying a small test size budget.
+    """
+    source, payload, trust = _prepared_inputs(tmp_path, monkeypatch)
+    output = tmp_path / "atlaso.iso"
+    monkeypatch.setattr(installation_iso, "_MAX_INSTALLER_BYTES", 2048)
+
+    with pytest.raises(ValueError, match="must be smaller than 2,000,000,000 bytes"):
+        installation_iso.build_iso(source, payload, output, trust_key=trust)
+
+    assert not output.exists()
 
 
 def test_rejects_unpinned_source_before_creating_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

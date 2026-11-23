@@ -499,69 +499,87 @@ def prompt(maxy: int, maxx: int, title: str, message: str, *, secret: bool = Fal
     return state["value"]
 
 
-def password_prompt(maxy: int, maxx: int, username: str) -> str:
-    """Let confirmation Back re-enter both concealed fields for this account.
+def _password_error(values: list[str]) -> tuple[int, str] | None:
+    """Validate both account pairs and locate the first incorrect field.
 
     Args:
-        maxy: Console height.
-        maxx: Console width.
-        username: Local account being configured.
+        values: Masked form values in admin, admin confirmation, root, root confirmation order.
     """
-    def validator(value):
-        """Apply the unchanged local account password policy.
-
-        Args:
-            value: Concealed password entered by the operator.
-        """
-        errors = validate_password(value, username, DEFAULT_PASSWORD_POLICY)
-        return not errors, " ".join(errors)
-
-    while True:
-        first = prompt(maxy, maxx, f"Set {username} password", "Enter the local account password. Use printable ASCII characters.", secret=True, validator=validator)
-
-        def matching_validator(value, expected=first):
-            """Compare exact input without trimming or exposing either value.
-
-            Args:
-                value: Concealed confirmation.
-                expected: Concealed first entry.
-            """
-            return (True, "") if value == expected else (False, "Passwords do not match.")
-
-        try:
-            prompt(maxy, maxx, f"Confirm {username} password",
-                   "Enter the same password again. Rejected input is cleared. Go Back to re-enter both passwords.",
-                   secret=True, validator=matching_validator)
-        except Cancelled:
-            continue
-        return first
+    for index, account in ((0, "admin"), (2, "root")):
+        errors = validate_password(values[index], account, DEFAULT_PASSWORD_POLICY)
+        if errors:
+            return index, f"{account}: {errors[0]}"
+        if values[index] != values[index + 1]:
+            return index + 1, f"{account}: Passwords do not match."
+    return None
 
 
 def account_passwords(maxy: int, maxx: int) -> tuple[str, str] | None:
-    """Navigate account fields without turning Go Back into installer exit.
+    """Collect both local accounts in one native, concealed console page.
 
     Args:
         maxy: Available console rows.
         maxx: Available console columns.
-
     Returns:
-        Both chosen passwords, or None to return to disk review without consent.
+        The admin and root passwords, or None to return to disk review.
     """
-    passwords = []
-    accounts = ("admin", "root")
+    labels = ("Admin password", "Confirm admin password", "Root password", "Confirm root password")
+    width, height = min(maxx - 4, 78), 16
+    column = 27
+    field_width = width - column - 3
+    window = curses.newwin(height, width, (maxy - height) // 2, (maxx - width) // 2)
+    window.bkgd(" ", curses.color_pair(2))
+    window.keypad(True)
+    keys = ConsoleInputKeys(window)
+    values = [""] * len(labels)
+    focused = 0
+    error = ""
+    continue_index = len(labels)
+    back_index = continue_index + 1
+
     try:
-        while len(passwords) < len(accounts):
-            try:
-                passwords.append(password_prompt(maxy, maxx, accounts[len(passwords)]))
-            except Cancelled:
-                if not passwords:
-                    return None
-                # Root's first-field Back returns to admin. Re-enter both
-                # accounts rather than retaining a secret from an earlier step.
-                passwords.clear()
-        return passwords[0], passwords[1]
+        while True:
+            window.erase()
+            window.box()
+            window.addstr(1, 2, "Account passwords", curses.A_BOLD)
+            window.addstr(3, 2, "Use printable ASCII. Tab moves between fields.")
+            for index, label in enumerate(labels):
+                row = 5 + index
+                window.addstr(row, 2, label)
+                masked = "*" * min(len(values[index]), field_width)
+                field_style = curses.A_REVERSE if focused == index else curses.A_UNDERLINE
+                window.addstr(row, column, masked.ljust(field_width), field_style)
+            if error:
+                window.addstr(10, 2, error, curses.color_pair(4))
+            window.addstr(12, 2, "[ Continue ]", curses.A_REVERSE if focused == continue_index else 0)
+            window.addstr(12, 17, "[ Go Back ]", curses.A_REVERSE if focused == back_index else 0)
+            window.addstr(14, 2, "Enter selects or advances. Esc goes back.")
+            window.refresh()
+            key = keys.getch()
+
+            if key == 27 or (key in (10, curses.KEY_ENTER) and focused == back_index):
+                return None
+            if key in (9, curses.KEY_DOWN):
+                focused = (focused + 1) % (back_index + 1)
+            elif key in (curses.KEY_UP, curses.KEY_BTAB):
+                focused = (focused - 1) % (back_index + 1)
+            elif key in (10, curses.KEY_ENTER):
+                if focused < continue_index:
+                    focused += 1
+                    continue
+                invalid = _password_error(values)
+                if invalid is None:
+                    return values[0], values[2]
+                focused, error = invalid
+            elif focused < continue_index:
+                if key == curses.KEY_BACKSPACE:
+                    values[focused] = values[focused][:-1]
+                    error = ""
+                elif 32 <= key <= 126:
+                    values[focused] += chr(key)
+                    error = ""
     finally:
-        passwords.clear()
+        values.clear()
 
 
 def confirm_installation(maxy: int, maxx: int, message: str) -> bool:
@@ -819,7 +837,7 @@ def configure_console(screen, initial: dict[str, dict], mount_aliases: dict[str,
             raise Cancelled()
         passwords = account_passwords(maxy, maxx)
         if passwords is None:
-            # Admin's first-field Back revokes the earlier Yes. Re-display the
+            # Going back from account setup revokes the earlier Yes. Re-display the
             # complete review, with No selected, before collecting any secrets.
             continue
         revalidate_disks(config, consent, bound_disk_inventory(source))

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -17,6 +18,9 @@ from scripts.publish_release import run
 from scripts.verify_installation_iso import verify_release
 
 FIRST_INSTALLATION_VERSION = (0, 9, 506)
+FIRST_PRERELEASE_VERSION = (0, 9, 517)
+EXISTING_INSTALLER = ("v0.9.516", "623e6c40069062c2a2e8a0f11a1e9f9897dc5526")
+EXISTING_INSTALLER_SHA256 = "b6bfcb1a7af1beaf9d3eb00e71cddc3ab692f0dbcf6a5f0c74d7fb0b8d27bef3"
 VERSION = re.compile(r"v([0-9]+)\.([0-9]+)\.([0-9]+)")
 COMMIT = re.compile(r"[0-9a-f]{40}")
 SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -24,6 +28,15 @@ INDEX = "installation-artifact-index.json"
 TRUST_KEY = (
     Path(__file__).resolve().parents[2] / f"image/common/update-trust/{KEY_ID}.pem"
 )
+VM_CHECKS = [
+    "disconnected_uefi_install",
+    "selected_64g_target",
+    "media_free_boot",
+    "atlaso_services_active",
+    "installed_application_version",
+    "installed_application_commit",
+    "unselected_4g_disk_unchanged",
+]
 
 
 def version_key(tag: str) -> tuple[int, ...]:
@@ -157,7 +170,7 @@ def get_release(repo: str, tag: str) -> dict | None:
     release = json.loads(
         run(["gh", "api", f"repos/{repo}/releases/{selected['databaseId']}"]).stdout
     )
-    if release["tag_name"] != tag or release["prerelease"] is not False:
+    if release["tag_name"] != tag or type(release["prerelease"]) is not bool:
         raise ValueError("unexpected GitHub release identity or classification")
     return release
 
@@ -283,6 +296,18 @@ def require_remote_bytes(records: dict, directory: Path) -> None:
             raise ValueError(f"GitHub release asset bytes differ for {name}")
 
 
+def release_fingerprint(release: dict, tag: str, records: dict) -> str:
+    """Bind approval to the exact GitHub release and all asset identities.
+
+    Args:
+        release: GitHub metadata for the exact release.
+        tag: Verified release tag.
+        records: Asset IDs, sizes, and digests by filename.
+    """
+    identity = {"id": release["id"], "tag": tag, "assets": records}
+    return hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
 def stage(repo: str, tag: str, commit: str, directory: Path, scratch: Path) -> str:
     """Create a single complete hidden draft and verify the uploaded asset set.
 
@@ -295,6 +320,8 @@ def stage(repo: str, tag: str, commit: str, directory: Path, scratch: Path) -> s
     """
     if get_release(repo, tag) is not None:
         raise ValueError("release already exists; preserve it and retry verification")
+    if version_key(tag) < FIRST_PRERELEASE_VERSION:
+        raise ValueError("new installer releases require version 0.9.517 or later")
     scratch.mkdir()
     iso = release_assets(directory, scratch, tag, commit)
     assert iso is not None
@@ -319,6 +346,7 @@ def stage(repo: str, tag: str, commit: str, directory: Path, scratch: Path) -> s
             "--repo",
             repo,
             "--draft",
+            "--prerelease",
             "--verify-tag",
             "--title",
             f"Atlaso {tag}",
@@ -335,34 +363,14 @@ def stage(repo: str, tag: str, commit: str, directory: Path, scratch: Path) -> s
     return iso
 
 
-def latest_version(repo: str) -> tuple[int, ...]:
-    """Read the highest published software version across all release pages.
-
-    Args:
-        repo: GitHub repository in owner/name form.
-    """
-    tags = run(
-        [
-            "gh",
-            "api",
-            "--paginate",
-            f"repos/{repo}/releases?per_page=100",
-            "--jq",
-            ".[] | select(.draft == false and .prerelease == false) | .tag_name",
-        ]
-    ).stdout.splitlines()
-    return max(
-        (version_key(tag) for tag in tags if VERSION.fullmatch(tag)), default=(0, 0, 0)
-    )
-
-
-def verify_acceptance(repo: str, evidence: str, iso: str) -> None:
+def verify_acceptance(repo: str, evidence: str, iso: str, *, physical: bool = False) -> None:
     """Require a same-repository acceptance record that names the approved digest.
 
     Args:
         repo: GitHub repository in owner/name form.
         evidence: GitHub issue, pull request, or comment URL recording media acceptance.
         iso: Verified SHA-256 of the complete installer ISO.
+        physical: Require a physical acceptance comment from a current maintainer.
     """
     match = re.fullmatch(
         rf"https://github\.com/{re.escape(repo)}/(issues|pull)/([1-9][0-9]*)(?:#issuecomment-([1-9][0-9]*))?",
@@ -385,10 +393,42 @@ def verify_acceptance(repo: str, evidence: str, iso: str) -> None:
     else:
         endpoint = f"repos/{repo}/pulls/{number}" if section == "pull" else resource
         record = json.loads(run(["gh", "api", endpoint]).stdout)
-    if not re.search(
-        rf"(?<![0-9a-fA-F]){iso}(?![0-9a-fA-F])", record.get("body") or ""
-    ):
+    body = record.get("body") or ""
+    if not re.search(rf"(?<![0-9a-fA-F]){iso}(?![0-9a-fA-F])", body):
         raise ValueError("acceptance evidence does not identify the approved SHA-256")
+    if physical:
+        if not comment or not re.search(r"^Representative physical acceptance: PASS\s*$", body, re.M):
+            raise ValueError("stable promotion requires an explicit physical acceptance comment")
+        login = record["user"]["login"]
+        if not re.fullmatch(r"[A-Za-z0-9-]+", login):
+            raise ValueError("physical acceptance author is not a GitHub user")
+        permission = json.loads(
+            run(["gh", "api", f"repos/{repo}/collaborators/{login}/permission"]).stdout
+        )
+        if permission["role_name"] not in {"admin", "maintain"}:
+            raise ValueError("physical acceptance requires a current Atlaso maintainer")
+
+
+def verify_vm_receipt(receipt: Path, tag: str, commit: str, iso: str) -> None:
+    """Match the successful test job's exact installer identity and checkpoints.
+
+    Args:
+        receipt: JSON evidence from the successful VM acceptance job.
+        tag: Verified release tag, including the leading v.
+        commit: Full SHA of the release source commit.
+        iso: SHA-256 of the reconstructed installer ISO.
+    """
+    if receipt.stat().st_size > 8192:
+        raise ValueError("VM acceptance receipt exceeds its size bound")
+    record = json.loads(receipt.read_bytes())
+    if record != {
+        "schema": 1,
+        "version": tag[1:],
+        "commit": commit,
+        "iso_sha256": iso,
+        "checks": VM_CHECKS,
+    }:
+        raise ValueError("VM acceptance receipt differs from the verified release")
 
 
 def publish(
@@ -398,8 +438,9 @@ def publish(
     release: dict,
     records: dict,
     iso: str | None,
-    approved: str,
-    evidence: str,
+    acceptance: Path | None,
+    run_id: str,
+    run_attempt: str,
 ) -> None:
     """Publish an approved draft once and verify that GitHub serves the same assets.
 
@@ -410,17 +451,23 @@ def publish(
         release: GitHub's metadata for the selected release.
         records: Expected GitHub asset IDs, sizes, and digests by filename.
         iso: Verified SHA-256 of the complete installer ISO.
-        approved: ISO SHA-256 supplied by the maintainer.
-        evidence: GitHub issue, pull request, or comment URL recording media acceptance.
+        acceptance: Receipt downloaded from the successful acceptance job in this run.
+        run_id: GitHub Actions workflow run that executed the VM acceptance.
+        run_attempt: Exact attempt that uploaded the receipt.
     """
-    if approved:
-        if iso != approved or not SHA256.fullmatch(approved):
-            raise ValueError(
-                "maintainer approval does not match the verified ISO SHA-256"
-            )
-        verify_acceptance(repo, evidence, approved)
-    elif release["draft"] or iso is not None:
-        raise ValueError("combined release publication requires exact ISO approval")
+    if iso is not None:
+        if (tag, commit) == EXISTING_INSTALLER and iso != EXISTING_INSTALLER_SHA256:
+            raise ValueError("v0.9.516 must retain the original signed ISO SHA-256")
+        if (
+            acceptance is None
+            or not SHA256.fullmatch(iso)
+            or not re.fullmatch(r"[1-9][0-9]*", run_id)
+            or not re.fullmatch(r"[1-9][0-9]*", run_attempt)
+        ):
+            raise ValueError("publication requires exact ISO VM acceptance")
+        verify_vm_receipt(acceptance, tag, commit, iso)
+    elif release["draft"] or release["prerelease"]:
+        raise ValueError("only an existing stable software-only release may be recovered")
 
     require_tag(tag, commit)
     current = get_release(repo, tag)
@@ -428,17 +475,20 @@ def publish(
         current is None
         or current["id"] != release["id"]
         or current["draft"] != release["draft"]
+        or current["prerelease"] != release["prerelease"]
         or asset_records(current, tag) != records
     ):
         raise ValueError("release state changed during verification")
     if current["draft"]:
-        make_latest = version_key(tag) > latest_version(repo)
+        if version_key(tag) < FIRST_PRERELEASE_VERSION and (tag, commit) != EXISTING_INSTALLER:
+            raise ValueError("this historical installer cannot be newly published")
+        evidence = f"https://github.com/{repo}/actions/runs/{run_id}/attempts/{run_attempt}"
         body = (current["body"] or "") + (
             f"\n\nValidated installer SHA-256: `{iso}`\n\n"
-            f"Installation acceptance evidence: {evidence}\n"
+            f"Automated VM acceptance: {evidence}\n"
         )
         request = json.dumps(
-            {"draft": False, "make_latest": str(make_latest).lower(), "body": body}
+            {"draft": False, "prerelease": True, "make_latest": "false", "body": body}
         )
         run(
             [
@@ -458,7 +508,7 @@ def publish(
         live["id"] != release["id"]
         or live["tag_name"] != tag
         or live["draft"]
-        or live["prerelease"]
+        or live["prerelease"] != (current["draft"] or current["prerelease"])
         or asset_records(live, tag) != records
     ):
         raise ValueError("published release differs from the verified release")
@@ -503,13 +553,16 @@ def main() -> None:
     """Operate only on an admitted exact software commit in the protected workflow."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "operation", choices=("state", "stage", "verify", "publish", "channel")
+        "operation",
+        choices=("state", "stage", "verify", "iso-assets", "publish", "physical", "channel"),
     )
     parser.add_argument("--tag", required=True)
     parser.add_argument("--commit", required=True)
     parser.add_argument("--assets", type=Path)
     parser.add_argument("--scratch", type=Path)
     parser.add_argument("--wheel", type=Path)
+    parser.add_argument("--vm-acceptance", type=Path)
+    parser.add_argument("--release-fingerprint", type=Path)
     args = parser.parse_args()
     version = version_key(args.tag)
     if not COMMIT.fullmatch(args.commit):
@@ -520,9 +573,24 @@ def main() -> None:
         print(channel_decision(args.assets, args.tag, args.commit))
         return
     repo = os.environ["GITHUB_REPOSITORY"]
+    if args.operation == "iso-assets":
+        release = get_release(repo, args.tag)
+        if release is None:
+            raise ValueError("ISO acceptance requires an existing release")
+        require_tag(args.tag, args.commit)
+        records = asset_records(release, args.tag)
+        required = {INDEX, INDEX + ".sig", "verify-installation.pyz"}
+        installer = records.keys() - software_names(args.tag)
+        if not required < installer:
+            raise ValueError("ISO acceptance requires a complete staged installer")
+        print(json.dumps([
+            {"id": records[name][0], "name": name, "size": records[name][1]}
+            for name in sorted(installer)
+        ], separators=(",", ":")))
+        return
     if args.operation == "state":
         release = get_release(repo, args.tag)
-        if release is None and version < FIRST_INSTALLATION_VERSION:
+        if release is None and version < FIRST_PRERELEASE_VERSION:
             raise ValueError(
                 "historical versions are eligible for recovery of existing releases only"
             )
@@ -542,6 +610,8 @@ def main() -> None:
         release = get_release(repo, args.tag)
         if release is None:
             raise ValueError("expected an existing GitHub Release")
+        if args.operation == "physical" and release["draft"]:
+            raise ValueError("stable promotion requires a public release")
         records, iso = download_and_verify(
             repo, args.tag, args.commit, release, args.assets, args.scratch, args.wheel
         )
@@ -553,9 +623,19 @@ def main() -> None:
                 release,
                 records,
                 iso,
-                os.getenv("VALIDATED_ISO_SHA256", ""),
-                os.getenv("INSTALLATION_ACCEPTANCE_EVIDENCE", ""),
+                args.vm_acceptance,
+                os.getenv("GITHUB_RUN_ID", ""),
+                os.getenv("GITHUB_RUN_ATTEMPT", ""),
             )
+        if args.operation == "physical" and iso is not None:
+            verify_acceptance(repo, os.getenv("INSTALLATION_ACCEPTANCE_EVIDENCE", ""), iso, physical=True)
+            if args.release_fingerprint is not None:
+                live = get_release(repo, args.tag)
+                require_tag(args.tag, args.commit)
+                if live is None or live["draft"] or live["id"] != release["id"] or asset_records(live, args.tag) != records:
+                    raise ValueError("release assets changed during physical acceptance verification")
+                with args.release_fingerprint.open("x", encoding="ascii") as stream:
+                    stream.write(release_fingerprint(live, args.tag, records) + "\n")
     print(iso or "legacy")
 
 

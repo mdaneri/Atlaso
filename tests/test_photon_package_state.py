@@ -260,6 +260,8 @@ def test_package_cleanup_transaction_preserves_runtime_with_noautoremove(
         "tdnf",
         "python3",
         "iproute2",
+        "iputils",
+        "traceroute",
         "powershell",
         "ntpsec",
         "python3-ntp",
@@ -312,7 +314,7 @@ def test_package_cleanup_transaction_preserves_runtime_with_noautoremove(
     assert not {"rpm-build", "glib-devel", "systemd-devel", "pkg-config"} & installed
 
 
-@pytest.mark.parametrize("missing_package", ["ntpsec", "python3-ntp", "iproute2"])
+@pytest.mark.parametrize("missing_package", ["ntpsec", "python3-ntp", "iproute2", "iputils", "traceroute"])
 def test_package_cleanup_rejects_missing_required_runtime(
     tmp_path: Path, missing_package: str
 ) -> None:
@@ -332,6 +334,8 @@ def test_package_cleanup_rejects_missing_required_runtime(
         "tdnf",
         "python3",
         "iproute2",
+        "iputils",
+        "traceroute",
         "powershell",
         "ntpsec",
         "python3-ntp",
@@ -384,6 +388,8 @@ def test_package_cleanup_rejects_installed_cloud_init(tmp_path: Path) -> None:
         "tdnf",
         "python3",
         "iproute2",
+        "iputils",
+        "traceroute",
         "powershell",
         "ntpsec",
         "python3-ntp",
@@ -445,6 +451,8 @@ def test_package_cleanup_rejects_cloud_init_runtime_path(
         "tdnf",
         "python3",
         "iproute2",
+        "iputils",
+        "traceroute",
         "powershell",
         "ntpsec",
         "python3-ntp",

@@ -24,6 +24,9 @@ This verified appliance view provides visual orientation before you begin.
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
+Select **Network Diagnostics** beside **Route lookup** when you need to send a probe from the appliance. Administrators
+and Network Administrators can also open [Network Diagnostics](network-diagnostics.md) from **Operations**.
+
 ## Read the charts
 
 Use **Overview**, **Network**, and **Services & Clock** to switch between the time-series charts and live runtime

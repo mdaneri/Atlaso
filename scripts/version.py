@@ -64,6 +64,7 @@ class Version:
 
 
 PRE_GA_RELEASE_LINE = Version(0, 9, 0)
+GA_RELEASE_LINE = Version(1, 0, 0)
 
 
 VERSION_PATHS = {
@@ -256,6 +257,8 @@ def allowed_pr_versions(base_root: Path, target_root: Path | None = None) -> set
         allowed.add(base)
     if base.major == 0 and base < PRE_GA_RELEASE_LINE:
         allowed.add(PRE_GA_RELEASE_LINE)
+    if base.major == 0 and base.minor == PRE_GA_RELEASE_LINE.minor:
+        allowed.add(GA_RELEASE_LINE)
     return allowed
 
 
@@ -328,11 +331,18 @@ def bump(
         if current == target_version:
             return current, False
         expected = current.next_patch()
-        if target_version != expected:
+        approved_release_transition = (
+            current.major == 0
+            and current.minor == PRE_GA_RELEASE_LINE.minor
+            and target_version == GA_RELEASE_LINE
+        )
+        if target_version != expected and not approved_release_transition:
             raise VersionError(
-                f"--version must be the current version {current} or next patch {expected}; "
+                f"--version must be the current version {current}, next patch {expected}, "
+                f"or approved release transition {GA_RELEASE_LINE}; "
                 f"found {target_version}"
             )
+        expected = target_version
     else:
         base_root = root if base_root is None else base_root.resolve()
         base = consistent_version(base_root)

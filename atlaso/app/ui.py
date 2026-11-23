@@ -17934,6 +17934,7 @@ run_appliance_update = _appliance_maintenance_ui.endpoints[
 _dashboard_monitor_ui = build_dashboard_monitor_ui_router(
     DashboardMonitorUiDependencies(
         require_management_ui_request=require_management_ui_request,
+        verify_csrf=verify_csrf,
         render=render,
         dashboard_snapshot=dashboard_snapshot,
         require_monitoring_read=require_monitoring_read,

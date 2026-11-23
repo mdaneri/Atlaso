@@ -1958,6 +1958,24 @@ finally {
     if ($pipePair) { Close-InstallationTestPipePair -Pair $pipePair }
 }
 
+foreach ($fixture in @(
+    @{ Chunks = @("Account passwords`nConfirm admin password`n", "Confirm root password`nEnter selects or advances. Esc goes back."); Layout = 'Form' },
+    @{ Chunks = @('Set admin password'); Layout = 'Sequential' }
+)) {
+    $pipePair = $null
+    try {
+        $pipePair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
+        $formWriter = [AtlasoInstallationPipeTestWriter]::Start($pipePair.Client, [string[]]$fixture.Chunks)
+        $observedLayout = Wait-InstallationConsoleState -Pipe $pipePair.Server -Pattern 'concealed account fields' `
+            -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -ReadAccountLayout
+        Assert-InstallationVmCondition ($observedLayout -ceq $fixture.Layout) 'Expected the exact public account layout.'
+        Assert-InstallationVmCondition $formWriter.Wait(5000) 'The public account layout writer did not complete.'
+    }
+    finally {
+        if ($pipePair) { Close-InstallationTestPipePair -Pair $pipePair }
+    }
+}
+
 $pipePair = $null
 $capacityDiagnostics = [Collections.Generic.List[object]]::new()
 try {

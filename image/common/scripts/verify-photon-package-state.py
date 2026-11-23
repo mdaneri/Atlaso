@@ -43,10 +43,10 @@ INSTALLATION_OPENLDAP_UNIT_PATH = Path("/usr/lib/systemd/system/slapd.service")
 INSTALLATION_OPENLDAP_UNIT_SHA256 = "203aafa5cb6c16defe0fae0100bc89b9cbf65d666e7d73a9b510f8fb8b94c8cf"
 INSTALLATION_SHIM_SHA256 = "e41e6109d7be89ae83da63ef8021ef9a0e053ecd4fe1f47ae73dd79270d688c7"
 INSTALLATION_GRUB_EFI_SHA256 = "516e63a3c609abecf4a4bf3ef2661d4f1bed26729a612f73e0bfcb530727e91f"
-INSTALLATION_LINUX_SHA256 = "82f4fa46cd8059013ab94e0f8bae467c390b37e9277fb446ed4011d56f534d71"
+INSTALLATION_LINUX_SHA256 = "36674b18d528fc34c0fc2e95199bc9ad3f49a855faf84fb418c1b5bb2477ca02"
 INSTALLATION_KMOD_SHA256 = "b7614a76f7a17b832e2158fe90413cf2af719b1d1e9d85bfae7195e4905a7850"
 INSTALLATION_KMOD_BINARY_SHA256 = "ee872a0ddff939b69e87beec32090dc98d1882e9028f4bd5729b9a2b858aaaeb"
-INSTALLATION_MODULE_ROOT = Path("/usr/lib/modules/6.12.116-3.ph5")
+INSTALLATION_MODULE_ROOT = Path("/usr/lib/modules/6.12.116-4.ph5")
 INSTALLATION_MODULE_RUN_ROOT = Path("/run")
 INSTALLATION_KMOD_FILES = (
     ("/usr/bin/kmod", 171272, "954714d5862c7081a266babeac7d5dd859e7b0812224dad9a7b81957bf93c629"),
@@ -55,9 +55,9 @@ INSTALLATION_KMOD_FILES = (
 # Canonical original RPM header records across the complete admitted closure.
 # Directory sizes normalize to zero; filesystem allocation sizes are not inputs.
 INSTALLATION_MODULE_INPUT_COUNT = 1235
-INSTALLATION_MODULE_INPUT_BYTES = 37927808
-INSTALLATION_MODULE_INPUT_SHA256 = "f2293a9fc5c7140d2ff5b692ae105e5e0a2c21f141bd85f3b8b9cb057f4de5c2"
-INSTALLATION_MODULE_NAMESPACE_SHA256 = "0000509b3a1fb9547641e32ebe90f89cb7a42f0f446ad5e31b3065268b5fa423"
+INSTALLATION_MODULE_INPUT_BYTES = 38028176
+INSTALLATION_MODULE_INPUT_SHA256 = "9367238c0d4eb6be47480a216fc7b30ffb0eb948993b041957fce31ea672c4e1"
+INSTALLATION_MODULE_NAMESPACE_SHA256 = "eb17c024ffe4030babd1506e7282b24516b09742f96c289c9f32ccaa62b8f502"
 INSTALLATION_MODULE_GENERATED = frozenset({
     "modules.dep", "modules.dep.bin", "modules.alias", "modules.alias.bin",
     "modules.softdep", "modules.weakdep", "modules.symbols", "modules.symbols.bin",
@@ -68,7 +68,7 @@ _INSTALLATION_STABLE_FIELDS = (
     "st_size", "st_mtime_ns", "st_ctime_ns",
 )
 INSTALLATION_MODULE_GENERATED_PATHS = frozenset(
-    "/lib/modules/6.12.116-3.ph5/" + name for name in INSTALLATION_MODULE_GENERATED
+    "/lib/modules/6.12.116-4.ph5/" + name for name in INSTALLATION_MODULE_GENERATED
 )
 INSTALLATION_LAYOUT_HELPER_PATH = Path(__file__).resolve().parents[3] / "scripts/installation/layout.py"
 INSTALLATION_LAYOUT_HELPER_SHA256 = "1feb571697f3a1e592e3839bc303cd4c20cd8d40f7acd4e3d7df93449de99608"
@@ -87,6 +87,8 @@ REQUIRED_RUNTIME_PACKAGES = (
     "tdnf",
     "python3",
     "iproute2",
+    "iputils",
+    "traceroute",
     "powershell",
     "ntpsec",
     "python3-ntp",
