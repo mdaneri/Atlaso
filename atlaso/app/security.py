@@ -185,6 +185,7 @@ UI_PATH_SCOPES = [
     ("/network-objects", "read:firewall", "write:firewall"),
     ("/traffic-publishing", "read:firewall", "write:firewall"),
     ("/routes-wan", "read:routes", "write:routes"),
+    ("/network-diagnostics", "write:routes", "write:routes"),
     ("/firewall", "read:firewall", "write:firewall"),
     ("/dns", "read:dns", "write:dns"),
     ("/dhcp", "read:dhcp", "write:dhcp"),

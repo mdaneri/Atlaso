@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block page_title %}Network Diagnostics{% endblock %}
+
+{% block content %}
+<section class="panel monitor-runtime-panel">
+  <div class="panel-head">
+    <div>
+      <h2>Run a network check</h2>
+      <p class="muted">Send probes or resolve a hostname from the appliance.</p>
+    </div>
+    <a class="button secondary" href="{{ management_ui_path('/monitor') }}?view=network">Route lookup</a>
+  </div>
+  <form class="monitor-route-lookup" method="post" action="{{ management_ui_path('/network-diagnostics') }}" data-network-diagnostics>
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <label>Check
+      <select name="check">
+        <option value="ping"{% if check == "ping" %} selected{% endif %}>Ping</option>
+        <option value="traceroute"{% if check == "traceroute" %} selected{% endif %}>Traceroute</option>
+        <option value="dns"{% if check == "dns" %} selected{% endif %}>DNS lookup</option>
+      </select>
+    </label>
+    <label>Destination
+      <input name="target" value="{{ target }}" required maxlength="254" autocomplete="off" spellcheck="false" placeholder="203.0.113.10 or host.example">
+    </label>
+    <label>Address family
+      <select name="family">
+        <option value="auto"{% if family == "auto" %} selected{% endif %}>Automatic</option>
+        <option value="4"{% if family == "4" %} selected{% endif %}>IPv4</option>
+        <option value="6"{% if family == "6" %} selected{% endif %}>IPv6</option>
+      </select>
+    </label>
+    <label>Source address
+      <select name="source">
+        <option value="">Automatic</option>
+        {% for option in sources %}
+        <option value="{{ option.address }}"{% if option.address == source %} selected{% endif %}>{{ option.address }} ({{ option.interface }})</option>
+        {% endfor %}
+      </select>
+    </label>
+    <div><button class="button primary" type="submit">Run check</button></div>
+  </form>
+  <p class="muted" data-network-check-status role="status" hidden>Running the network check…</p>
+</section>
+{% if result %}
+<section class="panel monitor-runtime-panel" aria-labelledby="network-check-result">
+  <div class="panel-head">
+    <div>
+      <h2 id="network-check-result">{% if check == 'dns' %}DNS lookup{% else %}{{ check | capitalize }}{% endif %} result</h2>
+      <p role="status">
+        {% if result.state == "no_reply" %}<strong>No reply.</strong>{% endif %}
+        {% if result.state == "unavailable" %}<strong>Diagnostic unavailable.</strong>{% endif %}
+        {{ result.message }}
+      </p>
+    </div>
+  </div>
+  {% if result.target or result.source %}
+  <dl>
+    {% if result.target %}<dt>Destination address</dt><dd><code>{{ result.target }}</code></dd>{% endif %}
+    {% if result.source %}<dt>Source address</dt><dd><code>{{ result.source }}</code></dd>{% endif %}
+  </dl>
+  {% endif %}
+  {% if result.rows %}
+  <div class="monitor-table-scroll">
+    <div class="tabulator-shell" data-network-check-grid data-fallback-id="network-check-fallback" aria-labelledby="network-check-result"></div>
+    <table id="network-check-fallback" class="data-table compact" aria-labelledby="network-check-result">
+      <thead><tr><th>{% if check == "traceroute" %}Hop{% elif check == "ping" %}Sequence{% else %}Answer{% endif %}</th><th>Address</th><th>Status</th>{% if check != "dns" %}<th>Round-trip time (ms)</th>{% endif %}</tr></thead>
+      <tbody>
+        {% for row in result.rows %}
+        <tr><td>{{ row.number }}</td><td>{{ row.address or "—" }}</td><td>{{ row.status }}</td>{% if check != "dns" %}<td>{{ row.rtt or "—" }}</td>{% endif %}</tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="/static/network-diagnostics.js?v=issue-1201" defer></script>
+{% endblock %}

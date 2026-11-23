@@ -174,6 +174,7 @@ def test_static_analysis_configuration_is_pinned_and_scoped() -> None:
             "atlaso/app/routing_permission_schemas.py",
             "atlaso/route_domains.py",
             "atlaso/monitor_native.py",
+            "atlaso/app/services/network_diagnostics.py",
             "atlaso/app/services/monitor_runtime.py",
             "atlaso/app/services/monitor_update_comparison.py",
             "scripts/interop/routing_overlap_guest.py",
