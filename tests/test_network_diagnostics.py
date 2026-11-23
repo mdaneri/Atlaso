@@ -11,10 +11,19 @@ from atlaso.monitor_native import ObservationUnavailable
 
 @pytest.fixture(autouse=True)
 def enable_native_checks(monkeypatch):
-    """Exercise the real-mode dispatch without allowing a native process."""
+    """Exercise the real-mode dispatch without allowing a native process.
+
+    Args:
+        monkeypatch: Fixture that enables dispatch and replaces the native runner.
+    """
     monkeypatch.setattr(diagnostics, "get_settings", lambda: SimpleNamespace(dry_run_system_adapters=False))
 
     def unexpected(*args):
+        """Fail if a test dispatches an unexpected native command.
+
+        Args:
+            *args: Executable name, arguments, and deadline passed to the runner.
+        """
         pytest.fail(f"Unexpected native invocation: {args!r}")
 
     monkeypatch.setattr(diagnostics, "run_native", unexpected)
@@ -23,13 +32,30 @@ def enable_native_checks(monkeypatch):
 @pytest.mark.parametrize("target", ["-Ieth0", "example.org;id", "example.org\nlocalhost", "192.0.2.999",
                                     "224.0.0.1", "255.255.255.255", "::", "fe80::1%eth0", "::ffff:127.0.0.1"])
 def test_invalid_targets_never_reach_native_commands(target):
+    """Reject invalid probe destinations before invoking native tools.
+
+    Args:
+        target: Invalid destination under test.
+    """
     assert diagnostics.run_check("ping", target, "", "auto").state == "invalid_target"
 
 
 def test_ping_uses_numeric_hostname_answer_and_reports_loss_and_rtt(monkeypatch):
+    """Bind the numeric target and report replies and statistics.
+
+    Args:
+        monkeypatch: Fixture that supplies resolver, route, and Ping output.
+    """
     calls = []
 
     def native(command, args, _deadline):
+        """Return the native output for each stage of the Ping request.
+
+        Args:
+            command: Fixed executable name.
+            args: Arguments captured for assertions.
+            _deadline: Unused native deadline.
+        """
         calls.append([command, *args])
         if command == "getent":
             return 0, "2001:db8::5 STREAM example.test\n192.0.2.5 STREAM\n192.0.2.5 DGRAM\n"
@@ -55,9 +81,21 @@ def test_ping_uses_numeric_hostname_answer_and_reports_loss_and_rtt(monkeypatch)
 
 
 def test_traceroute_checks_live_source_and_preserves_hop_timeouts(monkeypatch):
+    """Check the requested source and keep missing hops visible.
+
+    Args:
+        monkeypatch: Fixture that supplies interface, route, and Traceroute output.
+    """
     calls = []
 
     def native(command, args, _deadline):
+        """Return the live-source inventory and a trace with a timed-out hop.
+
+        Args:
+            command: Fixed executable name.
+            args: Arguments captured for assertions.
+            _deadline: Unused native deadline.
+        """
         calls.append([command, *args])
         if args[:2] == ["-j", "address"]:
             return 0, json.dumps([{"ifname": "eth1", "addr_info": [{"local": "2001:db8::1"}]}])
@@ -82,7 +120,19 @@ def test_traceroute_checks_live_source_and_preserves_hop_timeouts(monkeypatch):
 
 
 def test_dns_deduplicates_answers_without_sending_a_connectivity_probe(monkeypatch):
+    """Return unique addresses in resolver order.
+
+    Args:
+        monkeypatch: Fixture that replaces the native resolver.
+    """
     def resolve(command, args, _deadline):
+        """Return repeated and dual-stack resolver answers.
+
+        Args:
+            command: Fixed resolver executable name.
+            args: Arguments checked for the single allowed query.
+            _deadline: Unused native deadline.
+        """
         assert (command, args) == ("getent", ["-A", "ahosts", "example.test"])
         return 0, "2001:db8::2 STREAM example.test\n2001:db8::2 STREAM\n192.0.2.2 STREAM\n"
 
@@ -96,7 +146,19 @@ def test_dns_deduplicates_answers_without_sending_a_connectivity_probe(monkeypat
 
 
 def test_distinguishes_missing_resolver_answer_no_ping_reply_and_unavailable(monkeypatch):
+    """Keep three distinct failure outcomes visible to the operator.
+
+    Args:
+        monkeypatch: Fixture that supplies native failures and a valid route.
+    """
     def native(command, _args, _deadline):
+        """Simulate a missing answer, a probe with no reply, and an unavailable tool.
+
+        Args:
+            command: Fixed executable name that selects the response.
+            _args: Unused native arguments.
+            _deadline: Unused native deadline.
+        """
         if command == "getent":
             return 2, ""
         if command == "ip":

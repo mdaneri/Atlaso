@@ -129,13 +129,23 @@ def test_runtime_monitor_permissions_and_direct_links(client):
 
 
 def test_network_diagnostics_require_operator_and_csrf(client, monkeypatch):
-    """Only an authorized explicit submission can send a probe."""
+    """Only an authorized explicit submission can send a probe.
+
+    Args:
+        client: Test client for the management interface.
+        monkeypatch: Fixture that substitutes the local addresses and probe result.
+    """
     from atlaso.app.security import Identity, require_session_identity
     from atlaso.app.services import network_diagnostics as diagnostics
 
     calls = []
 
     def probe(*args):
+        """Capture the submitted probe and return a projected result.
+
+        Args:
+            *args: Diagnostic, destination, source address, and family.
+        """
         calls.append(args)
         return diagnostics.Result(
             "reply", "Destination reached.", "2001:db8::8", "2001:db8::2",

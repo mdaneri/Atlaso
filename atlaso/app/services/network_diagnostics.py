@@ -66,7 +66,11 @@ class Result:
 
 
 def _probe_address(value: str) -> Address | None:
-    """Accept unicast addresses that can be passed as numeric probe arguments."""
+    """Accept unicast addresses that can be passed as numeric probe arguments.
+
+    Args:
+        value: Candidate address without an interface zone.
+    """
     try:
         address = ip_address(value)
     except ValueError:
@@ -79,7 +83,11 @@ def _probe_address(value: str) -> Address | None:
 
 
 def _valid_hostname(value: str) -> bool:
-    """Check hostname labels before sending a single query to the system resolver."""
+    """Check hostname labels before sending a single query to the system resolver.
+
+    Args:
+        value: Candidate hostname with an optional trailing root dot.
+    """
     name = value.removesuffix(".")
     labels = name.split(".")
     return (
@@ -121,7 +129,12 @@ def local_sources() -> list[Source]:
 
 
 def _resolve(hostname: str, family: int | None) -> list[Address]:
-    """Use the appliance resolver once and keep its numeric results in preference order."""
+    """Use the appliance resolver once and keep its numeric results in preference order.
+
+    Args:
+        hostname: Validated hostname to resolve.
+        family: Required IP version, or `None` to retain both families.
+    """
     code, output = run_native("getent", ["-A", "ahosts", hostname], time.monotonic() + 3)
     if code == 2:
         return []
@@ -144,7 +157,13 @@ def _resolve(hostname: str, family: int | None) -> list[Address]:
 
 
 def _route_source(check: Check, target: Address, source: Address | None) -> str:
-    """Find the route and source address for a single numeric destination."""
+    """Find the route and source address for a single numeric destination.
+
+    Args:
+        check: Probe that determines the route lookup protocol.
+        target: Numeric destination for the kernel lookup.
+        source: Explicit local source, or `None` to use the kernel-selected address.
+    """
     query = ["-j", f"-{target.version}", "route", "get", str(target)]
     if source is not None:
         query.extend(("from", str(source)))
@@ -168,7 +187,12 @@ def _route_source(check: Check, target: Address, source: Address | None) -> str:
 
 
 def _ping(target: Address, source: str) -> Result:
-    """Send three Echo Requests and project replies and aggregate statistics."""
+    """Send three Echo Requests and project replies and aggregate statistics.
+
+    Args:
+        target: Numeric destination for the Echo Requests.
+        source: Local address to bind.
+    """
     code, output = run_native(
         "ping", [f"-{target.version}", "-n", "-c", str(PING_COUNT), "-w", "6", "-I", source, str(target)],
         time.monotonic() + 8,
@@ -191,7 +215,12 @@ def _ping(target: Address, source: str) -> Result:
 
 
 def _traceroute(target: Address, source: str) -> Result:
-    """Send one UDP probe per hop and preserve explicit hop timeouts."""
+    """Send one UDP probe per hop and preserve explicit hop timeouts.
+
+    Args:
+        target: Numeric destination for the UDP probes.
+        source: Local address to bind.
+    """
     code, output = run_native(
         "traceroute", [f"-{target.version}", "-n", "-m", str(MAX_HOPS), "-q", "1", "-N", "1", "-w", "1",
                        "-s", source, str(target)],
@@ -224,7 +253,14 @@ def _traceroute(target: Address, source: str) -> Result:
 
 
 def run_check(check: Check, target_value: str, source_value: str, family: Family) -> Result:
-    """Validate and run one explicitly requested check without retaining its results."""
+    """Validate and run one explicitly requested check without retaining its results.
+
+    Args:
+        check: Diagnostic selected by the operator.
+        target_value: Requested numeric destination or hostname.
+        source_value: Requested local address, or empty for automatic selection.
+        family: Requested address family or automatic selection.
+    """
     target_value = target_value.strip()
     source_value = source_value.strip()
     target = _probe_address(target_value)
@@ -257,7 +293,15 @@ def run_check(check: Check, target_value: str, source_value: str, family: Family
 def _run_check(
     check: Check, target_value: str, target: Address | None, source: Address | None, version: int | None,
 ) -> Result:
-    """Verify live source ownership, resolve if necessary, and dispatch a single probe."""
+    """Verify live source ownership, resolve if necessary, and dispatch a single probe.
+
+    Args:
+        check: Diagnostic selected by the operator.
+        target_value: Validated input used for name resolution if needed.
+        target: Parsed numeric destination, or `None` for a hostname.
+        source: Requested local address, or `None` for automatic selection.
+        version: Required IP version, or `None` for resolver preference.
+    """
     if source and not any(option.address == str(source) for option in local_sources()):
         return Result("invalid_source", "The selected source is no longer assigned to an eligible local interface.")
     if target is None:

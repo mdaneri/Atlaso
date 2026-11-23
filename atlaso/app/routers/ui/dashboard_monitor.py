@@ -237,7 +237,11 @@ def build_router(
         return JSONResponse(result, headers=NO_STORE)
 
     def require_probe_operator(identity: Identity = Depends(require_session_identity)) -> Identity:
-        """Require network operation authority for active probes."""
+        """Require network operation authority for active probes.
+
+        Args:
+            identity: Session identity requesting Network Diagnostics.
+        """
         if not identity.can("write:routes"):
             raise HTTPException(status_code=403, detail="Routing write access is required")
         return identity
@@ -252,7 +256,17 @@ def build_router(
         family: network_diagnostics.Family = "auto",
         result: network_diagnostics.Result | None = None,
     ) -> HTMLResponse:
-        """Render the form and any result without caching network information."""
+        """Render the form and any result without caching network information.
+
+        Args:
+            request: Management request used to render the page.
+            identity: Authorized operator.
+            check: Selected diagnostic.
+            target: Submitted destination or hostname.
+            source: Selected local address, or empty for automatic selection.
+            family: Requested address family or automatic selection.
+            result: Completed check to display, if available.
+        """
         try:
             sources = network_diagnostics.local_sources()[:network_diagnostics.MAX_SOURCES]
         except (ValueError, OSError):
@@ -273,7 +287,12 @@ def build_router(
     def network_diagnostics_page(
         request: Request, identity: Identity = Depends(require_probe_operator),
     ) -> HTMLResponse:
-        """Render the probe form without starting a check."""
+        """Render the probe form without starting a check.
+
+        Args:
+            request: Management request for the form.
+            identity: Authorized operator.
+        """
         return render_diagnostics(request, identity)
 
     @router.post("/network-diagnostics", response_class=HTMLResponse, include_in_schema=False)
@@ -287,7 +306,18 @@ def build_router(
         identity: Identity = Depends(require_probe_operator),
         db: Session = Depends(get_db),
     ) -> HTMLResponse:
-        """Run a single check from a CSRF-protected management form submission."""
+        """Run a single check from a CSRF-protected management form submission.
+
+        Args:
+            request: Management request containing the browser session.
+            check: Diagnostic to run.
+            target: Destination address or hostname to validate.
+            csrf: Submitted token to compare with the session token.
+            source: Requested local address, or empty for automatic selection.
+            family: Requested address family or automatic selection.
+            identity: Authorized operator recorded in the audit event.
+            db: Session used to persist the audit event.
+        """
         dependencies.verify_csrf(request, csrf)
         result = network_diagnostics.run_check(check, target, source, family)
         record_audit(
