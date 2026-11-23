@@ -93,7 +93,7 @@ def local_sources() -> list[Source]:
     """Read usable, unambiguous source options from the running kernel."""
     if get_settings().dry_run_system_adapters:
         raise ObservationUnavailable
-    code, output = run_native(["ip", "-j", "address", "show", "up"], time.monotonic() + 2)
+    code, output = run_native("ip", ["-j", "address", "show", "up"], time.monotonic() + 2)
     if code:
         raise ObservationUnavailable
     links = json.loads(output)
@@ -122,7 +122,7 @@ def local_sources() -> list[Source]:
 
 def _resolve(hostname: str, family: int | None) -> list[Address]:
     """Use the appliance resolver once and keep its numeric results in preference order."""
-    code, output = run_native(["getent", "-A", "ahosts", hostname], time.monotonic() + 3)
+    code, output = run_native("getent", ["-A", "ahosts", hostname], time.monotonic() + 3)
     if code == 2:
         return []
     if code:
@@ -145,12 +145,12 @@ def _resolve(hostname: str, family: int | None) -> list[Address]:
 
 def _route_source(check: Check, target: Address, source: Address | None) -> str:
     """Find the route and source address for a single numeric destination."""
-    query = ["ip", "-j", f"-{target.version}", "route", "get", str(target)]
+    query = ["-j", f"-{target.version}", "route", "get", str(target)]
     if source is not None:
         query.extend(("from", str(source)))
     protocol = "udp" if check == "traceroute" else "icmp" if target.version == 4 else "ipv6-icmp"
     query.extend(("ipproto", protocol))
-    code, output = run_native(query, time.monotonic() + 2)
+    code, output = run_native("ip", query, time.monotonic() + 2)
     if code:
         if "Network is unreachable" in output or "No route to host" in output:
             return ""
@@ -170,7 +170,7 @@ def _route_source(check: Check, target: Address, source: Address | None) -> str:
 def _ping(target: Address, source: str) -> Result:
     """Send three Echo Requests and project replies and aggregate statistics."""
     code, output = run_native(
-        ["ping", f"-{target.version}", "-n", "-c", str(PING_COUNT), "-w", "6", "-I", source, str(target)],
+        "ping", [f"-{target.version}", "-n", "-c", str(PING_COUNT), "-w", "6", "-I", source, str(target)],
         time.monotonic() + 8,
     )
     loss = _PING_LOSS.search(output)
@@ -193,8 +193,8 @@ def _ping(target: Address, source: str) -> Result:
 def _traceroute(target: Address, source: str) -> Result:
     """Send one UDP probe per hop and preserve explicit hop timeouts."""
     code, output = run_native(
-        ["traceroute", f"-{target.version}", "-n", "-m", str(MAX_HOPS), "-q", "1", "-N", "1", "-w", "1",
-         "-s", source, str(target)],
+        "traceroute", [f"-{target.version}", "-n", "-m", str(MAX_HOPS), "-q", "1", "-N", "1", "-w", "1",
+                       "-s", source, str(target)],
         time.monotonic() + MAX_HOPS + 3,
     )
     if code:

@@ -11,11 +11,12 @@ import subprocess
 import time
 from ipaddress import ip_address
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 NATIVE_PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
 MAX_OUTPUT = 1_048_576
 MAX_ROWS = 2048
+NativeCommand = Literal["getent", "ip", "ping", "ss", "systemctl", "traceroute"]
 
 # Unit names and destinations are server-owned.
 SERVICE_UNITS = {
@@ -37,22 +38,23 @@ class ObservationUnavailable(ValueError):
     """A bounded native observation could not be completed."""
 
 
-def run_native(args: list[str], deadline: float, *, input_data: bytes = b"") -> tuple[int, str]:
+def run_native(command: NativeCommand, args: list[str], deadline: float, *, input_data: bytes = b"") -> tuple[int, str]:
     """Run one native command using a fixed search path and bounded I/O.
 
     Args:
-        args: Native executable name and argument list.
+        command: Fixed executable name selected by the caller.
+        args: Arguments passed to the executable.
         deadline: Monotonic deadline for the command.
         input_data: Optional bounded bytes written to the native process.
     """
     if len(input_data) > 256:
         raise ObservationUnavailable
-    executable = shutil.which(args[0], path=NATIVE_PATH) if os.name == "posix" else None
+    executable = shutil.which(command, path=NATIVE_PATH) if os.name == "posix" else None
     if not executable or time.monotonic() >= deadline:
         raise ObservationUnavailable
     try:
         with subprocess.Popen(
-            [executable, *args[1:]],
+            [executable, *args],
             stdin=subprocess.PIPE if input_data else subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env={"PATH": NATIVE_PATH, "LC_ALL": "C"},
         ) as process:
@@ -130,7 +132,7 @@ def collect_listeners() -> dict[str, Any]:
     deadline = time.monotonic() + 4
     for family in (4, 6):
         try:
-            code, output = run_native(["ss", "-H", "-lntupe", f"-{family}"], deadline)
+            code, output = run_native("ss", ["-H", "-lntupe", f"-{family}"], deadline)
         except ObservationUnavailable:
             state = "partial"
             continue

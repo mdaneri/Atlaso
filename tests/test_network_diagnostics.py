@@ -29,11 +29,11 @@ def test_invalid_targets_never_reach_native_commands(target):
 def test_ping_uses_numeric_hostname_answer_and_reports_loss_and_rtt(monkeypatch):
     calls = []
 
-    def native(args, _deadline):
-        calls.append(args)
-        if args[0] == "getent":
+    def native(command, args, _deadline):
+        calls.append([command, *args])
+        if command == "getent":
             return 0, "2001:db8::5 STREAM example.test\n192.0.2.5 STREAM\n192.0.2.5 DGRAM\n"
-        if args[0] == "ip":
+        if command == "ip":
             return 0, '[{"dev":"eth1","prefsrc":"192.0.2.2"}]'
         return 1, (
             "64 bytes from 192.0.2.5: icmp_seq=2 ttl=64 time=0.314 ms\n"
@@ -57,11 +57,11 @@ def test_ping_uses_numeric_hostname_answer_and_reports_loss_and_rtt(monkeypatch)
 def test_traceroute_checks_live_source_and_preserves_hop_timeouts(monkeypatch):
     calls = []
 
-    def native(args, _deadline):
-        calls.append(args)
-        if args[2] == "address":
+    def native(command, args, _deadline):
+        calls.append([command, *args])
+        if args[:2] == ["-j", "address"]:
             return 0, json.dumps([{"ifname": "eth1", "addr_info": [{"local": "2001:db8::1"}]}])
-        if args[0] == "ip":
+        if command == "ip":
             return 0, '[{"dev":"eth1"}]'
         return 0, "traceroute to 2001:db8::5\n 1  fe80::20%eth1  0.255 ms\n 2  *\n 3  2001:db8::5  1.433 ms\n"
 
@@ -82,8 +82,8 @@ def test_traceroute_checks_live_source_and_preserves_hop_timeouts(monkeypatch):
 
 
 def test_dns_deduplicates_answers_without_sending_a_connectivity_probe(monkeypatch):
-    def resolve(args, _deadline):
-        assert args == ["getent", "-A", "ahosts", "example.test"]
+    def resolve(command, args, _deadline):
+        assert (command, args) == ("getent", ["-A", "ahosts", "example.test"])
         return 0, "2001:db8::2 STREAM example.test\n2001:db8::2 STREAM\n192.0.2.2 STREAM\n"
 
     monkeypatch.setattr(diagnostics, "run_native", resolve)
@@ -96,12 +96,12 @@ def test_dns_deduplicates_answers_without_sending_a_connectivity_probe(monkeypat
 
 
 def test_distinguishes_missing_resolver_answer_no_ping_reply_and_unavailable(monkeypatch):
-    def native(args, _deadline):
-        if args[0] == "getent":
+    def native(command, _args, _deadline):
+        if command == "getent":
             return 2, ""
-        if args[0] == "ip":
+        if command == "ip":
             return 0, '[{"prefsrc":"192.0.2.2"}]'
-        if args[0] == "ping":
+        if command == "ping":
             return 1, "3 packets transmitted, 0 received, 100% packet loss, time 2040ms\n"
         raise ObservationUnavailable
 

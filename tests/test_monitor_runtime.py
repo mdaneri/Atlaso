@@ -47,15 +47,17 @@ def test_network_projects_forwarding_domains_addresses_and_neighbors(monkeypatch
         ],
     }
 
-    def observe(argv, deadline):
+    def observe(command, argv, deadline):
         """Return a fixture for the requested native operation.
 
         Args:
-            argv: Native command and arguments.
+            command: Native executable name.
+            argv: Native command arguments.
             deadline: Monotonic deadline for the read.
         """
-        assert argv[:4] == ["ip", "-N", "-j", "-details"]
-        return 0, json.dumps(data[tuple(argv[4:])])
+        assert command == "ip"
+        assert argv[:3] == ["-N", "-j", "-details"]
+        return 0, json.dumps(data[tuple(argv[3:])])
 
     def helper(_self, *, timeout_seconds):
         """Return the selected address-status outcome.
@@ -119,13 +121,15 @@ def test_partial_native_families_do_not_claim_empty(monkeypatch):
     Args:
         monkeypatch: Fixture that substitutes native observations.
     """
-    def observe(argv, _deadline):
+    def observe(command, argv, _deadline):
         """Return IPv4 data and simulate an IPv6 timeout.
 
         Args:
-            argv: Native command and arguments.
+            command: Native executable name.
+            argv: Native command arguments.
             _deadline: Unused monotonic deadline.
         """
+        assert command == "ip"
         if "-6" in argv:
             raise ObservationUnavailable
         return 0, '[{"dst":"192.0.2.0/24","dev":"eth0"}]'
@@ -146,15 +150,16 @@ def test_route_lookup_passes_only_numeric_destinations_and_validated_selectors(m
     monkeypatch.setattr(runtime, "SystemAdapter", lambda: SystemAdapter(dry_run=False))
     calls = []
 
-    def observe(argv, _deadline, *, input_data):
+    def observe(command, argv, _deadline, *, input_data):
         """Return the result associated with the fixed lookup command.
 
         Args:
-            argv: Native command and arguments.
+            command: Native executable name.
+            argv: Native command arguments.
             _deadline: Unused monotonic deadline.
             input_data: Validated lookup line passed to the command.
         """
-        calls.append((argv, input_data))
+        calls.append(([command, *argv], input_data))
         if input_data == b"route get fibmatch 203.0.113.1\n":
             return 2, "RTNETLINK answers: Network is unreachable"
         table, interface = ("200", "eth2") if b" iif " in input_data else ("100", "eth0")
@@ -215,13 +220,15 @@ def test_listener_capture_requires_socket_and_cgroup_ownership(monkeypatch):
     """
     from atlaso import monitor_native
 
-    def observe(args, _deadline):
+    def observe(command, args, _deadline):
         """Return IPv4 socket records for the ownership check.
 
         Args:
-            args: Native socket inventory command and arguments.
+            command: Native executable name.
+            args: Native socket inventory arguments.
             _deadline: Unused monotonic deadline.
         """
+        assert command == "ss"
         if "-4" in args:
             return 0, (
                 'tcp LISTEN 0 128 127.0.0.1:8000 0.0.0.0:* users:(("python",pid=12,fd=4)) ino:42\n'
