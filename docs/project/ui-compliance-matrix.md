@@ -44,6 +44,7 @@ exemption changes without review. The management routes rendered by the current 
 /ui/management/logs
 /ui/management/monitor
 /ui/management/network-boot
+/ui/management/network-diagnostics
 /ui/management/ntp
 /ui/management/openid-connect
 /ui/management/physical-interfaces
@@ -114,6 +115,7 @@ read-only or unavailable surface has a mutation workflow.
 | --- | --- | --- | --- | --- | --- |
 | `/ui/management/dashboard` — operations command center | Established read-only Dashboard; Tasks/Audit navigation and shared application shell | Initial dashboard snapshot, setup state, attention items, recent activity, and stale/error language are rendered in HTML | Authenticated read; links enter existing permission-checked workflows; no dashboard mutation or service-specific apply | Pass D/N/K/F/Z; V N/A | E1–E5, E7–E8 |
 | `/ui/management/monitor` — health metrics, charts, interfaces, and devices | Established Monitor charts plus read-only Tabulator using the Tasks reference | Initial metrics and truthful interface/device fallback tables; charts degrade to readable metrics and status | Authenticated read-only; no destructive action or apply boundary | Pass D/N/K/F/Z; V N/A | E1–E8 |
+| `/ui/management/network-diagnostics` — Ping, Traceroute, and DNS lookup | Read-only Tabulator using the Tasks reference; explicit diagnostic form using the Monitor Route lookup controls | The form submits without JavaScript and renders the outcome and any result rows in HTML | Requires routing write access and a CSRF-protected submission; checks run immediately without Appliance Apply | Pass inventory, authorization, and rendered-result checks; deployed responsive verification pending | E1–E4 |
 | `/ui/management/appliance-update` plus update-only browser hold — streams, repositories, modules, tasks, global indicator, parent/child maintenance status | Wizard-backed Tabulator plus non-grid settings, existing read-only Tasks Tabulator, and approved custom/other topbar/status surfaces; ESX Storage, Automation, DNS, account-menu topbar, Review appliance changes, Tasks hierarchy, and Appliance Apply live-task status references | Repository/module details, durable per-stream results, exact action reason, source data, positive-only global indicator, and shared Tasks fallback remain readable; during installation nginx supplies a self-contained no-JavaScript, no-store 503 page with bounded ordered task state | Authenticated positive-only indicator and admin write controls before admission; fresh-check install gate; shared deletion confirmation; update-only page requires no session while the control plane is unavailable and exposes no commands, credentials, or detailed errors; maintenance task boundary remains separate from global apply | Pass D/N/K/F/Z/V | E1–E8 |
 | `/ui/management/automation` — schedules, executions, managed scripts | Wizard-backed and read-only Tabulator; Automation Schedules reference | Truthful schedules, executions, and managed-scripts fallback tables added by #120 | Admin writes, shared discard/destructive confirmation, durable worker/task boundary; no direct host mutation | Pass D/N/K/F/Z/V | E1–E8 |
 | `/ui/management/routes-wan` — global settings, static routes, routing permissions, NAT, policies | Non-grid autosave settings plus wizard-backed Tabulator using four shared `resource_wizard(...)` dialogs; DNS settings and ESX Storage references | Three global switches, four paired fallback tables, and rendered feature-aware validation/config preview | Dual routes/WAN permission gate, reviewed add/edit, direct Enabled state, shared confirmations; generated permissions read-only; enforcement only through global `wan` apply | Pass D/N/K/F/Z/V | E1–E8 |
@@ -217,6 +219,7 @@ Page templates covered by the route rows are `appliance_update.html`, `audit.htm
 `automation.html`, `backup_restore.html`, `ca_public.html`, `ca_request_login.html`, `ca_request_portal.html`,
 `ca_requests.html`, `certificate_authority.html`, `dashboard.html`, `depot_browser.html`, `dhcp.html`, `dns.html`,
 `esx_storage.html`, `esxi_pxe.html`, `firewall.html`, `kms.html`, `ldap.html`, `login.html`, `logs.html`, `monitor.html`,
+`network_diagnostics.html`,
 `network_objects.html`, `ntp.html`, `physical_interfaces.html`, `placeholder.html`, `public_service_home.html`, `public_terminal.html`,
 `remote_terminal.html`, `traffic_publishing.html`,
 `routes_wan.html`, `services.html`, `settings.html`, `tasks.html`, `terminal.html`, `users.html`,

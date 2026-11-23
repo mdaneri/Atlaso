@@ -1,6 +1,6 @@
 [project]
 name = "atlaso"
-version = "0.9.523"
+version = "0.9.524"
 description = "Atlaso supports POC, lab, and test environments by simplifying deployment, maintenance, and validation."
 readme = "README.md"
 license = "MIT"
@@ -130,6 +130,7 @@ files = [
   "atlaso/app/routing_permission_schemas.py",
   "atlaso/route_domains.py",
   "atlaso/monitor_native.py",
+  "atlaso/app/services/network_diagnostics.py",
   "atlaso/app/services/monitor_runtime.py",
   "atlaso/app/services/monitor_update_comparison.py",
   "scripts/interop/routing_overlap_guest.py",

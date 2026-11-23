@@ -87,6 +87,8 @@ REQUIRED_RUNTIME_PACKAGES = (
     "tdnf",
     "python3",
     "iproute2",
+    "iputils",
+    "traceroute",
     "powershell",
     "ntpsec",
     "python3-ntp",

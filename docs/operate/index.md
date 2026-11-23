@@ -14,6 +14,7 @@ Use these guides for day-to-day appliance work:
 - [Primary navigation](navigation.md) — collapse sidebar sections while keeping the current page and pending changes
   available.
 - [Monitor](monitor.md) — runtime CPU, memory, network, disk-activity, and interface health.
+- [Network Diagnostics](network-diagnostics.md) — run Ping, Traceroute, and DNS lookup from the appliance.
 - [Operational logs](logs.md) and [Audit log](audit-log.md) — correlate runtime evidence and operator actions.
 - [Tasks](tasks.md) — follow submitted operations to a verified terminal result.
 - [Appliance Apply](appliance-apply.md) — review and submit selected desired-state changes.

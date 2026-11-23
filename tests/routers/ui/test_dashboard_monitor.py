@@ -17,6 +17,8 @@ def test_dashboard_monitor_router_owns_exact_transport_set():
         ("/ui/management/monitor/data", ("GET",), "monitor_data"),
         ("/ui/management/monitor/network/data", ("GET",), "monitor_network_data"),
         ("/ui/management/monitor/network/lookup", ("GET",), "monitor_network_lookup"),
+        ("/ui/management/network-diagnostics", ("GET",), "network_diagnostics_page"),
+        ("/ui/management/network-diagnostics", ("POST",), "network_diagnostics_run"),
         ("/ui/management/monitor/network/updates/{job_id}", ("GET",), "monitor_update_data"),
         ("/ui/management/monitor/services/data", ("GET",), "monitor_services_data"),
         ("/ui/management/server-time", ("GET",), "server_time"),
@@ -122,5 +124,63 @@ def test_runtime_monitor_permissions_and_direct_links(client):
             assert observed.headers["cache-control"] == "no-store"
         assert client.get(root + "/network/updates/job_missing").status_code == 404
         assert client.get(root + "/network/lookup?destination=example.org").status_code == 422
+    finally:
+        client.app.dependency_overrides.pop(require_session_identity, None)
+
+
+def test_network_diagnostics_require_operator_and_csrf(client, monkeypatch):
+    """Only an authorized explicit submission can send a probe.
+
+    Args:
+        client: Test client for the management interface.
+        monkeypatch: Fixture that substitutes the local addresses and probe result.
+    """
+    from atlaso.app.security import Identity, require_session_identity
+    from atlaso.app.services import network_diagnostics as diagnostics
+
+    calls = []
+
+    def probe(*args):
+        """Capture the submitted probe and return a projected result.
+
+        Args:
+            *args: Diagnostic, destination, source address, and family.
+        """
+        calls.append(args)
+        return diagnostics.Result(
+            "reply", "Destination reached.", "2001:db8::8", "2001:db8::2",
+            [diagnostics.ResultRow(1, "2001:db8::8", "0.25", "Reply")],
+        )
+
+    monkeypatch.setattr(diagnostics, "run_check", probe)
+    monkeypatch.setattr(diagnostics, "local_sources", lambda: [diagnostics.Source("2001:db8::2", "eth0")])
+    path = "/ui/management/network-diagnostics"
+    payload = {"check": "traceroute", "target": "2001:db8::8", "source": "2001:db8::2", "family": "6"}
+    assert client.get(path, follow_redirects=False).status_code == 303
+    assert client.post(path, data={**payload, "csrf": "invalid"}, follow_redirects=False).status_code == 303
+    login(client)
+
+    identity = Identity("probe-user", "viewer", {"read:monitoring", "read:routes"})
+    client.app.dependency_overrides[require_session_identity] = lambda: identity
+    try:
+        assert client.get(path).status_code == 403
+        assert client.post(path, data={**payload, "csrf": "invalid"}).status_code == 403
+        monitor = client.get("/ui/management/monitor?view=network")
+        assert path not in monitor.text
+        identity.scopes.add("write:routes")
+        form = client.get(path)
+        assert form.status_code == 200
+        assert form.headers["cache-control"] == "no-store"
+        assert "2001:db8::2 (eth0)" in form.text
+        csrf = form.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+        assert client.post(path, data={**payload, "csrf": "invalid"}).status_code == 403
+        assert calls == []
+        result = client.post(path, data={**payload, "csrf": csrf})
+        assert result.status_code == 200
+        assert result.headers["cache-control"] == "no-store"
+        assert "Destination reached." in result.text
+        assert "<code>2001:db8::2</code>" in result.text
+        assert "0.25" in result.text
+        assert calls == [("traceroute", "2001:db8::8", "2001:db8::2", "6")]
     finally:
         client.app.dependency_overrides.pop(require_session_identity, None)

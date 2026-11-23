@@ -70,8 +70,10 @@ The Atlaso deployment source comes from an immutable Git archive at the selected
 and inventories the signed software release, its exact application wheel, the locked CPython wheelhouse, shared
 provisioning inputs, PowerCLI modules, trust material, notices, firmware, and the signed offline Photon RPM repository.
 Dependency closure is resolved during authorized ISO preparation. Installation uses only the embedded repository.
-Shared provisioning explicitly installs `iproute2` for the console and diagnostics, as required by the final
-package-state verifier. The complete captured RPM closure must include its dependencies.
+Shared provisioning explicitly installs `iproute2`, `iputils`, and `traceroute` for the console and network
+diagnostics, as required by the final package-state verifier. The complete captured RPM closure includes their
+dependencies. The hosted media-free boot check runs Ping and Traceroute against IPv4 and IPv6 loopback and resolves
+`localhost` as the Atlaso service account.
 The base package selection also requires Photon's signed `iana-etc` package, which supplies `/etc/services`
 and `/etc/protocols`. NTPsec's local verification uses these databases to resolve standard service and protocol
 names. A capture missing this package fails admission; regenerate it through the canonical native capture workflow.
