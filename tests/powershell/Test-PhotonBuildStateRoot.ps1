@@ -266,6 +266,92 @@ if ($OriginalFixtureIdentity) {
 }
 Invoke-PhotonBuildStateFixtureOwner -Operation validate -Path $fixtureRoot
 try {
+    # Use a synthetic empty profile so a missing override would write only to the fixture.
+    $imageModulePath = Join-Path $resolvedRepositoryRoot 'scripts\windows\common\Atlaso.PhotonImage.psm1'
+    $imageModule = Import-Module $imageModulePath -Force -PassThru
+    & $imageModule {
+        param($fixtureRoot, $resolvedRepositoryRoot)
+
+        $packerWork = Join-Path $fixtureRoot 'image-build-state\sensitive-build\packer-work'
+        $profilePath = Join-Path $fixtureRoot 'empty-appdata'
+        $defaultPlugins = Join-Path $profilePath 'packer.d\plugins'
+        $pluginRelativePath = 'github.com\vmware\vmware\packer-plugin-vmware_v2.1.5_x5.0_windows_amd64.exe'
+        $expectedPlugin = Join-Path $packerWork "plugins\$pluginRelativePath"
+        $phase = [System.Collections.Generic.List[string]]::new()
+        $callerEnvironment = @{
+            APPDATA            = $profilePath
+            PACKER_PLUGIN_PATH = $null
+            PACKER_CACHE_DIR   = (Join-Path $fixtureRoot 'caller-cache')
+        }
+        $originalEnvironment = @{}
+        $originalLocation = (Get-Location).Path
+
+        <#
+        .SYNOPSIS
+        Simulate Packer init and validate against an empty Windows profile.
+        #>
+        function packer {
+            $phase.Add($args[0])
+            if ($args[0] -ceq 'init') {
+                $pluginRoot = if ($env:PACKER_PLUGIN_PATH) { $env:PACKER_PLUGIN_PATH } else { $defaultPlugins }
+                $pluginPath = Join-Path $pluginRoot $pluginRelativePath
+                [void][IO.Directory]::CreateDirectory((Split-Path -Parent $pluginPath))
+                [IO.File]::WriteAllText($pluginPath, 'synthetic VMware plugin')
+                [IO.File]::WriteAllText("${pluginPath}_SHA256SUM", 'synthetic checksum')
+            }
+            elseif ($env:PACKER_PLUGIN_PATH -cne (Join-Path $packerWork 'plugins') -or
+                $env:PACKER_CACHE_DIR -cne (Join-Path $packerWork 'cache')) {
+                throw 'Packer validation did not inherit the isolated paths.'
+            }
+            $global:LASTEXITCODE = 0
+        }
+
+        <#
+        .SYNOPSIS
+        Simulate the exact-version verifier observing the plugin selected by Packer.
+        #>
+        function python {
+            $phase.Add('verify')
+            if ($env:PACKER_PLUGIN_PATH -cne (Join-Path $packerWork 'plugins') -or
+                $env:PACKER_CACHE_DIR -cne (Join-Path $packerWork 'cache') -or
+                -not (Test-Path -LiteralPath $expectedPlugin -PathType Leaf) -or
+                -not (Test-Path -LiteralPath "${expectedPlugin}_SHA256SUM" -PathType Leaf)) {
+                throw 'Exact VMware plugin verification did not see the isolated installation.'
+            }
+            $global:LASTEXITCODE = 0
+        }
+
+        try {
+            [void][IO.Directory]::CreateDirectory($profilePath)
+            [void][IO.Directory]::CreateDirectory($packerWork)
+            foreach ($name in $callerEnvironment.Keys) {
+                $originalEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+                Set-Item -LiteralPath "Env:$name" -Value $callerEnvironment[$name]
+            }
+            $validateArgs = @{
+                PackerDirectory            = $packerWork
+                ResolvedPackerTemplatePath = (Join-Path $resolvedRepositoryRoot 'image\vmware-workstation\atlaso-photon.pkr.hcl')
+                PackerArgs                 = @('validate')
+                VarFilePath                = (Join-Path $packerWork 'fixture.pkrvars.hcl')
+                ValidateOnly               = $true
+            }
+            Invoke-AtlasoPhotonPacker @validateArgs
+            if (($phase -join ',') -cne 'init,verify,validate' -or
+                @(Get-ChildItem -LiteralPath $profilePath -Force).Count -ne 0 -or
+                (Test-Path -LiteralPath $callerEnvironment.PACKER_CACHE_DIR) -or
+                $null -ne $env:PACKER_PLUGIN_PATH -or
+                $env:PACKER_CACHE_DIR -cne $callerEnvironment.PACKER_CACHE_DIR -or
+                (Get-Location).Path -cne $originalLocation) {
+                throw 'Packer did not isolate the empty-profile build or restore caller state.'
+            }
+        }
+        finally {
+            foreach ($name in $originalEnvironment.Keys) {
+                Set-Item -LiteralPath "Env:$name" -Value $originalEnvironment[$name]
+            }
+        }
+    } $fixtureRoot $resolvedRepositoryRoot
+
     $selectiveRepository = Join-Path $fixtureRoot 'selective-ignore-repository'
     [void][System.IO.Directory]::CreateDirectory($selectiveRepository)
     & git -C $selectiveRepository init --quiet
