@@ -20525,7 +20525,9 @@ function updateApplianceApplySelection() {
   if (modal.dataset.serverPlanAvailable === "true") {
     const selectedCheckboxes = Array.from(modal.querySelectorAll("[data-appliance-apply-review-checkbox]:checked"));
     const changed = selectedCheckboxes.filter((checkbox) => checkbox.dataset.changed === "true").length;
-    const required = selectedCheckboxes.filter((checkbox) => checkbox.dataset.changed !== "true").length;
+    const required = selectedCheckboxes.filter((checkbox) =>
+      checkbox.dataset.changed !== "true" && checkbox.dataset.requiredDependency === "true"
+    ).length;
     let explicit = 0;
     try {
       const requested = JSON.parse(modal.dataset.requestedUnits || "[]");
@@ -20548,9 +20550,11 @@ function updateApplianceApplySelection() {
       } else if (selected) {
         const changedLabel = `${changed} changed component${changed === 1 ? "" : "s"}`;
         const requiredLabel = `${required} required dependenc${required === 1 ? "y" : "ies"}`;
-        selectionSummary.textContent = `${changedLabel} + ${requiredLabel} = ${selected} components to process · ${explicit} explicitly selected · one appliance task${planError ? ` · ${planError}` : ""}`;
+        const unchanged = selected - changed - required;
+        const unchangedLabel = unchanged ? ` + ${unchanged} unchanged selection${unchanged === 1 ? "" : "s"}` : "";
+        selectionSummary.textContent = `${changedLabel}${unchangedLabel} + ${requiredLabel} = ${selected} components to process · ${explicit} explicitly selected · one appliance task${planError ? ` · ${planError}` : ""}`;
       } else {
-        selectionSummary.textContent = planError || "0 components selected · select at least one changed component";
+        selectionSummary.textContent = planError || "0 components selected · select at least one component";
       }
       if (incompleteFormatConfirmations && !pending && !planError) {
         selectionSummary.textContent += " · complete disk format confirmation";
@@ -20777,7 +20781,7 @@ async function openApplianceApplyReview() {
     }
     if (elements.subtitle instanceof HTMLElement) {
       elements.subtitle.textContent = initialApplyRequired
-        ? "Review the validated initial desired state, then submit the first appliance task. Nothing changes on the host until submission."
+        ? "Review any remaining setup and pending changes before submitting an appliance task."
         : "Select valid components, inspect their rendered differences, then submit one appliance task.";
     }
     if (elements.reviewList instanceof HTMLElement) {
@@ -20786,7 +20790,7 @@ async function openApplianceApplyReview() {
         const empty = document.createElement("div");
         empty.className = "empty-state";
         empty.innerHTML = initialApplyRequired
-          ? "<h2>Initial setup is not ready</h2><p class=\"muted\">Resolve desired-state validation before submitting the first appliance task.</p>"
+          ? "<h2>Initial setup is not ready</h2><p class=\"muted\">Resolve desired-state validation before submitting an appliance task.</p>"
           : "<h2>No pending appliance changes</h2><p class=\"muted\">All apply units match the last successful baseline.</p>";
         elements.reviewList.replaceChildren(empty);
       }

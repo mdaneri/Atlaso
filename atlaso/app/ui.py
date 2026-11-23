@@ -13284,6 +13284,68 @@ def service_runtime_status(db: Session, service_id: str) -> dict[str, Any]:
     }
 
 
+def unfinished_initial_appliance_apply_units(db: Session, unit_ids: set[str]) -> set[str]:
+    """Return initial components that still need an applied result.
+
+    Args:
+        db: Active database session.
+        unit_ids: Components currently supported by the appliance.
+    """
+    completed = db.execute(
+        select(Job.id).where(
+            Job.type == "appliance-apply",
+            Job.status == JobStatus.SUCCEEDED.value,
+            func.coalesce(Job.result, "").not_like('%"initial_setup_partial": true%'),
+        ).limit(1)
+    ).first()
+    if completed is not None:
+        # Older appliances used the first successful task to finish setup.
+        return set()
+
+    applied_jobs: dict[str, str] = {}
+    legacy_apply_times: dict[str, datetime] = {}
+    baselines = load_appliance_apply_baselines(db)
+    for unit_id in unit_ids:
+        baseline = baselines.get(unit_id, {})
+        if "applied_job_id" in baseline:
+            job_id = baseline["applied_job_id"]
+            if isinstance(job_id, str) and job_id:
+                applied_jobs[unit_id] = job_id
+            continue
+        applied_at = baseline.get("applied_at")
+        if isinstance(applied_at, str):
+            # Baselines written before provenance was recorded retain the
+            # historical comparison against the successful task's creation.
+            try:
+                legacy_apply_times[unit_id] = ensure_aware(datetime.fromisoformat(applied_at))
+            except ValueError:
+                continue
+
+    unfinished = unit_ids.copy()
+    if not applied_jobs and not legacy_apply_times:
+        return unfinished
+    successful_steps = db.execute(
+        select(JobStep.component_key, Job.id, Job.created_at)
+        .join(Job, JobStep.job_id == Job.id)
+        .where(
+            Job.type == "appliance-apply",
+            Job.status.in_([JobStatus.SUCCEEDED.value, JobStatus.FAILED.value, JobStatus.CANCELLED.value]),
+            JobStep.status == JobStatus.SUCCEEDED.value,
+            or_(
+                JobStep.component_key.in_(legacy_apply_times),
+                Job.id.in_(set(applied_jobs.values())),
+            ),
+        )
+    )
+    for unit_id, job_id, created_at in successful_steps:
+        legacy_applied_at = legacy_apply_times.get(unit_id)
+        if applied_jobs.get(unit_id) == job_id or (
+            legacy_applied_at is not None and legacy_applied_at >= ensure_aware(created_at)
+        ):
+            unfinished.discard(unit_id)
+    return unfinished
+
+
 def appliance_apply_context(db: Session) -> dict[str, Any]:
     """Return appliance apply context.
 
@@ -13293,24 +13355,17 @@ def appliance_apply_context(db: Session) -> dict[str, Any]:
     units = appliance_apply_units(db)
     submitted_ids = active_appliance_apply_submitted_unit_ids(db)
     changed_units = [unit for unit in units if unit["changed"] and unit["id"] not in submitted_ids]
-    initial_apply_required = (
-        db.execute(
-            select(Job.id)
-            .where(Job.type == "appliance-apply", Job.status == JobStatus.SUCCEEDED.value)
-            .limit(1)
-        ).first()
-        is None
-    )
-    review_units = (
-        [unit for unit in units if unit["id"] not in submitted_ids]
-        if initial_apply_required
-        else changed_units
-    )
     unit_map = {unit["id"]: unit for unit in units}
+    unfinished_initial_units = unfinished_initial_appliance_apply_units(db, set(unit_map))
+    initial_apply_required = bool(unfinished_initial_units)
+    review_units = [
+        unit for unit in units
+        if unit["id"] not in submitted_ids and (unit["changed"] or unit["id"] in unfinished_initial_units)
+    ]
     dns_unit = unit_map.get("dnsmasq", {})
     settings_unit = unit_map.get("appliance_settings", {})
     network_unit = unit_map.get("network", {})
-    if (not initial_apply_required and dns_unit.get("changed")
+    if (dns_unit.get("changed") and "network" not in unfinished_initial_units
             and not network_unit.get("changed") and "network" not in submitted_ids
             and "dnsmasq" not in submitted_ids and network_generated_dns_unit(db, unit_map) is not None):
         # Dynamic address drift does not alter saved Network intent, but DNS
@@ -13323,7 +13378,7 @@ def appliance_apply_context(db: Session) -> dict[str, Any]:
         }, *review_units]
     dns_settings = dns_unit.get("context", {}).get("dns_settings")
     if (
-        (initial_apply_required or dns_unit.get("changed"))
+        ("dnsmasq" in unfinished_initial_units or dns_unit.get("changed"))
         and getattr(dns_settings, "enabled", False)
         and not applied_resolver_uses_local_dns(load_appliance_apply_baselines(db).get("appliance_settings"))
         and "dnsmasq" not in submitted_ids
@@ -13333,7 +13388,7 @@ def appliance_apply_context(db: Session) -> dict[str, Any]:
             unit for unit in appliance_apply_units(db, reconcile=False, applying_dns=True)
             if unit["id"] == "appliance_settings"
         )
-        if not initial_apply_required and not settings_unit.get("changed"):
+        if "appliance_settings" not in unfinished_initial_units and not settings_unit.get("changed"):
             projected["requires_dns_selection"] = True
             projected["review_notes"] = ["Selected with DNS to activate the host resolver"]
             projected["summary"] = [*projected["summary"], *projected["review_notes"]]
@@ -13367,6 +13422,7 @@ def appliance_apply_context(db: Session) -> dict[str, Any]:
         "changed_apply_unit_count": len(changed_units),
         "submitted_apply_unit_ids": submitted_ids,
         "initial_apply_required": initial_apply_required,
+        "unfinished_initial_units": unfinished_initial_units,
     }
 
 
@@ -15824,7 +15880,7 @@ def execute_traffic_publishing_pair(
         if succeeded:
             # Never refresh desired state here: edits made during native publication
             # belong to the next Apply, not to this pair's committed baselines.
-            update_appliance_apply_baselines(db, units, set(by_id), dry_run=adapter.dry_run)
+            update_appliance_apply_baselines(db, units, set(by_id), dry_run=adapter.dry_run, job_id=job.id)
             if has_wan and not adapter.dry_run:
                 synchronize_routing_service_runtime(
                     db, routing_enabled=by_id["wan"]["context"]["routes_wan_settings"].routing_enabled,
@@ -16974,7 +17030,12 @@ def project_selected_handoff_listener_units(
 
 
 def update_appliance_apply_baselines(
-    db: Session, units: list[dict[str, Any]], selected_ids: set[str], *, dry_run: bool = False,
+    db: Session,
+    units: list[dict[str, Any]],
+    selected_ids: set[str],
+    *,
+    dry_run: bool = False,
+    job_id: str | None = None,
 ) -> None:
     """Update appliance apply baselines.
 
@@ -16983,6 +17044,7 @@ def update_appliance_apply_baselines(
         units: Units supplied by the caller.
         selected_ids: Selected ids supplied by the caller.
         dry_run: Simulated execution, which cannot advance native appliance baselines.
+        job_id: Apply task whose execution produced these baselines, if any.
     """
     if dry_run and get_settings().environment == "appliance":
         return
@@ -17002,6 +17064,7 @@ def update_appliance_apply_baselines(
             "config_preview": unit["config_preview"],
             "summary": unit["summary"],
             "applied_at": applied_at,
+            "applied_job_id": job_id,
         }
         if unit["id"] in {"ntpd", "ldap", "kms", "vcf_offline_depot"}:
             baseline["applied_listener_interface"] = str(unit.get("applied_listener_interface") or "")
@@ -18683,6 +18746,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                             applied,
                             applied_ids,
                             dry_run=bool(group_result.get("dry_run")),
+                            job_id=job.id,
                         )
                         if not group_result.get("dry_run") and group_result.get("listener_baselines"):
                             updated_baselines = load_appliance_apply_baselines(db)
@@ -18909,7 +18973,9 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                     # The helper's restart timer is running. Persist the exact executed
                     # baseline with the transition before releasing publication admission.
                     if result["success"]:
-                        update_appliance_apply_baselines(db, [unit], {"appliance_settings"}, dry_run=bool(result.get("dry_run")))
+                        update_appliance_apply_baselines(
+                            db, [unit], {"appliance_settings"}, dry_run=bool(result.get("dry_run")), job_id=job.id,
+                        )
                         settings_baseline_recorded = True
                     db.commit()
                 prune_network_boot_media = False
@@ -18985,12 +19051,16 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         if unit["id"] == "ca" and not result.get("dry_run"):
                             guard_ca_apply_publication(db, applied_unit)
                         if not settings_baseline_recorded:
-                            update_appliance_apply_baselines(db, [applied_unit], {unit["id"]}, dry_run=bool(result.get("dry_run")))
+                            update_appliance_apply_baselines(
+                                db, [applied_unit], {unit["id"]}, dry_run=bool(result.get("dry_run")), job_id=job.id,
+                            )
                         ca_reload_units.discard(unit["id"])
                         if deferred_ca_baseline is not None and not ca_reload_units:
                             if not result.get("dry_run"):
                                 guard_ca_apply_publication(db, deferred_ca_baseline)
-                            update_appliance_apply_baselines(db, [deferred_ca_baseline], {"ca"}, dry_run=bool(result.get("dry_run")))
+                            update_appliance_apply_baselines(
+                                db, [deferred_ca_baseline], {"ca"}, dry_run=bool(result.get("dry_run")), job_id=job.id,
+                            )
                             deferred_ca_baseline = None
                 else:
                     failed = True
@@ -20091,9 +20161,9 @@ def appliance_apply_review_plan(db: Session, selected_units: list[str] | None = 
     # Explicit clients may repair runtime drift by reviewing an unchanged unit.
     selectable = {unit["id"] for unit in context["apply_units"]}
     independently_changed = {unit["id"] for unit in context["changed_apply_units"]}
+    default_roots = independently_changed | context["unfinished_initial_units"]
     requested = (
-        {unit["id"] for unit in review_units if unit["valid"]
-         and (context["initial_apply_required"] or unit["id"] in independently_changed)}
+        {unit["id"] for unit in review_units if unit["valid"] and unit["id"] in default_roots}
         if selected_units is None else {unit_id for unit_id in selected_units if unit_id in selectable}
     )
     try:
@@ -20257,7 +20327,16 @@ def _submit_appliance_apply(
                 detail = f"Formatting {volume['name']} requires the exact confirmation {expected!r}."
                 return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(detail, status_code=422, media_type="text/plain")
 
+        unfinished_initial_units = unfinished_initial_appliance_apply_units(db, {unit["id"] for unit in units})
+        # A voluntary subset must keep offering the valid setup units it
+        # omitted. Invalid units retain the normal desired-state review rules.
+        deferred_initial_setup = any(
+            unit["id"] in unfinished_initial_units and unit["id"] not in selected_ids
+            and not unit["validation_errors"]
+            for unit in units
+        )
         job_result = {
+            "initial_setup_partial": deferred_initial_setup,
             "selected_units": [unit["id"] for unit in selected_ordered_units],
             "generated_dns_only": generated_dns_only,
             "dns_resolver_activation": dns_resolver_activation,
