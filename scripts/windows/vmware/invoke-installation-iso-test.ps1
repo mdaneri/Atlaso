@@ -916,7 +916,9 @@ function Invoke-InstallationCustomLayout {
             $next = if ($index + 1 -lt $partitions.Count) { "`n" } else { "`eOC`n" }
             Send-InstallationConsoleText -Pipe $Pipe -Text ("`eOBext4`eOB" + $definition.Mount + "`n" + $next)
         }
-        Keep-InstallationServiceStorage -Pipe $Pipe -Deadline $Deadline -CursorState $CursorState -ExpectedLayoutKind 'CombinedCustom'
+        $expectedStorageKind = if ($InitialRootAssignment) { 'CombinedCustom' } else { 'Legacy' }
+        Keep-InstallationServiceStorage -Pipe $Pipe -Deadline $Deadline -CursorState $CursorState `
+            -ExpectedLayoutKind $expectedStorageKind
         $review = if ($MultiDisk) { 'MultiReview' } else { 'Review' }
         Wait-InstallationCustomPublicState @common -Kind $review -ExpectedDisk $target.DiskPath -ExpectedDataDisk $dataDisk
         if ($MultiDisk) { Write-Host 'Custom multi-disk native destructive review admitted before consent.' }
@@ -1023,7 +1025,7 @@ Public terminal-parser state shared with the canonical consumer.
 .PARAMETER InitialLayout
 Already-admitted current storage screen; avoids rereading a consumed first frame.
 .PARAMETER ExpectedLayoutKind
-Require a specific combined screen mode before advancing service rows.
+Require the exact combined or legacy storage state selected by the admitted entry path.
 #>
 function Keep-InstallationServiceStorage {
     param([IO.Pipes.NamedPipeServerStream]$Pipe, [DateTimeOffset]$Deadline, [hashtable]$CursorState,
@@ -1034,7 +1036,9 @@ function Keep-InstallationServiceStorage {
             -ReadBootProgress -CursorState $CursorState -ReadStorageLayout
     }
     if ($layout -is [pscustomobject]) { $layout = $layout.Kind }
-    if ($ExpectedLayoutKind -and $layout -cne $ExpectedLayoutKind) { throw 'The combined storage screen mode differs from the required fixture mode.' }
+    if ($ExpectedLayoutKind -and $layout -cne $ExpectedLayoutKind) {
+        throw 'The storage screen differs from the exact state required by the admitted entry path.'
+    }
     if ($layout -in @('CombinedAuto', 'CombinedCustom', 'Combined')) {
         # Move through both service roles and retain their unchanged shared defaults.
         Send-InstallationConsoleText -Pipe $Pipe -Text "`eOC`eOC`n"

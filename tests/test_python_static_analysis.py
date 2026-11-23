@@ -138,6 +138,7 @@ def test_static_analysis_configuration_is_pinned_and_scoped() -> None:
         "follow_imports": "silent",
         "files": [
             "atlaso/app/services/vault_service_types.py",
+            "atlaso/app/services/vcf_service_storage.py",
             "atlaso/app/services/appliance_hardware.py",
             "atlaso/app/services/guest_tools.py",
             "atlaso/local_user_password_policy.py",

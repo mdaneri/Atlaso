@@ -250,7 +250,7 @@ function Get-InstallationVmFunctionText {
     Invoke-InstallationCustomLayout -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -CursorState @{} `
         -InitialDiskOptions $legacyOptions
     $expected = @("keys:`eOA`eOA`eOD`n", 'custom:Editor', "keys:`n", 'custom:Disk', "keys:`eOA`n", 'custom:Form',
-        "keys:`eOBext4`eOB/`n`eOC`n", 'keep:CombinedCustom', 'custom:Review:/dev/sda')
+        "keys:`eOBext4`eOB/`n`eOC`n", 'keep:Legacy', 'custom:Review:/dev/sda')
     Assert-InstallationVmCondition (($events -join '|') -ceq ($expected -join '|')) `
         'Published disk rows must retain their exact Custom target and per-partition choices.'
 }
@@ -334,14 +334,33 @@ function Get-InstallationVmFunctionText {
     }
     $script:InstallationStorageDeadline = [DateTimeOffset]::UtcNow.AddSeconds(5)
     $script:InstallationStorageLayoutKind = 'Legacy'
-    Keep-InstallationServiceStorage -Deadline $script:InstallationStorageDeadline -CursorState @{}
+    Keep-InstallationServiceStorage -Deadline $script:InstallationStorageDeadline -CursorState @{} -ExpectedLayoutKind 'Legacy'
     Assert-InstallationVmCondition (($events -join '|') -ceq 'layout|legacy-keep|screen:VCFDT depot storage|legacy-keep') `
         'Published media must retain both sequential service-storage defaults before erasure review.'
     $events.Clear()
+    $script:InstallationStorageLayoutKind = 'Legacy'
+    $legacyMismatchRefused = $false
+    try {
+        Keep-InstallationServiceStorage -Deadline $script:InstallationStorageDeadline -CursorState @{} `
+            -ExpectedLayoutKind 'CombinedCustom'
+    } catch { $legacyMismatchRefused = $_.Exception.Message -ceq 'The storage screen differs from the exact state required by the admitted entry path.' }
+    Assert-InstallationVmCondition ($legacyMismatchRefused -and ($events -join '|') -ceq 'layout') `
+        'A legacy entry must not satisfy a CombinedCustom storage guard.'
+    $events.Clear()
     $script:InstallationStorageLayoutKind = 'CombinedAuto'
-    Keep-InstallationServiceStorage -Deadline $script:InstallationStorageDeadline -CursorState @{}
+    $combinedMismatchRefused = $false
+    try {
+        Keep-InstallationServiceStorage -Deadline $script:InstallationStorageDeadline -CursorState @{} `
+            -ExpectedLayoutKind 'CombinedCustom'
+    } catch { $combinedMismatchRefused = $_.Exception.Message -ceq 'The storage screen differs from the exact state required by the admitted entry path.' }
+    Assert-InstallationVmCondition ($combinedMismatchRefused -and ($events -join '|') -ceq 'layout') `
+        'The CombinedCustom guard must still refuse an Auto combined page before advancing.'
+    $events.Clear()
+    $script:InstallationStorageLayoutKind = 'CombinedCustom'
+    Keep-InstallationServiceStorage -Deadline $script:InstallationStorageDeadline -CursorState @{} `
+        -ExpectedLayoutKind 'CombinedCustom'
     Assert-InstallationVmCondition (($events -join '|') -ceq 'layout|combined-keep') `
-        'Combined storage must advance through both rows once and preserve their shared defaults before erasure review.'
+        'Combined Custom storage must advance through both rows only after the mode guard passes.'
 }
 
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'ConvertTo-InstallationVmxString')))

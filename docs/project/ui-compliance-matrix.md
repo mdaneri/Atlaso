@@ -231,6 +231,7 @@ non-grid DNS settings reference, and optional schedules reuse the Automation Sch
 Shared-only templates are `base.html`, `public_portal_base.html`, `partials/appliance_apply_status.html`,
 `partials/brand_mark.html`, `partials/config_preview_action.html`, `partials/resource_wizard.html`,
 `partials/monitor_runtime.html`, `partials/port_forwarding.html`, `partials/settings_hardware.html`,
+`partials/vcf_service_storage_settings.html`,
 `partials/task_grid.html`, `partials/task_modals.html`, `partials/terminal_panel.html`, `partials/vcf_ldap_modal.html`,
 `partials/vcf_backup_modal.html`, `partials/vcf_backup_operations.html`, `partials/vcf_backup_status_modal.html`,
 `partials/vcf_sddc_deploy_modal.html`, `partials/vcf_sddc_upload_modal.html`, `partials/vcf_target_depot_modal.html`, `partials/vcf_trust_modal.html`,
