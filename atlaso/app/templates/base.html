@@ -61,6 +61,7 @@
               ("VCF Backups", management_ui_path("/vcf-backups"), "read:vcf-backups")
             ]),
             ("operations", "Operations", [
+              ("Network Diagnostics", management_ui_path("/network-diagnostics"), "write:routes"),
               ("Web terminal", management_ui_path("/terminal"), "admin:all"),
               ("Services", management_ui_path("/services"), "read:services"),
               ("Tasks", management_ui_path("/tasks"), "read:dashboard"),
