@@ -1132,6 +1132,92 @@ function Assert-AtlasoSensitiveBuildPath {
 
 <#
 .SYNOPSIS
+Run Packer and its exact plugin check within the invocation-owned workspace.
+.PARAMETER PackerDirectory
+Admitted disposable working directory for Packer and its local state.
+.PARAMETER ResolvedPackerTemplatePath
+Exact admitted Packer template.
+.PARAMETER PackerArgs
+Arguments for Packer validation or build.
+.PARAMETER VarFilePath
+Exact generated variables file to revalidate before use.
+.PARAMETER SensitivePathValidator
+Optional provider callback that revalidates workspace and variables-file ancestry.
+.PARAMETER PackerBuildInvoker
+Optional provider-specific monitored Packer build callback.
+.PARAMETER ValidateOnly
+Run validation instead of a monitored build.
+#>
+function Invoke-AtlasoPhotonPacker {
+    param(
+        [Parameter(Mandatory = $true)][string]$PackerDirectory,
+        [Parameter(Mandatory = $true)][string]$ResolvedPackerTemplatePath,
+        [Parameter(Mandatory = $true)][string[]]$PackerArgs,
+        [Parameter(Mandatory = $true)][string]$VarFilePath,
+        [scriptblock]$SensitivePathValidator,
+        [scriptblock]$PackerBuildInvoker,
+        [switch]$ValidateOnly
+    )
+
+    $pluginDirectory = Join-Path $PackerDirectory 'plugins'
+    $cacheDirectory = Join-Path $PackerDirectory 'cache'
+    $tempDirectory = Join-Path $PackerDirectory 'tmp'
+    foreach ($directory in @($pluginDirectory, $cacheDirectory, $tempDirectory)) {
+        Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $directory
+        [void][System.IO.Directory]::CreateDirectory($directory)
+        Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $directory
+    }
+
+    # The exact-version check launches Packer again, and the monitor launches it
+    # in a child process. Both must inherit the same search path as init.
+    $packerEnvironment = @{
+        PACKER_PLUGIN_PATH = $pluginDirectory
+        PACKER_CACHE_DIR   = $cacheDirectory
+        TMP                = $tempDirectory
+        TEMP               = $tempDirectory
+        CHECKPOINT_DISABLE = '1'
+    }
+    $previousEnvironment = @{}
+    Push-Location -LiteralPath $PackerDirectory
+    try {
+        foreach ($name in $packerEnvironment.Keys) {
+            $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+            Set-Item -LiteralPath "Env:$name" -Value $packerEnvironment[$name]
+        }
+
+        & packer init $resolvedPackerTemplatePath
+        if ($LASTEXITCODE -ne 0) {
+            throw "packer init failed with exit code $LASTEXITCODE."
+        }
+        $pluginCheckScript = Join-Path $PSScriptRoot '..\..\check_packer_plugins.py'
+        & python $pluginCheckScript `
+            --packer (Get-Command packer -ErrorAction Stop).Source `
+            $resolvedPackerTemplatePath
+        if ($LASTEXITCODE -ne 0) {
+            throw "Exact Packer plugin verification failed with exit code $LASTEXITCODE."
+        }
+        Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $VarFilePath
+        if (-not $ValidateOnly -and $null -ne $PackerBuildInvoker) {
+            & $PackerBuildInvoker $PackerArgs $PackerDirectory
+        }
+        else {
+            & packer @packerArgs
+            if ($LASTEXITCODE -ne 0) {
+                $operation = if ($ValidateOnly) { 'validate' } else { 'build' }
+                throw "packer $operation failed with exit code $LASTEXITCODE."
+            }
+        }
+    }
+    finally {
+        foreach ($name in $previousEnvironment.Keys) {
+            Set-Item -LiteralPath "Env:$name" -Value $previousEnvironment[$name]
+        }
+        Pop-Location
+    }
+}
+
+<#
+.SYNOPSIS
 Build or validate a supported Atlaso Photon image with Packer.
 .PARAMETER IsoUrl
 Pinned Photon source URL or path.
@@ -1427,34 +1513,14 @@ function Invoke-AtlasoPhotonImageBuild {
     }
     $packerArgs += @('-var-file', $varFilePath, $resolvedPackerTemplatePath)
 
-            Push-Location $packerDir
-            try {
-                & packer init $resolvedPackerTemplatePath
-                if ($LASTEXITCODE -ne 0) {
-                    throw "packer init failed with exit code $LASTEXITCODE."
-                }
-                $pluginCheckScript = Join-Path $PSScriptRoot '..\..\check_packer_plugins.py'
-                & python $pluginCheckScript `
-                    --packer (Get-Command packer -ErrorAction Stop).Source `
-                    $resolvedPackerTemplatePath
-                if ($LASTEXITCODE -ne 0) {
-                    throw "Exact Packer plugin verification failed with exit code $LASTEXITCODE."
-                }
-                if (-not $ValidateOnly -and $null -ne $PackerBuildInvoker) {
-                    Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $varFilePath
-                    & $PackerBuildInvoker $packerArgs $packerDir
-                }
-                else {
-                    Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $varFilePath
-                    & packer @packerArgs
-                    if ($LASTEXITCODE -ne 0) {
-                        $operation = if ($ValidateOnly) { 'validate' } else { 'build' }
-                        throw "packer $operation failed with exit code $LASTEXITCODE."
-                    }
-                }
-            } finally {
-                Pop-Location
-            }
+            Invoke-AtlasoPhotonPacker `
+                -PackerDirectory $packerDir `
+                -ResolvedPackerTemplatePath $resolvedPackerTemplatePath `
+                -PackerArgs $packerArgs `
+                -VarFilePath $varFilePath `
+                -SensitivePathValidator $SensitivePathValidator `
+                -PackerBuildInvoker $PackerBuildInvoker `
+                -ValidateOnly:$ValidateOnly
         } finally {
             try {
                 # The var file is needed only by the bounded Packer child and must

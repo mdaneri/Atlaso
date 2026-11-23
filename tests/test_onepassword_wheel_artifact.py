@@ -38,7 +38,7 @@ def test_checked_in_manifest_has_the_exact_approved_identity() -> None:
     ("field", "value"),
     (
         ("release_tag", "replaceable"),
-        ("asset_name", "onepassword_sdk-0.4.1-cp314t-cp314t-win_amd64.whl"),
+        ("asset_name", "onepassword_sdk-0.4.2-cp314t-cp314t-win_amd64.whl"),
         ("asset_url", "https://example.invalid/wheel.whl"),
         ("asset_sha256", "0" * 63),
         ("wheel_tag", "cp314t-cp314t-win_amd64"),

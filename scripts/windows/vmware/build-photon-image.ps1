@@ -44,6 +44,7 @@ Bounded deadline for the isolated plaintext-consuming Photon/Packer child.
 Task-owned build-state directory. The default is the checkout-local
 `.atlaso-local\photon-image-build-state` directory; explicit paths must remain
 strictly beneath the task repository root and inside a Git-ignored subtree.
+Each build keeps Packer plugins, cached downloads, and temporary files in its disposable workspace here.
 .PARAMETER CredentialBundlePath
 Internal current-user DPAPI credential bundle used only by the isolated child.
 .PARAMETER CredentialChild
@@ -367,12 +368,16 @@ function Resolve-AtlasoPhotonBuildStateRoot {
     $credentialProbeRoot = Join-Path $resolvedCandidate (
         'credentials\atlaso-photon-build-credentials-00000000000000000000000000000000'
     )
+    $packerProbeRoot = Join-Path $credentialProbeRoot 'sensitive-build\packer-work'
     $ignoreProbes = @(
         $resolvedCandidate,
         (Join-Path $credentialProbeRoot 'credentials.json'),
         (Join-Path $credentialProbeRoot 'output-cleanup-claimed.json'),
         (Join-Path $credentialProbeRoot 'sensitive-build\source\AGENTS.md'),
-        (Join-Path $credentialProbeRoot 'sensitive-build\packer-work\atlaso-photon.auto.pkrvars.hcl'),
+        (Join-Path $packerProbeRoot 'atlaso-photon.auto.pkrvars.hcl'),
+        (Join-Path $packerProbeRoot 'plugins\github.com\vmware\vmware\plugin-probe.exe'),
+        (Join-Path $packerProbeRoot 'cache\download-probe'),
+        (Join-Path $packerProbeRoot 'tmp\temporary-probe'),
         (Join-Path $credentialProbeRoot 'sensitive-build\kickstart\atlaso-photon-with-kickstart.iso'),
         (Join-Path $resolvedCandidate (
                 'vmware-builder-addresses\pending-releases\builder-address-reservation-00000000000000000000000000000000.json'

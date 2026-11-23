@@ -8,7 +8,7 @@
   },
   "devDependencies": {
     "esbuild": "^0.28.1",
-    "markdownlint-cli2": "0.24.0",
+    "markdownlint-cli2": "0.24.1",
     "monaco-editor": "0.52.2"
   },
   "overrides": {
