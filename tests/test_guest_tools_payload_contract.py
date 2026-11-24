@@ -3,6 +3,18 @@
 from pathlib import Path
 
 
+def test_guest_agent_prestart_checks_installed_storage_with_vcf_binds():
+    """The data-disk pre-start keeps verifying the original layout beneath service mounts."""
+    selector = Path("scripts/appliance/atlaso-select-guest-agent").read_text(encoding="utf-8")
+    installation_check = selector.split('[ -L /etc/atlaso/installation-profile ]; then\n', 1)[1].split(
+        "  export ATLASO_STORAGE_PROFILE\n", 1,
+    )[0]
+
+    assert installation_check.index("if [ -d /etc/atlaso/vcf-storage ]; then") < installation_check.index(
+        "/opt/atlaso/bin/atlaso-helper vcf-storage verify-installation --real"
+    ) < installation_check.index("else\n    python3 /opt/atlaso/scripts/installation/layout.py verify")
+
+
 def test_verified_guest_tools_closures_are_retained_and_checksum_covered():
     """The durable maintenance root contains only three provider RPM closures.
 

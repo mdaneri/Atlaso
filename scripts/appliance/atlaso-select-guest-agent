@@ -29,7 +29,11 @@ TEST_ROOT="${ATLASO_GUEST_AGENT_TEST_ROOT:-}"
 ATLASO_STORAGE_PROFILE="${ATLASO_STORAGE_PROFILE:-}"
 if [ "$ATLASO_STORAGE_PROFILE" = "installation" ] ||
   [ -e /etc/atlaso/installation-profile ] || [ -L /etc/atlaso/installation-profile ]; then
-  python3 /opt/atlaso/scripts/installation/layout.py verify
+  if [ -d /etc/atlaso/vcf-storage ]; then
+    /opt/atlaso/bin/atlaso-helper vcf-storage verify-installation --real
+  else
+    python3 /opt/atlaso/scripts/installation/layout.py verify
+  fi
   ATLASO_STORAGE_PROFILE=installation
   export ATLASO_STORAGE_PROFILE
 fi
