@@ -4,7 +4,7 @@
 #
 #    pip-compile --allow-unsafe --build-deps-for=editable --extra=dev --generate-hashes --index-url=https://pypi.org/simple --no-emit-index-url --output-file=requirements-dev.lock --strip-extras --uploaded-prior-to=P7D pyproject.toml
 #
-# atlaso-declarations-sha256: 52db7c30f8d07cb507b8383390574af4387f848e6b52a018411562b5967098a2
+# atlaso-declarations-sha256: f3870bcd67d379d955d8e6682a2d49931b469003e69080854f3579917349e3f4
 annotated-doc==0.0.5 \
     --hash=sha256:117bac03a25ede5df5440e855b32d556049ca169ead221505badf432fed4b101 \
     --hash=sha256:c7e58ce09192557605d8bbd92836d7e1d520ac9580096042c0bfd197efacf1bb
@@ -1221,6 +1221,10 @@ typing-inspection==0.4.4 \
     #   fastapi
     #   pydantic
     #   pydantic-settings
+tzdata==2026.6 ; sys_platform == "win32" \
+    --hash=sha256:0a10eec6e13ef16b627fabed9a5f2ba61a62b1c67f327305f4e7e412a70b4aec \
+    --hash=sha256:85d2cd9c09f81f0bb29db27759fc83af4f1e620efb814f8c5bf8b4cc4feece6d
+    # via atlaso (pyproject.toml)
 urllib3==2.7.0 \
     --hash=sha256:231e0ec3b63ceb14667c67be60f2f2c40a518cb38b03af60abc813da26505f4c \
     --hash=sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897
