@@ -2713,6 +2713,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#pull-request-preflight" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Pull request preflight
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#run-the-phases" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4303,6 +4314,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#pull-request-preflight" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Pull request preflight
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#run-the-phases" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4588,6 +4610,13 @@ complete inventory still match. The current official package metadata, full sign
 profile, and complete RPM transaction are admitted again for each operation. A directory name or a later
 snapshot does not establish capture ownership. Do not adopt receipts, caches, media, VMs, or exhausted
 validation budgets from another task.</p>
+<h2 id="pull-request-preflight">Pull request preflight<a class="headerlink" href="#pull-request-preflight" title="Permanent link">&para;</a></h2>
+<p>The advisory <strong>Photon snapshot preflight</strong> CI job compares installer requirements in the pull request candidate
+with its exact base. Open the job summary to see package additions and removals, changed installer or runtime
+pins, and changed input files such as the PowerCLI lock. A changed fingerprint requires a compatible approved
+capture for release staging. When the requirements match, the pull request adds no new capture requirement.</p>
+<p>The preflight compares source inputs. Protected release admission checks the configured capture's compatibility,
+age, and provenance. Use the native refresh phases below when a compatible capture is needed.</p>
 <h2 id="run-the-phases">Run the phases<a class="headerlink" href="#run-the-phases" title="Permanent link">&para;</a></h2>
 <ol>
 <li><strong>Initialize, then drift.</strong> Inspect the complete selected package/runtime-profile set against current
