@@ -148,7 +148,11 @@ def test_capture_fingerprint_tracks_requirements_and_reviewed_rpm_pins(tmp_path)
 
 
 def test_preflight_reports_changes_to_canonical_capture_inputs(tmp_path):
-    """Show a PR's package, installer pin, and input file changes."""
+    """Show a PR's package, installer pin, and input file changes.
+
+    Args:
+        tmp_path: Parent directory for the base and candidate installer inputs.
+    """
     base = tmp_path / "base"
     candidate = tmp_path / "candidate"
     write_requirement_source(base)
@@ -178,7 +182,11 @@ def test_preflight_reports_changes_to_canonical_capture_inputs(tmp_path):
 
 
 def test_preflight_detects_changed_fingerprint_definition(tmp_path):
-    """Use the base's own fingerprint to detect a changed definition."""
+    """Use the base's own fingerprint to detect a changed definition.
+
+    Args:
+        tmp_path: Installer inputs shared between both fingerprint evaluations.
+    """
     write_requirement_source(tmp_path)
 
     report = photon_preflight.summarize(tmp_path, tmp_path, base_fingerprint="0" * 64)
@@ -188,7 +196,13 @@ def test_preflight_detects_changed_fingerprint_definition(tmp_path):
 
 
 def test_preflight_failure_cannot_report_an_unchanged_fingerprint(tmp_path, monkeypatch, capsys):
-    """Surface an unparseable baseline as a failed comparison."""
+    """Surface an unparseable baseline as a failed comparison.
+
+    Args:
+        tmp_path: Parent directory for the installer trees used by the command.
+        monkeypatch: Supply the command-line arguments for both trees.
+        capsys: Capture the summary and failure diagnostic.
+    """
     base = tmp_path / "base"
     candidate = tmp_path / "candidate"
     write_requirement_source(base)
