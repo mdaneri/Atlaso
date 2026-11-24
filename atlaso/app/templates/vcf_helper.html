@@ -141,16 +141,6 @@
       </div>
       <div class="tab-panel" id="vcf-helper-backup" role="tabpanel" aria-labelledby="vcf-helper-backup-tab" hidden>
         <h3>Backup</h3>
-          {% if identity.can("read:vcf-backups") %}
-        {% set storage_heading = "VCF Backup Storage" %}
-        {% set storage_action = "vcf-backups/settings" %}
-        {% set storage_assignment = vcf_backup_storage_assignment %}
-        {% set storage_options = vcf_backup_storage_options %}
-          {% set storage_writable = identity.can("write:vcf-backups") %}
-        {% set storage_default_path = "/mnt/atlaso-vcf-backups" %}
-        {% set storage_status_id = "vcf-helper-backup-storage-status" %}
-        {% include "partials/vcf_service_storage_settings.html" %}
-          {% endif %}
         <div class="vcf-helper-action-bands">
           <div class="vcf-helper-action-wrap" {% if not (vcf_backup_wizard is defined and vcf_backup_wizard.ready and identity.has_role('admin')) %}data-help="{% if not (vcf_backup_wizard is defined and vcf_backup_wizard.ready) %}{{ vcf_backup_wizard.reason if vcf_backup_wizard is defined else 'VCF Backup SFTP readiness has not been provided.' }}{% else %}Administrator access is required to configure VCF Backups.{% endif %}" tabindex="0" aria-label="Configure VCF Backup unavailable. {% if not (vcf_backup_wizard is defined and vcf_backup_wizard.ready) %}{{ vcf_backup_wizard.reason if vcf_backup_wizard is defined else 'VCF Backup SFTP readiness has not been provided.' }}{% else %}Administrator access is required to configure VCF Backups.{% endif %}"{% endif %}>
             <button class="info-band vcf-helper-action-band" type="button" data-vcf-backup-open aria-haspopup="dialog" aria-controls="vcf-backup-modal" {% if not (vcf_backup_wizard is defined and vcf_backup_wizard.ready and identity.has_role('admin')) %}disabled aria-describedby="vcf-backup-launcher-reason"{% endif %}>

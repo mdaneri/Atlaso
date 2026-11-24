@@ -2,7 +2,7 @@
   <div>
     <h3>{{ storage_heading }}</h3>
     {% if storage_writable %}
-    <p class="muted">Choose a registered volume and a directory directly under its mount. The current assignment remains active until global Appliance Apply succeeds.</p>
+    <p class="muted">Choose a registered volume. Atlaso sets the storage directory from that volume's mount path.</p>
     {% else %}
     <p>Saved storage directory <code>{{ storage_assignment.mount_path }}</code></p>
     {% endif %}
@@ -13,6 +13,8 @@
     action="{{ management_ui_root }}/{{ storage_action }}"
     method="post"
     data-autosave-form
+    data-autosave-trigger="change"
+    data-autosave-serialize
     data-autosave-status-id="{{ storage_status_id }}"
     data-vcf-service-storage
   >
@@ -24,24 +26,21 @@
         <button class="help-icon" type="button" data-help="Select an applied, registered storage volume. Add or attach a volume under ESX Storage → Storage Volumes before assigning it here.">i</button>
       </span>
       <select name="storage_volume_uuid">
-        <option value="" data-suggested-path="{{ storage_default_path }}" data-default {{ "selected" if not storage_assignment.volume_uuid else "" }}>Installed storage</option>
+        <option value="" data-storage-path="{{ storage_default_path }}" {{ "selected" if not storage_assignment.volume_uuid else "" }}>Installed storage</option>
         {% if storage_assignment.volume_uuid and not storage_options|selectattr("uuid", "equalto", storage_assignment.volume_uuid)|list %}
-          <option value="{{ storage_assignment.volume_uuid }}" data-suggested-path="" selected disabled>Current volume unavailable</option>
+          <option value="{{ storage_assignment.volume_uuid }}" selected disabled>Current volume unavailable</option>
         {% endif %}
         {% for volume in storage_options %}
-          <option value="{{ volume.uuid }}" data-suggested-path="{{ volume.suggested_path }}" {{ "selected" if storage_assignment.volume_uuid == volume.uuid else "" }}>
-            {{ volume.name }} · {{ volume.mount_path }} · suggested {{ volume.suggested_path }}
+          <option value="{{ volume.uuid }}" data-storage-path="{{ volume.storage_path }}" {{ "selected" if storage_assignment.volume_uuid == volume.uuid else "" }}>
+            {{ volume.name }} · {{ volume.mount_path }}
           </option>
         {% endfor %}
       </select>
     </label>
-    <label>
-      <span class="field-label">
-        <span>Storage directory</span>
-        <button class="help-icon" type="button" data-help="Use a dedicated directory directly under the selected volume's mount. Atlaso keeps the existing service directory and files available until the reassignment applies successfully.">i</button>
-      </span>
-      <input type="text" name="storage_volume_path" value="{{ storage_assignment.mount_path }}" maxlength="240" required>
-    </label>
+    <div class="derived-field fixed-value-field">
+      <span class="field-label">Storage directory</span>
+      <strong data-vcf-storage-directory aria-live="polite">{{ storage_assignment.mount_path }}</strong>
+    </div>
     <p class="muted">Volumes are registered through <a href="{{ management_ui_root }}/esx-storage#storage-volumes">ESX Storage → Storage Volumes</a>. Existing files stay on their current volume. Changing this setting does not format a disk or copy files.</p>
     <p id="{{ storage_status_id }}" class="autosave-status" data-state="idle">Changes save automatically. Review them through global Appliance Apply.</p>
   </form>

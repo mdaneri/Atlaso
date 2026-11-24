@@ -29,7 +29,7 @@ DEFAULT_INDEX_URL = "https://pypi.org/simple"
 DECLARATION_HASH_RE = re.compile(r"^# atlaso-declarations-sha256: [0-9a-f]{64}$")
 ONEPASSWORD_LOCK = "requirements-onepassword-deploy.lock"
 ONEPASSWORD_MANIFEST = Path("scripts/windows/vmware/onepassword-sdk-cp314-wheel.json")
-ONEPASSWORD_CP314_WHEEL = "onepassword_sdk-0.4.1-cp314-cp314-win_amd64.whl"
+ONEPASSWORD_CP314_WHEEL = "onepassword_sdk-0.4.2-cp314-cp314-win_amd64.whl"
 DEV_LOCK = "requirements-dev.lock"
 UVLOOP_VERSION = "0.23.0"
 UVLOOP_REQUIREMENT = (
@@ -355,7 +355,7 @@ def _onepassword_artifact_hash() -> str:
         or payload.get("asset_name") != ONEPASSWORD_CP314_WHEEL
         or payload.get("wheel_tag") != "cp314-cp314-win_amd64"
         or payload.get("repository") != "mdaneri/onepassword-sdk-python"
-        or payload.get("release_tag") != "atlaso-wheel-v0.4.1-cp314.1"
+        or payload.get("release_tag") != "atlaso-wheel-v0.4.2-cp314.1"
         or not re.fullmatch(r"[0-9a-f]{64}", str(payload.get("asset_sha256", "")))
     ):
         raise RuntimeError("the approved 1Password CPython 3.14 wheel manifest is invalid")
@@ -386,7 +386,7 @@ def _assert_no_eligible_official_onepassword_wheel(index_url: str) -> None:
             raise RuntimeError("the official 1Password wheel lacks upload-time metadata")
         if datetime.fromisoformat(uploaded.replace("Z", "+00:00")) <= cutoff:
             raise RuntimeError(
-                "an official onepassword-sdk 0.4.1 cp314-win_amd64 wheel is now "
+                "an official onepassword-sdk 0.4.2 cp314-win_amd64 wheel is now "
                 "seven-days eligible; remove the temporary fork manifest and dependency"
             )
 
@@ -396,11 +396,11 @@ def _record_onepassword_artifact_hash() -> None:
     path = ROOT / ONEPASSWORD_LOCK
     lines = path.read_text(encoding="utf-8").splitlines()
     start = next(
-        (index for index, line in enumerate(lines) if line.startswith("onepassword-sdk==0.4.1 \\")),
+        (index for index, line in enumerate(lines) if line.startswith("onepassword-sdk==0.4.2 \\")),
         -1,
     )
     if start < 0:
-        raise RuntimeError(f"{path.name} does not pin onepassword-sdk==0.4.1")
+        raise RuntimeError(f"{path.name} does not pin onepassword-sdk==0.4.2")
     end = start + 1
     while end < len(lines) and lines[end].lstrip().startswith("--hash=sha256:"):
         end += 1
@@ -410,7 +410,7 @@ def _record_onepassword_artifact_hash() -> None:
         if (match := re.search(r"--hash=sha256:([0-9a-f]{64})", line))
     }
     hashes.add(_onepassword_artifact_hash())
-    replacement = ["onepassword-sdk==0.4.1 \\"]
+    replacement = ["onepassword-sdk==0.4.2 \\"]
     ordered = sorted(hashes)
     replacement.extend(
         f"    --hash=sha256:{digest}{' \\' if index < len(ordered) - 1 else ''}"

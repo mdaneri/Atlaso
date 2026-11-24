@@ -47,10 +47,10 @@ unauthenticated browsing do not extend a browser session.
 
 ## Configure the depot
 
-1. On **VCF Offline Depot → Depot Settings**, select a registered **Storage Volumes** volume and enter a directory on
-   that volume for the depot files. The default for installed storage is `/mnt/atlaso-vcf-offline-depot`. Register or
-   attach additional volumes under **ESX Storage → Storage Volumes** first. VCF Helper and profile downloads use the same
-   assignment.
+1. On **VCF Offline Depot → Depot Settings**, select a registered volume. Atlaso appends `vcf-offline-depot` to the
+   volume's mount path and displays the resulting directory. Installed storage uses `/mnt/atlaso-vcf-offline-depot`.
+   Register or attach additional volumes under **ESX Storage → Storage Volumes**. VCF Helper and profile downloads use
+   the same assignment.
 2. Review the current and proposed volume and directory under **Review appliance changes**, then submit **VCF Offline
    Depot** through global Appliance Apply. Existing depot files remain on the current volume. Atlaso does not format a
    selected volume or copy existing files during reassignment. If the candidate mount fails, Atlaso keeps the current
@@ -196,10 +196,6 @@ These captures show responsive layouts and useful operational states referenced 
 ![VCF Offline Depot contextual Schedule wizard Review showing Schedule, Timing, State, and Review steps with Binaries fixed as the selected profile.](../assets/screenshots/vcf-offline-depot-schedule-action-desktop.webp)
 
 *Figure: VCF Offline Depot review binds the selected profile in the contextual schedule flow.*
-
-![VCF Offline Depot configuration showing the Storage volume selector and /mnt/atlaso-vcf-offline-depot.](../assets/screenshots/vcf-offline-depot-storage.webp)
-
-*Figure: The Depot Storage settings are in the right-hand configuration panel below VCFDT staging.*
 
 ### VCF Offline Depot browser
 

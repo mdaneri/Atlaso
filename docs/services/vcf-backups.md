@@ -38,10 +38,9 @@ synchronization, then apply **VCF Backups** through the shared [Appliance Apply]
 
 ### Choose backup storage
 
-On **VCF Backups → SFTP Settings**, select a registered **Storage Volumes** volume and enter the directory on that
-volume that should hold backups. The **VCF Helper → Backup** tab offers the same volume and directory settings. Register
-or attach additional volumes under **ESX Storage → Storage Volumes** first. Installed storage remains available at
-`/mnt/atlaso-vcf-backups`.
+On **VCF Backups → SFTP Settings**, select a registered volume. Atlaso appends `vcf-backups` to the volume's mount path
+and displays the resulting storage directory. Register additional volumes under **ESX Storage → Storage Volumes**.
+Installed storage uses `/mnt/atlaso-vcf-backups`.
 
 The selected directory is saved as desired state. Review the current and proposed volume and directory under **Review
 appliance changes**, then submit **VCF Backups** through global Appliance Apply. Atlaso preserves the existing backup

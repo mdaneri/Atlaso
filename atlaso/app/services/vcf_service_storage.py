@@ -22,6 +22,7 @@ from atlaso.app.services.network_objects import acquire_network_objects_write_lo
 
 Role = Literal["backup", "depot"]
 DEFAULT_PATHS = {"backup": "/mnt/atlaso-vcf-backups", "depot": "/mnt/atlaso-vcf-offline-depot"}
+VOLUME_DIRECTORIES = {"backup": "vcf-backups", "depot": "vcf-offline-depot"}
 STORAGE_COMMENT = "# Atlaso VCF storage: "
 _SYSTEM_ROOTS = frozenset("bin boot dev etc home lib lib64 opt proc root run sbin sys tmp usr var".split())
 _UUID = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}")
@@ -93,14 +94,15 @@ def storage_options(db: Session, role: Role) -> list[dict[str, str]]:
 
     Args:
         db: Active database session.
-        role: Service whose default directory name will be suggested.
+        role: Service whose directory name is appended to each volume.
     """
     return [
         {
             "uuid": volume.filesystem_uuid, "name": volume.name, "mount_path": volume.mount_path,
-            "suggested_path": f"{volume.mount_path}/{PurePosixPath(DEFAULT_PATHS[role]).name}",
+            "storage_path": f"{volume.mount_path}/{VOLUME_DIRECTORIES[role]}",
         }
         for volume in _eligible_volumes(db)
+        if len(volume.mount_path) + 1 + len(VOLUME_DIRECTORIES[role]) <= 240
     ]
 
 
@@ -117,29 +119,31 @@ def storage_settings(db: Session, role: Role) -> dict[str, str]:
     return {"volume_uuid": settings.storage_volume_uuid, "mount_path": settings.storage_volume_path or DEFAULT_PATHS[role]}
 
 
-def _assignment(db: Session, role: Role, volume_uuid: str, mount_path: str) -> dict[str, str]:
+def _assignment(db: Session, role: Role, volume_uuid: str, mount_path: str | None = None) -> dict[str, str]:
     """Validate an assignment against the current volume and share registrations.
 
     Args:
         db: Active database session.
         role: Service that owns the assignment.
         volume_uuid: Selected registered filesystem UUID, or empty for installed storage.
-        mount_path: Dedicated directory on the selected volume.
+        mount_path: Previously saved directory, or None to derive a new selection.
     """
     if not volume_uuid:
-        if mount_path not in {"", DEFAULT_PATHS[role]}:
+        if mount_path not in {None, "", DEFAULT_PATHS[role]}:
             raise ValueError("Select a registered volume to use a different storage path.")
         return {}
     matches = [volume for volume in _eligible_volumes(db) if volume.filesystem_uuid == volume_uuid]
     if len(matches) != 1:
         raise ValueError("The selected storage volume is unavailable. Apply its registration in Storage Volumes first.")
     volume = matches[0]
+    if mount_path is None:
+        mount_path = f"{volume.mount_path}/{VOLUME_DIRECTORIES[role]}"
     if len(mount_path) > 240 or not _storage_path_syntax(mount_path):
-        raise ValueError("Enter a dedicated directory directly under the selected volume's mount path.")
+        raise ValueError("The storage directory is invalid or too long for the selected volume.")
     target = PurePosixPath(mount_path)
     volume_path = PurePosixPath(volume.mount_path)
     if target.parent != volume_path:
-        raise ValueError("Enter a dedicated directory directly under the selected volume's mount path.")
+        raise ValueError("The storage directory must be directly under the selected volume's mount path.")
     other = storage_settings(db, "depot" if role == "backup" else "backup")
     if mount_path == other["mount_path"]:
         raise ValueError("The other VCF service already uses this storage directory.")
@@ -153,17 +157,16 @@ def _assignment(db: Session, role: Role, volume_uuid: str, mount_path: str) -> d
     }
 
 
-def save_storage_assignment(db: Session, role: Role, volume_uuid: str, mount_path: str) -> None:
+def save_storage_assignment(db: Session, role: Role, volume_uuid: str) -> None:
     """Stage a selection within the caller's desired-state transaction.
 
     Args:
         db: Active database session owned by the caller.
         role: Service that owns the assignment.
         volume_uuid: Submitted filesystem UUID, or empty for installed storage.
-        mount_path: Submitted directory on the selected volume.
     """
     acquire_network_objects_write_lock(db)
-    assignment = _assignment(db, role, volume_uuid.strip(), mount_path.strip())
+    assignment = _assignment(db, role, volume_uuid.strip())
     settings = _row(db, role)
     if settings is None:
         raise ValueError("The service settings are unavailable.")

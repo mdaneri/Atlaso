@@ -116,10 +116,10 @@ authorization belongs only to that appliance-apply job and the exact manifest ha
 state and is not placed in baselines or settings backups.
 
 Registered volumes can also hold VCF Backup files or the VCF Offline Depot. Configure those assignments in **VCF
-Backups → SFTP Settings** or **VCF Offline Depot → Service Settings** after the volume is registered. Each service uses
-its own directory on the selected volume, and the two services may share a volume. Review a reassignment through the
-service's global Appliance Apply plan. Existing data remains on its current volume, and changing an assignment does not
-format a volume or copy files. After successful Apply, verify the service reads and writes under its selected directory,
+Backups → SFTP Settings** or **VCF Offline Depot → Depot Settings** after the volume is registered. Atlaso appends
+`vcf-backups` or `vcf-offline-depot` to the volume's mount path, so the two services may share a volume. Review a
+reassignment through the service's global Appliance Apply plan. Existing data remains on its current volume. Changing an
+assignment does not format a volume or copy files. After Apply, verify reads and writes under the selected directory,
 then reboot and confirm the assignment remains active.
 
 When a virtual SCSI controller does not expose a serial or WWN, the appliance udev policy creates a stable

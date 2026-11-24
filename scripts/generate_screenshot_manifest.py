@@ -19,14 +19,6 @@ CANONICAL_BROWSER_ROOTS = {
 }
 
 CAPTURE_OVERRIDES = {
-    **{
-        stem: {
-            "source_commit": "76964855888b43b9894d9d6c02ee61914eb524c1",
-            "atlaso_version": "0.9.524",
-            "capture_method": "playwright-chromium",
-        }
-        for stem in ("vcf-helper-backup-storage", "vcf-offline-depot-storage")
-    },
     "installation-storage-layout": {
         "source_commit": "76964855888b43b9894d9d6c02ee61914eb524c1",
         "atlaso_version": "0.9.524",
@@ -632,18 +624,6 @@ SPECIAL = {
         "about-modal",
         "Atlaso About dialog with the deployed version and build identity.",
         "Atlaso About dialog showing version 0.9.21, build identity, and Python version.",
-    ),
-    "vcf-helper-backup-storage": (
-        "/ui/management/vcf-helper",
-        "backup-storage",
-        "Choose the backup volume and directory in the Backup tab before reviewing Appliance Apply.",
-        "VCF Helper Backup tab showing the Storage volume selector and /mnt/atlaso-vcf-backups.",
-    ),
-    "vcf-offline-depot-storage": (
-        "/ui/management/vcf-offline-depot",
-        "depot-storage",
-        "The Depot Storage settings are in the right-hand configuration panel below VCFDT staging.",
-        "VCF Offline Depot configuration showing the Storage volume selector and /mnt/atlaso-vcf-offline-depot.",
     ),
     "installation-storage-layout": (
         "vmware-console",

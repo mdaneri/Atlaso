@@ -2622,7 +2622,7 @@ def test_eligible_official_cp314_wheel_requires_fork_retirement(
     payload = {
         "files": [
             {
-                "filename": "onepassword_sdk-0.4.1-cp314-cp314-win_amd64.whl",
+                "filename": "onepassword_sdk-0.4.2-cp314-cp314-win_amd64.whl",
                 "upload-time": "2026-01-01T00:00:00Z",
             }
         ]

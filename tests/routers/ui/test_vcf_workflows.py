@@ -16,8 +16,7 @@ def test_vcf_workflow_pages_keep_stable_transports(client):
     helper = client.get("/vcf-helper")
     assert helper.status_code == 200
     assert 'action="/ui/management/vcf-helper/generated-fqdns"' in helper.text
-    assert 'action="/ui/management/vcf-backups/settings"' in helper.text
-    assert 'id="vcf-helper-backup-storage-status"' in helper.text
+    assert 'data-vcf-service-storage' not in helper.text
 
     trust = client.get("/vcf-trust")
     assert trust.status_code == 200
@@ -27,6 +26,7 @@ def test_vcf_workflow_pages_keep_stable_transports(client):
     assert depot.status_code == 200
     assert 'action="/ui/management/vcf-offline-depot/settings"' in depot.text
     assert 'id="vcf-depot-storage-status"' in depot.text
+    assert 'name="storage_volume_path"' not in depot.text
     assert "/vcf-offline-depot/profiles/" in depot.text
 
     registry = client.get("/vcf-private-registry")
@@ -37,6 +37,7 @@ def test_vcf_workflow_pages_keep_stable_transports(client):
     assert backups.status_code == 200
     assert 'action="/ui/management/vcf-backups/settings"' in backups.text
     assert 'id="vcf-backup-storage-status"' in backups.text
+    assert 'name="storage_volume_path"' not in backups.text
 
 
 def test_legacy_https_repository_redirect_remains_stable(client):
@@ -101,8 +102,8 @@ def test_vcf_backups_settings_badge_reflects_desired_state(client, monkeypatch):
 @pytest.mark.parametrize(
     ("page_path", "settings_model", "assignment_path"),
     [
-        ("/vcf-backups", "backup", "/mnt/atlaso-esx-storage/vcf/atlaso-vcf-backups"),
-        ("/vcf-offline-depot", "depot", "/mnt/atlaso-esx-storage/vcf/atlaso-vcf-offline-depot"),
+        ("/vcf-backups", "backup", "/mnt/atlaso-esx-storage/vcf/vcf-backups"),
+        ("/vcf-offline-depot", "depot", "/mnt/atlaso-esx-storage/vcf/vcf-offline-depot"),
     ],
 )
 def test_service_storage_autosave_preserves_service_settings(
@@ -129,6 +130,8 @@ def test_service_storage_autosave_preserves_service_settings(
     login(client)
     page = client.get(page_path)
     assert page.status_code == 200
+    assert 'name="storage_volume_path"' not in page.text
+    assert 'Installed storage</option>' in page.text
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     volume_uuid = "2cecf40a-b241-4b6a-8b1a-4d84d9b0eb61"
     settings_class = VcfBackupSettings if settings_model == "backup" else VcfOfflineDepotSettings
@@ -136,6 +139,8 @@ def test_service_storage_autosave_preserves_service_settings(
     with SessionLocal() as db:
         settings = db.execute(select(settings_class)).scalar_one()
         settings.enabled = True
+        settings.storage_volume_uuid = volume_uuid
+        settings.storage_volume_path = "/mnt/atlaso-esx-storage/vcf/legacy-directory"
         original_port = settings.port
         db.add(
             EsxStorageVolume(
@@ -150,13 +155,15 @@ def test_service_storage_autosave_preserves_service_settings(
         )
         db.commit()
 
+    selected_page = client.get(page_path)
+    assert f'data-storage-path="{assignment_path}"' in selected_page.text
+    assert 'aria-live="polite">/mnt/atlaso-esx-storage/vcf/legacy-directory</strong>' in selected_page.text
     response = client.post(
         f"{page_path}/settings",
         data={
             "csrf": csrf,
             "storage_assignment_only": "1",
             "storage_volume_uuid": volume_uuid,
-            "storage_volume_path": assignment_path,
         },
         headers={"X-Atlaso-Autosave": "1"},
     )
@@ -185,7 +192,7 @@ def test_service_storage_autosave_preserves_service_settings(
         assert any("Existing files stay" in line for line in unit["summary"])
 
     other_page = "/vcf-offline-depot" if settings_model == "backup" else "/vcf-backups"
-    conflict = client.post(
+    other = client.post(
         f"{other_page}/settings",
         data={
             "csrf": csrf,
@@ -195,8 +202,21 @@ def test_service_storage_autosave_preserves_service_settings(
         },
         headers={"X-Atlaso-Autosave": "1"},
     )
-    assert conflict.status_code == 409
-    assert "already uses this storage directory" in conflict.json()["detail"]
+    assert other.status_code == 200
+    assert other.json()["storage_volume_path"] == (
+        "/mnt/atlaso-esx-storage/vcf/vcf-offline-depot" if settings_model == "backup"
+        else "/mnt/atlaso-esx-storage/vcf/vcf-backups"
+    )
+
+    restored = client.post(
+        f"{page_path}/settings",
+        data={"csrf": csrf, "storage_assignment_only": "1", "storage_volume_uuid": ""},
+        headers={"X-Atlaso-Autosave": "1"},
+    )
+    assert restored.status_code == 200
+    assert restored.json()["storage_volume_path"] == (
+        "/mnt/atlaso-vcf-backups" if settings_model == "backup" else "/mnt/atlaso-vcf-offline-depot"
+    )
 
 
 def test_vcf_offline_depot_upload_rejects_malformed_archive_before_saving(

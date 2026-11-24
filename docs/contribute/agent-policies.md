@@ -2197,8 +2197,9 @@ preserved with their affected subsystem below. Keep new requirements at their to
 - VCF Backup listen targets must include access physical interfaces with IPs and VLAN interfaces with IPs; exclude trunk
   physical interfaces.
 - The VCF-facing remote directory should be short and stable: `/backups`.
-- The installed backup default is `/mnt/atlaso-vcf-backups`. VCF Backups and VCF Helper → Backup share one desired
-  storage selection. Only Appliance Apply may attach a selected, already-applied Storage Volumes registration.
+- The installed backup default is `/mnt/atlaso-vcf-backups`. VCF Backups → SFTP Settings owns volume selection.
+  Derive new assignments by appending `vcf-backups` to the mount path of an applied Storage Volumes registration.
+  Only Appliance Apply may attach the selected volume directory.
   Preserve the original filesystem and the SFTP chroot, and verify the selected volume before activating it.
 - The VCF Backup config preview should make the host-side volume and VCF remote directory clear, and OpenSSH should use
   `ForceCommand internal-sftp -d /backups` when chroot is enabled.
@@ -2269,8 +2270,9 @@ preserved with their affected subsystem below. Keep new requirements at their to
 ## VCF Offline Depot
 
 - VCF Offline Depot is a static HTTP(S) depot endpoint backed by nginx. Its installed storage default is
-  `/mnt/atlaso-vcf-offline-depot`. Appliance Apply may attach a dedicated directory from an already-applied Storage
-  Volumes registration. A storage change preserves the previous files and keeps VCFDT and `/PROD/` on the same storage.
+  `/mnt/atlaso-vcf-offline-depot`. Depot Settings derives new assignments by appending `vcf-offline-depot` to the mount
+  path of an applied Storage Volumes registration. Appliance Apply attaches the selected directory. A storage change
+  preserves the previous files and keeps VCFDT and `/PROD/` on the same storage.
 - The default VCF Offline Depot HTTP user is `vcf-depot`. Keep it visible in Users, selectable by the depot service, and
   disabled while VCF Offline Depot desired state is off.
 - Apply Local Users before VCF Offline Depot when the selected HTTP user is new, renamed, disabled/enabled, has a

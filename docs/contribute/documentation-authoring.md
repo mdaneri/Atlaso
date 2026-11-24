@@ -101,7 +101,7 @@ run the workflow. Maintainers can request the same rebuild from an authenticated
 
 ## Required checks
 
-`markdownlint-cli2` 0.24.0 supplies patched Markdown, TOML, and YAML parsers without the former YAML downgrade.
+`markdownlint-cli2` 0.24.1 supplies updated Markdown and YAML tooling, including `re2js` 2.9.1 and `js-yaml` 5.5.0.
 The scoped `micromark-extension-math` override selects KaTeX 0.18.2; regression tests cover rendering compatibility
 and inherited trust rejection; Atlaso uses no internal KaTeX APIs or CSS.
 TOML tests verify null-prototype mappings and bounded parsing. Development dependencies do not establish

@@ -14347,11 +14347,11 @@ function initializeAutosaveForms(root = document) {
     form.dataset.autosaveInitialized = "1";
     if (form.dataset.vcfServiceStorage !== undefined) {
       const volume = form.elements.namedItem("storage_volume_uuid");
-      const path = form.elements.namedItem("storage_volume_path");
-      if (volume instanceof HTMLSelectElement && path instanceof HTMLInputElement) {
+      const path = form.querySelector("[data-vcf-storage-directory]");
+      if (volume instanceof HTMLSelectElement && path) {
         volume.addEventListener("change", () => {
-          const suggested = volume.selectedOptions[0]?.dataset.suggestedPath;
-          if (suggested) path.value = suggested;
+          const directory = volume.selectedOptions[0]?.dataset.storagePath;
+          if (directory) path.textContent = directory;
         });
       }
     }
