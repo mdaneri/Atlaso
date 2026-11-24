@@ -43,7 +43,9 @@ and displays the resulting storage directory. Register additional volumes under 
 Installed storage uses `/mnt/atlaso-vcf-backups`.
 
 The selected directory is saved as desired state. Review the current and proposed volume and directory under **Review
-appliance changes**, then submit **VCF Backups** through global Appliance Apply. Atlaso preserves the existing backup
+appliance changes**, then submit **VCF Backups** through global Appliance Apply with SFTP enabled. While SFTP is
+disabled, Atlaso keeps the last applied mount and saves new selections for the next enabled Apply. You can disable SFTP
+even if its assigned storage is unavailable. Atlaso preserves the existing backup
 files and does not format the selected volume. If the new mount cannot be applied, the current assignment remains in
 service. After Apply succeeds, confirm the selected volume and directory in VCF Backups, reboot the appliance, and
 check again that the assignment and SFTP writes persist. VCF clients continue to use the stable `/backups` remote

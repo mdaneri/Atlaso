@@ -12522,6 +12522,12 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
     for role, context, prefix in (
         ("backup", vcf_backup, "vcf_backup"), ("depot", vcf_depot, "vcf_depot"),
     ):
+        if role == "backup" and not context["vcf_backup_settings"].enabled:
+            # Shutdown does not change the mount. Keep the applied assignment in
+            # the baseline and resolve the desired selection when SFTP is enabled.
+            previous = (baselines.get("vcf_backups") or {}).get("snapshot_marker")
+            context["storage_assignment"] = previous if isinstance(previous, dict) else {}
+            continue
         try:
             assignment = storage_assignment(db, role)
         except ValueError as error:

@@ -125,7 +125,7 @@ def test_service_storage_autosave_preserves_service_settings(
         VcfBackupSettings,
         VcfOfflineDepotSettings,
     )
-    from atlaso.app.ui import appliance_apply_units
+    from atlaso.app.ui import appliance_apply_units, update_appliance_apply_baselines
 
     login(client)
     page = client.get(page_path)
@@ -190,6 +190,16 @@ def test_service_storage_autosave_preserves_service_settings(
         assert f"Proposed storage: VCF Service Volume at {assignment_path}" in unit["summary"]
         assert any(line.startswith("Current storage: Installed storage at ") for line in unit["summary"])
         assert any("Existing files stay" in line for line in unit["summary"])
+        if settings_model == "backup":
+            update_appliance_apply_baselines(db, [unit], {unit_id})
+            settings.enabled = False
+            settings.storage_volume_uuid = "unavailable-volume"
+            db.flush()
+            disabled = next(item for item in appliance_apply_units(db, reconcile=False) if item["id"] == unit_id)
+            assert disabled["valid"]
+            assert disabled["snapshot_marker"] == unit["snapshot_marker"]
+            assert "# Atlaso VCF Backup" in disabled["config_preview"]
+            assert not any(line.startswith("Proposed storage:") for line in disabled["summary"])
 
     other_page = "/vcf-offline-depot" if settings_model == "backup" else "/vcf-backups"
     other = client.post(

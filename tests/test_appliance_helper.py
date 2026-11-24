@@ -16516,15 +16516,16 @@ def test_vcf_storage_depot_initializes_prod_as_atlaso(monkeypatch, tmp_path):
     assert calls == [["runuser", "-u", "atlaso", "-g", "atlaso", "--", "mkdir", "-m", "0755", "--", str(prod)]]
 
 
-@pytest.mark.parametrize("role", ["backup", "depot"])
+@pytest.mark.parametrize(("role", "disabled"), [("backup", False), ("depot", False), ("depot", True)])
 @pytest.mark.parametrize("failure", ["prepare", "bind", "service", None])
-def test_vcf_storage_switch_preserves_previous_assignment(monkeypatch, tmp_path, role, failure):
+def test_vcf_storage_switch_preserves_previous_assignment(monkeypatch, tmp_path, role, disabled, failure):
     """Exercise the previous mount, candidate verification, service step, and boot record.
 
     Args:
         monkeypatch: Replace host mounts and locks with fixture state.
         tmp_path: Isolated service and ownership state.
         role: Service whose mount changes.
+        disabled: Whether the depot HTTPS endpoint is disabled.
         failure: Stage that rejects activation, or None for success.
     """
     helper = load_helper_module()
@@ -16580,7 +16581,7 @@ def test_vcf_storage_switch_preserves_previous_assignment(monkeypatch, tmp_path,
     monkeypatch.setattr(helper, "_vcf_storage_unbind", lambda _: state.update(source=None))
     monkeypatch.setattr(helper, "_durable_management_handoff_state_write", lambda assignment, _: writes.append(assignment))
 
-    result = helper._apply_with_vcf_storage(role, desired, apply_service)
+    result = helper._apply_with_vcf_storage(role, desired, apply_service, disabled=disabled)
     if failure:
         assert result != 0
         assert state["source"] == Path(old["path"])
@@ -16681,6 +16682,34 @@ def test_vcf_backups_helper_rejects_unmanaged_config(tmp_path):
     errors = helper._vcf_backups_config_errors(config_path)
 
     assert "VCF backups config must be rendered by Atlaso." in errors
+
+
+def test_vcf_backups_helper_disables_sftp_without_touching_assigned_storage(monkeypatch, tmp_path):
+    """Remove the SFTP drop-in when the assigned filesystem is unavailable."""
+    helper = load_helper_module()
+    config_path = tmp_path / "atlaso-vcf-backups-sshd.conf"
+    assignment = {"uuid": "12345678-1234-0000-9000-123456789abc", "path": "/mnt/data/vcf-backups",
+                  "volume_path": "/mnt/data", "device": "/dev/disk/by-id/data"}
+    config_path.write_text(
+        vcf_backups_config_text(enabled=False) + f"{helper.VCF_STORAGE_COMMENT}{json.dumps(assignment)}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "VCF_BACKUPS_APPLY_DIR", tmp_path)
+    monkeypatch.setattr(helper, "VCF_BACKUPS_CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(helper, "VCF_BACKUPS_CONFIG_PATH", tmp_path / "receiver.conf")
+    monkeypatch.setattr(helper, "_vcf_storage_live_source",
+                        lambda *_args, **_kwargs: pytest.fail("Disabling SFTP probed storage"))
+    monkeypatch.setattr(helper, "_apply_with_vcf_storage",
+                        lambda *_args, **_kwargs: pytest.fail("Disabling SFTP entered the mount transaction"))
+    monkeypatch.setattr(helper, "_validate_sshd_dropin_candidates",
+                        lambda _candidates: subprocess.CompletedProcess(["sshd", "-t"], 0, "", ""))
+    applied = []
+    monkeypatch.setattr(helper, "_apply_vcf_backups_dropins", lambda candidates: applied.append(candidates) or 0)
+
+    for action in ("validate", "preflight", "apply"):
+        assert helper._handle_vcf_backups(action, [str(config_path)]) == 0
+    assert len(applied) == 1
+    assert applied[0][helper.VCF_BACKUPS_CONFIG_PATH] is None
 
 
 def test_vcf_backups_helper_apply_installs_sshd_dropin_and_storage(monkeypatch, tmp_path):
@@ -17784,6 +17813,12 @@ def test_vcf_offline_depot_helper_removes_disabled_nginx_site(monkeypatch, tmp_p
     monkeypatch.setattr(helper, "NGINX_SITES_DIR", site_dir)
     monkeypatch.setattr(helper, "VCF_DEPOT_SITE_PATH", site_path)
     monkeypatch.setattr(helper, "VCF_STORAGE_STATE_DIR", state_dir)
+    monkeypatch.setattr(helper, "_vcf_storage_root_directory", lambda _: None)
+    monkeypatch.setattr(helper, "_vcf_storage_read", lambda _: json.loads(record.read_bytes()) if assigned else {})
+    monkeypatch.setitem(sys.modules, "fcntl", SimpleNamespace(
+        flock=lambda handle, flags: None, LOCK_EX=1, LOCK_NB=2,
+    ))
+    monkeypatch.setattr(helper.os, "O_NOFOLLOW", 0, raising=False)
     monkeypatch.setattr(helper, "_run", fake_run)
     monkeypatch.setattr(helper.shutil, "which", lambda command: "/usr/sbin/nginx" if command == "nginx" else None)
     monkeypatch.setattr(helper, "_vcf_storage_live_source",

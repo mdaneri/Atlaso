@@ -20770,10 +20770,10 @@ def _apply_with_vcf_storage(
         role: Backup or depot service.
         assignment: Reviewed registration identity, or empty for installed storage.
         apply: Operation that applies the service configuration.
-        disabled: Whether the operation only deactivates the service endpoint.
+        disabled: Whether an unchanged assignment can skip live checks during endpoint deactivation.
     """
     try:
-        if disabled or (not assignment and not os.path.lexists(VCF_STORAGE_STATE_DIR)):
+        if not assignment and not os.path.lexists(VCF_STORAGE_STATE_DIR):
             return apply()
         import fcntl
 
@@ -20783,6 +20783,8 @@ def _apply_with_vcf_storage(
         with os.fdopen(lock_fd, "r+b") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             previous = _vcf_storage_read(role)
+            if disabled and previous == assignment:
+                return apply()
             target = _vcf_storage_target(role)
             candidate = _vcf_storage_live_source(role, assignment, create=True) if assignment else None
             if previous == assignment:
@@ -20928,7 +20930,7 @@ def _handle_vcf_backups(action: str, args: list[str]) -> int:
     values = _vcf_backups_config_values(config_path)
     try:
         assignment = _vcf_storage_from_config(config_path.read_text(encoding="utf-8"))
-        if assignment:
+        if assignment and values["enabled"]:
             if values["storage_path"] != str(VCF_BACKUPS_DEFAULT_STORAGE_PATH):
                 raise ValueError("A VCF backup volume assignment requires the managed SFTP storage path.")
             _vcf_storage_live_source("backup", assignment)
@@ -20961,6 +20963,8 @@ def _handle_vcf_backups(action: str, args: list[str]) -> int:
     if prospective.returncode:
         print(prospective.stderr, end="", file=sys.stderr)
         return prospective.returncode
+    if not values["enabled"]:
+        return _apply_vcf_backups_service(values, candidates)
     return _apply_with_vcf_storage("backup", assignment, lambda: _apply_vcf_backups_service(values, candidates))
 
 
@@ -22228,7 +22232,7 @@ def _handle_vcf_offline_depot(action: str, args: list[str]) -> int:
     disabled = "VCF Offline Depot HTTPS endpoint is disabled" in text
     try:
         assignment = _vcf_storage_from_config(text)
-        if assignment and not disabled:
+        if assignment and (not disabled or assignment != _vcf_storage_read("depot")):
             _vcf_storage_live_source("depot", assignment)
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         print(f"VCF depot storage validation failed: {exc}", file=sys.stderr)

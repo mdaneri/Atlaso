@@ -52,7 +52,9 @@ unauthenticated browsing do not extend a browser session.
    Register or attach additional volumes under **ESX Storage → Storage Volumes**. VCF Helper and profile downloads use
    the same assignment.
 2. Review the current and proposed volume and directory under **Review appliance changes**, then submit **VCF Offline
-   Depot** through global Appliance Apply. Existing depot files remain on the current volume. Atlaso does not format a
+   Depot** through global Appliance Apply. Storage changes apply even with the HTTPS endpoint disabled because VCF
+   Helper uploads also use this directory. Disabling HTTPS alone leaves the current assignment in place even if the
+   volume is unavailable. Existing depot files remain on the current volume. Atlaso does not format a
    selected volume or copy existing files during reassignment. If the candidate mount fails, Atlaso keeps the current
    assignment in service. Once Apply succeeds, verify the selected volume and directory and reboot the appliance to
    confirm the assignment survives restart.
