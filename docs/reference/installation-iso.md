@@ -588,7 +588,9 @@ machine ID and Ed25519 public host key; they do not read private keys or applian
 does not establish equality of all installed RPMs, PowerShell modules, trust material, or notices. Network isolation
 remains in effect by default, so this option alone does not establish host-facing API or Appliance Update acceptance.
 
-Add `-InspectContent` alongside `-InspectInstalled` to run five additional checks against that same original ISO:
+Add `-InspectContent` alongside `-InspectInstalled` to run five additional checks against that same original ISO.
+For media that selects `iputils`, the installed identity check also requires a reply from `ping 127.0.0.1` after
+booting without the ISO.
 
 - **Assets:** compare copied source, deployed shared files, their ownership/modes, and public update trust keys.
 - **Python:** reuse the signed software verifier and locked wheel-environment inspector to compare installed

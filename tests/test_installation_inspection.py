@@ -19,6 +19,7 @@ import pycdlib
 import pytest
 
 from scripts.installation import inspection
+from scripts.installation.content_inspection import SOURCE_MEMBERS
 from scripts.installation.inspection import (
     expected_inputs,
     guest_program,
@@ -39,7 +40,8 @@ def _add(iso: pycdlib.PyCdlib, iso_path: str, rr_name: str, content: bytes) -> N
     iso.add_fp(stream, len(content), iso_path=iso_path, rr_name=rr_name)
 
 
-def _iso(path: Path, *, development: bool = True, helper_inventory_valid: bool = True) -> str:
+def _iso(path: Path, *, development: bool = True, helper_inventory_valid: bool = True,
+         content_sources: bool = False, packages: list[str] | None = None) -> str:
     """Create minimal development or production media and return its digest.
 
     Args:
@@ -67,6 +69,8 @@ def _iso(path: Path, *, development: bool = True, helper_inventory_valid: bool =
         "source/scripts/interop/routing_deployment_inspection.py": b"inspector source",
         "source/scripts/appliance/atlaso-helper": b"installer helper\r\n",
     }
+    if content_sources:
+        inventory.update({name: f"fixture:{name}".encode() for name in SOURCE_MEMBERS})
     files = [
         {"path": name, "size": len(content), "sha256": hashlib.sha256(content).hexdigest()}
         for name, content in sorted(inventory.items())
@@ -79,6 +83,8 @@ def _iso(path: Path, *, development: bool = True, helper_inventory_valid: bool =
         "source_commit": "c" * 40,
         "files": files,
     }
+    if content_sources:
+        manifest["packages"] = packages or []
     if development:
         manifest["development"] = {"schema": 1, "software_source_commit": commit, "non_production": True}
     media = pycdlib.PyCdlib()
@@ -90,6 +96,8 @@ def _iso(path: Path, *, development: bool = True, helper_inventory_valid: bool =
     media.add_directory("/ATLASO/SOURCE/IMAGE", rr_name="image")
     media.add_directory("/ATLASO/SOURCE/IMAGE/COMMON", rr_name="common")
     media.add_directory("/ATLASO/SOURCE/IMAGE/COMMON/SCRIPTS", rr_name="scripts")
+    if content_sources:
+        media.add_directory("/ATLASO/SOURCE/IMAGE/COMMON/POWERSHELL", rr_name="powershell")
     media.add_directory("/ATLASO/SOURCE/SCRIPTS", rr_name="scripts")
     media.add_directory("/ATLASO/SOURCE/SCRIPTS/INTEROP", rr_name="interop")
     media.add_directory("/ATLASO/SOURCE/SCRIPTS/APPLIANCE", rr_name="appliance")
@@ -219,7 +227,7 @@ def _report(expected: dict[str, object]) -> bytes:
     Args:
         expected: Complete public ISO expectation fixture.
     """
-    return json.dumps({
+    report = {
         "schema": 1,
         "machine_id_sha256": "1" * 64,
         "host_key_sha256": "SHA256:" + "A" * 43,
@@ -229,7 +237,10 @@ def _report(expected: dict[str, object]) -> bytes:
         "wheel_payload_sha256": "2" * 64,
         "installed_payload_sha256": "2" * 64,
         "verified_payload_files": 73,
-    }, separators=(",", ":")).encode()
+    }
+    if "loopback_ping_required" in expected:
+        report["loopback_ping_verified"] = expected["loopback_ping_required"]
+    return json.dumps(report, separators=(",", ":")).encode()
 
 
 def test_validate_report_returns_only_allowlisted_public_identity() -> None:
@@ -243,6 +254,55 @@ def test_validate_report_returns_only_allowlisted_public_identity() -> None:
         "schema", "machine_id_sha256", "host_key_sha256", "version", "source_commit",
         "wheel_sha256", "wheel_payload_sha256", "installed_payload_sha256", "verified_payload_files",
     }
+
+
+@pytest.mark.parametrize(("packages", "expected_ping"), [([], False), (["iputils", "python3"], True)])
+def test_content_admission_binds_ping_selection_to_iso_packages(packages: list[str], expected_ping: bool,
+                                                                 monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Content preparation selects ping from the original checksum-admitted ISO."""
+    from scripts.installation import content_inspection
+
+    image = tmp_path / "content.iso"
+    digest = _iso(image, content_sources=True, packages=packages)
+    monkeypatch.setattr(content_inspection, "prepare_content_inputs", lambda *_args: [])
+
+    expected, checks = inspection._admitted_inputs(image, digest, content=True, loopback_ping=True)
+    legacy_expected, _ = inspection._admitted_inputs(image, digest, content=True)
+
+    assert expected["loopback_ping_required"] is expected_ping
+    assert "loopback_ping_required" not in legacy_expected
+    assert checks == []
+
+
+def test_loopback_ping_expectation_adds_a_bounded_console_check() -> None:
+    """The content-enabled identity probe runs a short IPv4 loopback ping."""
+    expected = {**_expected(), "loopback_ping_required": True}
+    command = guest_program(expected)
+    encoded = re.search(r'b64decode\("([A-Za-z0-9+/=]+)"\)', command)
+    assert encoded is not None
+    program = zlib.decompress(base64.b64decode(encoded.group(1))).decode()
+
+    assert len(command) <= 3500
+    assert 'subprocess.run(["ping","-4","-n","-c","1","-W","2","127.0.0.1"]' in program
+    assert "check=True" in program and "timeout=4" in program
+
+
+@pytest.mark.parametrize("ping_verified", [False, 1, "true"])
+def test_validate_report_requires_positive_ping_when_iso_installs_iputils(ping_verified: object) -> None:
+    """Reject reports that do not prove the selected media-bound ping check."""
+    expected = {**_expected(), "loopback_ping_required": True}
+    report = json.loads(_report(expected))
+    report["loopback_ping_verified"] = ping_verified
+
+    with pytest.raises(ValueError, match="loopback ping"):
+        validate_report(json.dumps(report).encode(), expected)
+
+
+def test_validate_report_preserves_legacy_reports_for_media_without_iputils() -> None:
+    """Continue accepting prior identity-only report shapes for old media."""
+    result = validate_report(_report(_expected()), _expected())
+
+    assert "loopback_ping_verified" not in result
 
 
 @pytest.mark.parametrize("change", [
@@ -407,6 +467,49 @@ def test_guest_program_executes_existing_verified_helpers(tmp_path: Path) -> Non
     report_bytes = base64.b64decode(marker.removeprefix("ATLASO-INSPECTION:").removesuffix(":END"))
     report = validate_report(report_bytes, expected)
     assert report["machine_id_sha256"] == hashlib.sha256(b"1234567890abcdef1234567890abcdef").hexdigest()
+
+
+@pytest.mark.parametrize("ping_fails", [False, True])
+def test_guest_program_reports_loopback_ping_only_after_success(ping_fails: bool, tmp_path: Path) -> None:
+    """An admitted iputils ISO fails closed when its bounded ping does not complete.
+
+    Args:
+        ping_fails: Whether the simulated ping command fails.
+        tmp_path: Task-owned isolated guest filesystem fixture.
+    """
+    expected, site = _prepare_guest_tree(tmp_path)
+    expected["loopback_ping_required"] = True
+    command = guest_program(expected, atlaso_root=tmp_path / "atlaso", software_root=tmp_path / "software",
+                            identity_root=tmp_path)
+    encoded = re.search(r'b64decode\("([A-Za-z0-9+/=]+)"\)', command)
+    assert encoded is not None
+    program = zlib.decompress(base64.b64decode(encoded.group(1))).decode()
+    runner = (
+        "import os,sys,subprocess\n"
+        "os.O_NOFOLLOW=getattr(os,'O_NOFOLLOW',0)\n"
+        "def ping(args, **kwargs):\n"
+        " assert args == ['ping','-4','-n','-c','1','-W','2','127.0.0.1']\n"
+        " assert kwargs == {'check': True, 'stdout': subprocess.DEVNULL, 'stderr': subprocess.DEVNULL, 'timeout': 4}\n"
+        + (" raise OSError('private ping fixture')\n" if ping_fails else " return subprocess.CompletedProcess(args,0)\n")
+        +
+        "subprocess.run=ping\n"
+        "sys.path.insert(0," + repr(str(site)) + ")\n"
+        "exec(" + repr(program) + ")"
+    )
+    result = subprocess.run([sys.executable, "-B", "-I", "-c", runner], capture_output=True,
+                            check=False, timeout=15)
+
+    assert result.returncode == 0
+    marker = result.stdout.decode("ascii").strip()
+    if ping_fails:
+        assert marker == "ATLASO-INSPECTION-FAILED:public-identities"
+        assert result.stderr == b""
+    else:
+        assert marker.startswith("ATLASO-INSPECTION:") and marker.endswith(":END")
+        raw_report = json.loads(base64.b64decode(marker.removeprefix("ATLASO-INSPECTION:").removesuffix(":END")))
+        assert raw_report["loopback_ping_verified"] is True
+        report = validate_report(json.dumps(raw_report).encode(), expected)
+        assert "loopback_ping_verified" not in report
 
 
 def test_guest_refuses_missing_staged_software_without_detail(tmp_path: Path) -> None:
