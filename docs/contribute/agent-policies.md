@@ -2276,9 +2276,10 @@ preserved with their affected subsystem below. Keep new requirements at their to
 
 - VCF Offline Depot is a static HTTP(S) depot endpoint backed by nginx. Its installed storage default is
   `/mnt/atlaso-vcf-offline-depot`. Depot Settings derives new assignments by appending `vcf-offline-depot` to the mount
-  path of an applied Storage Volumes registration. Appliance Apply attaches the selected directory. A storage change
-  preserves the previous files and keeps VCFDT and `/PROD/` on the same storage.
-  Keep a registered backup volume out of the depot picker while Backups selects or uses it.
+  path of an applied Storage Volumes registration. Appliance Apply attaches the selected directory and keeps VCFDT and
+  `/PROD/` on the same storage. The shared wizard requires Move, Leave, or Delete when changing directories. Apply
+  verifies the copy before removing originals on Move, and Delete requires the exact previous path confirmation.
+  Keep volumes selected or applied by another VCF service out of each service's picker.
 - The default VCF Offline Depot HTTP user is `vcf-depot`. Keep it visible in Users, selectable by the depot service, and
   disabled while VCF Offline Depot desired state is off.
 - Apply Local Users before VCF Offline Depot when the selected HTTP user is new, renamed, disabled/enabled, has a

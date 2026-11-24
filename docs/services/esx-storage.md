@@ -113,12 +113,14 @@ model, serial, WWN, size, and stable identity and requires the exact text `FORMA
 authorization belongs only to that appliance-apply job and the exact manifest hash/device identity; it is not desired
 state and is not placed in baselines or settings backups.
 
-Registered volumes can also hold VCF Backup files or the VCF Offline Depot. Configure those assignments in **VCF
-Backups → SFTP Settings** or **VCF Offline Depot → Depot Settings** after the volume is registered. Atlaso appends
-`vcf-backups` or `vcf-offline-depot` to the volume's mount path, so the two services may share a volume. Review a
-reassignment through the service's global Appliance Apply plan. Existing data remains on its current volume. Changing an
-assignment does not format a volume or copy files. After Apply, verify reads and writes under the selected directory,
-then reboot and confirm the assignment remains active.
+After registering a volume, open **Change storage** in **VCF Backups → SFTP Settings**, **VCF Offline Depot → Depot
+Settings**, or **VCF Private Registry**. A registered volume can serve one VCF service at a time. Atlaso appends
+`vcf-backups`, `vcf-offline-depot`, or `vcf-registry` to the selected mount path.
+
+Review the reassignment in Appliance Apply. **Move** copies and verifies the files before removing the originals.
+**Leave** keeps the files in the previous directory. **Delete** removes the old files after switching and requires the
+exact confirmation shown in Apply. After Apply, verify reads and writes under the selected directory, then reboot and
+confirm the assignment remains active.
 
 When a virtual SCSI controller does not expose a serial or WWN, the appliance udev policy creates a stable
 topology-derived `atlaso-path-*` link under `/dev/disk/by-id`. The complete topology identity and fingerprint are still
@@ -130,7 +132,7 @@ the successfully created ext4 filesystem and its UUID-based managed fstab entry 
 an idempotent retry continue from it. Each formatted disk is persisted before apply advances to another failure-prone
 volume. A retained filesystem keeps ownership of its managed mount path: a later blank volume cannot reuse that path
 with a different UUID, even when it uses the same volume name. Resolve or detach the retained disk before assigning
-that name to another filesystem. V1 has no wipe, reformat, or delete-data action.
+that name to another filesystem. Disk formatting is available only when initializing a blank volume.
 
 ## Share paths and exports
 
