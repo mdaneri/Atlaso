@@ -185,6 +185,16 @@ profile, and complete RPM transaction are admitted again for each operation. A d
 snapshot does not establish capture ownership. Do not adopt receipts, caches, media, VMs, or exhausted
 validation budgets from another task.
 
+## Pull request preflight
+
+The advisory **Photon snapshot preflight** CI job compares installer requirements in the pull request candidate
+with its exact base. Open the job summary to see package additions and removals, changed installer or runtime
+pins, and changed input files such as the PowerCLI lock. A changed fingerprint requires a compatible approved
+capture for release staging. When the requirements match, the pull request adds no new capture requirement.
+
+The preflight compares source inputs. Protected release admission checks the configured capture's compatibility,
+age, and provenance. Use the native refresh phases below when a compatible capture is needed.
+
 ## Run the phases
 
 1. **Initialize, then drift.** Inspect the complete selected package/runtime-profile set against current
