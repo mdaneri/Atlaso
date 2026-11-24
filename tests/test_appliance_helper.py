@@ -16399,7 +16399,8 @@ def test_vcf_storage_path_syntax_matches_service_and_helper(path, valid):
 
 
 @pytest.mark.parametrize("role", ["backup", "depot"])
-@pytest.mark.parametrize("mismatch", [None, "uuid", "volume", "source", "target", "ambiguity", "unavailable"])
+@pytest.mark.parametrize("mismatch", [None, "uuid", "volume", "source", "target", "ambiguity", "unavailable",
+                                      "dedicated", "unrecorded", "wrong-original"])
 def test_esx_storage_admits_only_verified_vcf_service_binds(monkeypatch, tmp_path, role, mismatch):
     """Accept additional mounts only when the applied VCF assignment matches the live bind.
 
@@ -16407,11 +16408,14 @@ def test_esx_storage_admits_only_verified_vcf_service_binds(monkeypatch, tmp_pat
         monkeypatch: Isolated disk and mount observations.
         tmp_path: Existing fixture state directory.
         role: VCF service using the ESX volume.
-        mismatch: Condition that invalidates an otherwise legitimate service bind.
+        mismatch: Live mount arrangement and any condition that makes it invalid.
     """
     helper = load_helper_module()
     volume = Path("/mnt/data")
-    target = helper._vcf_storage_target(role)
+    target = tmp_path / role
+    target.mkdir()
+    verifier = tmp_path / "layout.py"
+    stacked = mismatch in {"dedicated", "unrecorded", "wrong-original"}
     observed = target / "unknown" if mismatch == "target" else target
     assignment = {"uuid": "different" if mismatch == "uuid" else "uuid",
                   "volume_path": "/mnt/other" if mismatch == "volume" else str(volume)}
@@ -16420,6 +16424,21 @@ def test_esx_storage_admits_only_verified_vcf_service_binds(monkeypatch, tmp_pat
     inventory = {"blockdevices": [{"type": "disk", "path": device, "kname": "atlaso-test", "fstype": "ext4",
                                    "uuid": "uuid", "mountpoints": mountpoints}]}
     source = volume / role
+
+    def read_mounts(command, **_kwargs):
+        """Read either the disk inventory or the original filesystem hidden under the service bind.
+
+        Args:
+            command: Native inventory or shadowed filesystem query.
+            **_kwargs: Bounded subprocess options.
+        """
+        if command[0] == "findmnt":
+            assert "--shadowed" in command and str(target) in command
+            original_uuid = "other-disk" if mismatch == "wrong-original" else "installed-disk"
+            return subprocess.CompletedProcess(command, 0, json.dumps({
+                "filesystems": [{"uuid": original_uuid, "fstype": "ext4"}],
+            }), "")
+        return subprocess.CompletedProcess(command, 0, json.dumps(inventory), "")
 
     def live_source(requested_role, requested_assignment):
         """Return the verified source or model an unavailable registered volume.
@@ -16434,8 +16453,19 @@ def test_esx_storage_admits_only_verified_vcf_service_binds(monkeypatch, tmp_pat
         return source
 
     monkeypatch.setattr(helper, "VCF_STORAGE_STATE_DIR", tmp_path)
+    monkeypatch.setattr(helper, "VCF_STORAGE_INSTALLATION_LAYOUT", verifier)
+    monkeypatch.setattr(helper, "_vcf_storage_target", lambda selected: tmp_path / selected)
+    monkeypatch.setattr(helper.runpy, "run_path", lambda _: {
+        "installation_profile": lambda: True,
+        "load_layout": lambda: {"mounts": [] if mismatch == "unrecorded" else [
+            {"target": str(target), "uuid": "installed-disk", "filesystem": "ext4"},
+        ]},
+    })
+    lstat = Path.lstat
+    monkeypatch.setattr(Path, "lstat", lambda path: SimpleNamespace(st_mode=stat.S_IFREG | 0o644, st_uid=0)
+                        if path == verifier else lstat(path))
     monkeypatch.setattr(helper, "_command_path", lambda command: command)
-    monkeypatch.setattr(helper, "_run", lambda command: subprocess.CompletedProcess(command, 0, json.dumps(inventory), ""))
+    monkeypatch.setattr(helper, "_run", read_mounts)
     monkeypatch.setattr(helper, "_esx_storage_by_id_map", lambda: {device: "/dev/disk/by-id/data"})
     monkeypatch.setattr(helper, "_esx_storage_os_devices", set)
     monkeypatch.setattr(helper, "_esx_storage_mount_is_writable", lambda path: path == str(volume))
@@ -16445,14 +16475,14 @@ def test_esx_storage_admits_only_verified_vcf_service_binds(monkeypatch, tmp_pat
     monkeypatch.setattr(helper, "_vcf_storage_read", lambda _: assignment)
     monkeypatch.setattr(helper, "_vcf_storage_live_source", live_source)
     monkeypatch.setattr(helper, "_vcf_storage_find_mount",
-                        lambda path, _: [str(path)] * (2 if mismatch == "ambiguity" else 1))
+                        lambda path, _: [str(path)] * (3 if mismatch == "ambiguity" else 1 + stacked))
     monkeypatch.setattr(helper, "_vcf_storage_mounted",
                         lambda src, dest: (src, dest) == (source, target) and mismatch != "source")
 
     entry, = helper._esx_storage_inventory()
     assert entry["mount_path"] == str(volume)
     errors = helper._esx_storage_mounted_disk_errors(entry, mount_path=volume)
-    assert errors == (["has unexpected additional mounts"] if mismatch else [])
+    assert errors == ([] if mismatch in {None, "dedicated"} else ["has unexpected additional mounts"])
 
 
 def test_vcf_storage_depot_initializes_prod_as_atlaso(monkeypatch, tmp_path):

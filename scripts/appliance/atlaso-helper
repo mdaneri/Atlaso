@@ -20872,8 +20872,12 @@ def _vcf_storage_is_bound(role: str, expected_uuid: str = "", *, expected_volume
     return _vcf_storage_mounted(source, _vcf_storage_target(role))
 
 
-def _vcf_storage_verify_installation() -> None:
-    """Keep checking the original ISO filesystems after a service bind covers one."""
+def _vcf_storage_verify_installation(*, shadowed_target: Path | None = None) -> None:
+    """Keep checking the original ISO filesystems after a service bind covers one.
+
+    Args:
+        shadowed_target: Exact target to check beneath an independently verified service bind.
+    """
     path = VCF_STORAGE_INSTALLATION_LAYOUT
     _vcf_storage_root_directory(path.parent)
     info = path.lstat()
@@ -20882,15 +20886,19 @@ def _vcf_storage_verify_installation() -> None:
     verifier = runpy.run_path(str(path))
     if not verifier["installation_profile"]():
         raise ValueError("The installed storage profile is unavailable.")
-    layout = verifier["load_layout"]()
+    mounts = verifier["load_layout"]()["mounts"]
+    if shadowed_target is not None:
+        mounts = [mount for mount in mounts if mount["target"] == str(shadowed_target)]
+        if len(mounts) != 1:
+            raise ValueError("The original VCF mount is absent from the installation receipt.")
     roles = {str(_vcf_storage_target(role)): role for role in ("backup", "depot")}
-    for mount in layout["mounts"]:
+    for mount in mounts:
         target = Path(mount["target"])
         if target.resolve(strict=True) != target:
             raise ValueError("The installed filesystem mount ancestry changed.")
         command = ["findmnt", "--json", "--mountpoint", str(target), "--output", "UUID,FSTYPE"]
         role = roles.get(str(target))
-        if role and _vcf_storage_is_bound(role):
+        if shadowed_target is not None or (role and _vcf_storage_is_bound(role)):
             command.append("--shadowed")
         result = _run(command, timeout=10)
         expected = [{"uuid": mount["uuid"], "fstype": mount["filesystem"]}]
@@ -30953,8 +30961,14 @@ def _esx_storage_vcf_bind_matches(path: str, *, uuid: str, volume_path: str) -> 
         if path != str(target):
             continue
         try:
-            return (_vcf_storage_find_mount(target, "TARGET") == [path]
-                    and _vcf_storage_is_bound(role, uuid, expected_volume_path=volume_path))
+            mounts = _vcf_storage_find_mount(target, "TARGET")
+            if mounts not in ([path], [path, path]):
+                return False
+            if not _vcf_storage_is_bound(role, uuid, expected_volume_path=volume_path):
+                return False
+            if len(mounts) == 2:
+                _vcf_storage_verify_installation(shadowed_target=target)
+            return True
         except (OSError, ValueError, subprocess.TimeoutExpired):
             return False
     return False
