@@ -450,6 +450,11 @@ confirmation targets only those jobs and is not scheduled for ordinary interrupt
 Only actual successful rollback retires the journal and releases the lock;
 failed confirmation remains pending. Shutdown waits for the bounded consumer instead of detaching it.
 
+When rollback restores the pre-routing-domain DHCP configuration, the management subnet and DHCP host routes can
+return to the main table. Atlaso can retire their temporary table-100 copies once it verifies the original live
+on-link routes in main and confirms that the transition's unbound IPv4 fallback is the only selector for table 100.
+The local-source guard stays active until the remaining rollback checks succeed.
+
 Runtime additions to the captured old listener set exclude tentative, conflicted, deprecated, expired, and unpreferred
 addresses, matching normal inventory eligibility. Explicitly configured listener addresses remain mandatory.
 After restored-link reconfiguration, rollback waits up to thirty seconds for three consecutive complete native
