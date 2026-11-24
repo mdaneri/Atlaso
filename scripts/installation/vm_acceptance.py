@@ -12,6 +12,7 @@ import subprocess
 import sys
 import time
 import uuid
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -34,10 +35,87 @@ CHECKS = [
 INSTALL_SECONDS = 3 * 60 * 60
 BOOT_SECONDS = 15 * 60
 MINIMUM_FREE_BYTES = 16 * 1024**3
+FIRST_NETWORK_DIAGNOSTICS_VERSION = (0, 9, 523)
+ACTIVE_STATES = "active|inactive|activating|deactivating|failed|reloading|refreshing|maintenance|unknown"
+STARTUP_UNITS = (
+    "atlaso.service", "atlaso-worker.service", "atlaso-bootstrap-https.service",
+    "atlaso-data-disks.service", "atlaso-guest-agent-select.service", "atlaso-wan.service",
+    "systemd-networkd-wait-online.service",
+)
+JOURNAL_SIGNALS = {
+    "dependency failed": "dependency_failed",
+    "start request repeated too quickly": "start_limit",
+    "timed out": "timeout",
+    "permission denied": "permission_denied",
+    "no space left on device": "disk_full",
+    "read-only file system": "read_only_file_system",
+    "address already in use": "address_in_use",
+    "no such file or directory": "missing_file",
+    "modulenotfounderror": "missing_python_module",
+    "importerror": "python_import_error",
+    "traceback": "python_traceback",
+}
 
 
 class AcceptanceError(RuntimeError):
     """Represent a failed release VM acceptance checkpoint."""
+
+
+class ScreenTimeout(AcceptanceError):
+    """Represent an expected console response that OCR did not recognize in time."""
+
+
+@dataclass
+class FailureEvidence:
+    """Retain only fixed labels, allowlisted service states and bounded status codes."""
+
+    checkpoint: str = "prepare VM fixture"
+    boot_screen: str | None = None
+    qemu_exited: bool | None = None
+    service_states: dict[str, list[str]] = field(default_factory=dict)
+    units: dict[str, str] = field(default_factory=dict)
+    unit_result: str | None = None
+    exec_main_status: int | None = None
+    journal_signals: list[str] = field(default_factory=list)
+    collection: str = "not_attempted"
+
+    def record_state(self, unit: str, state: str) -> None:
+        """Record and log changed, normalized observations, keeping the last eight per unit.
+
+        Args:
+            unit: Atlaso systemd unit being checked.
+            state: Allowlisted service or recognition state.
+        """
+        states = self.service_states.setdefault(unit, [])
+        if not states or states[-1] != state:
+            states.append(state)
+            del states[:-8]
+            print(f"{unit} state: {state}", flush=True)
+
+    def write(self, receipt: Path, args: argparse.Namespace) -> None:
+        """Seal a separate failure record after exact media and fixture admission.
+
+        Args:
+            receipt: Planned success receipt path used to derive the failure record path.
+            args: Validated version, commit and ISO digest options.
+        """
+        write_new_json(failure_path(receipt), {
+            "schema": 1,
+            "kind": "atlaso-vm-acceptance-failure",
+            "version": args.version,
+            "commit": args.commit,
+            "iso_sha256": args.sha256,
+            **vars(self),
+        })
+
+
+def failure_path(receipt: Path) -> Path:
+    """Return the diagnostic destination, separate from the publishable success receipt.
+
+    Args:
+        receipt: Planned success receipt path.
+    """
+    return receipt.with_name(receipt.stem + "-failure.json")
 
 
 def fixture_intent(output: Path, receipt: Path, version: str, commit: str, iso_sha256: str) -> dict[str, Any]:
@@ -104,8 +182,8 @@ def require_inputs(args: argparse.Namespace) -> tuple[Path, Path, Path, Path, di
     if shutil.disk_usage(output.parent).free < MINIMUM_FREE_BYTES:
         raise AcceptanceError("at least 16 GiB of runner space must remain after ISO reconstruction")
     intent = receipt.with_name(receipt.name + ".fixture-intent.json")
-    if output.exists() or output.is_symlink() or receipt.exists() or intent.exists():
-        raise AcceptanceError("VM output, receipt, and ownership intent destinations must be absent")
+    if any(path.exists() or path.is_symlink() for path in (output, receipt, intent, failure_path(receipt))):
+        raise AcceptanceError("VM output, receipt, ownership intent, and failure destinations must be absent")
     if receipt.parent == output or output == receipt or receipt.is_relative_to(output):
         raise AcceptanceError("durable VM receipt must be outside the disposable output root")
     socket_name = f"atlaso-{'0' * 32}-install-qmp.sock"
@@ -363,7 +441,7 @@ def screen_text(qmp: Qmp, directory: Path) -> str:
         prepared.unlink(missing_ok=True)
 
 
-def wait_screen(qmp: Qmp, directory: Path, predicate, label: str, seconds: int) -> str:
+def wait_screen(qmp: Qmp, directory: Path, predicate, label: str, seconds: float) -> str:
     """Wait for the expected guest checkpoint within its deadline.
 
     Args:
@@ -382,7 +460,7 @@ def wait_screen(qmp: Qmp, directory: Path, predicate, label: str, seconds: int) 
             print(f"Reached {label}.", flush=True)
             return text
         time.sleep(2)
-    raise AcceptanceError(f"guest did not reach the expected {label} screen")
+    raise ScreenTimeout(f"guest did not reach the expected {label} screen")
 
 
 def is_disk_selection_screen(text: str) -> bool:
@@ -579,6 +657,30 @@ def installed_login_prompt(text: str) -> bool:
     return re.search(r"\btty2\b", text, re.I) is not None and re.search(r"(?im)^[ \t]*[\w.-]+ login:[ \t]*$", text) is not None
 
 
+def observe_boot_console(text: str, evidence: FailureEvidence) -> bool:
+    """Remember the last recognized pre-login boot screen without saving its text.
+
+    Args:
+        text: Transient OCR text from the boot console.
+        evidence: Record that receives a fixed boot screen category.
+    """
+    if installed_console_ready(text):
+        evidence.boot_screen = "atlaso_console"
+        return True
+    for pattern, screen in (
+        (r"kernel panic", "kernel_panic"),
+        (r"emergency mode|dracut:/#", "emergency_shell"),
+        (r"no bootable device|boot failed|uefi interactive shell", "firmware_boot_error"),
+        (r"grub|photon os.*boot", "bootloader"),
+        (r"\blogin:", "linux_login"),
+        (r"a start job is running|\bstarting\b|\bstarted\b", "linux_startup"),
+    ):
+        if re.search(pattern, text, re.I):
+            evidence.boot_screen = screen
+            break
+    return False
+
+
 def run_console_command(qmp: Qmp, command: str) -> None:
     """Clear the authenticated shell frame before each independently checked command.
 
@@ -600,7 +702,103 @@ def installed_identity_command(attribute: str, expected_name: str) -> str:
     return f"$P -BI -c 'import atlaso as a,os;print(a.{attribute}==os.getenv(\"{expected_name}\"))'"
 
 
-def check_installed_application(qmp: Qmp, output: Path, version: str, commit: str) -> None:
+def collect_service_failure(qmp: Qmp, output: Path, service: str, evidence: FailureEvidence) -> None:
+    """Summarize a fixed set of startup units and classify recent warnings from the failing unit.
+
+    Args:
+        qmp: Control connection to the authenticated guest.
+        output: Fixture directory used for transient console frames.
+        service: Atlaso systemd unit that failed to confirm activation.
+        evidence: Record that receives allowlisted unit and journal observations.
+    """
+    units = " ".join(STARTUP_UNITS)
+    try:
+        run_console_command(
+            qmp,
+            f"systemctl list-units --all --plain --no-legend --no-pager {units} "
+            "| awk '{print $1,$3}'; "
+            f"systemctl show -p Result -p ExecMainStatus {service}; printf 'UNITS %s\\n' DONE",
+        )
+        end = re.compile(r"(?im)^[ \t]*UNITS DONE[ \t]*$")
+        result = wait_screen(qmp, output, end.search, "startup unit diagnostics", 20)
+        for unit in STARTUP_UNITS:
+            match = re.search(rf"(?im)^[ \t]*{re.escape(unit)}[ \t]+({ACTIVE_STATES})[ \t]*$", result)
+            if match:
+                evidence.units[unit] = match[1].casefold()
+        match = re.search(
+            r"(?im)^Result=(success|resources|protocol|timeout|exit-code|signal|core-dump|watchdog|"
+            r"start-limit-hit|oom-kill|dependency|exec-condition|assert|skipped)[ \t]*$", result,
+        )
+        if match:
+            evidence.unit_result = match[1].casefold()
+        match = re.search(r"(?m)^ExecMainStatus=([0-9]{1,3})[ \t]*$", result)
+        if match and int(match[1]) <= 255:
+            evidence.exec_main_status = int(match[1])
+        if not evidence.units and evidence.unit_result is None and evidence.exec_main_status is None:
+            evidence.collection = "unit_summary_unavailable"
+    except (AcceptanceError, OSError, ValueError, subprocess.SubprocessError):
+        evidence.collection = "unit_summary_unavailable"
+
+    try:
+        signals = "|".join(JOURNAL_SIGNALS)
+        run_console_command(
+            qmp,
+            f"J=$(timeout 8 journalctl -b -u {service} -p warning -n 24 --no-pager -o cat 2>/dev/null); "
+            "S=$?; if [ $S = 0 ]; then "
+            f"printf '%s\\n' \"$J\" | grep -Eio '{signals}' | sort -fu; "
+            "fi; printf 'JOURNAL %s\\n' \"$S\"; unset J S",
+        )
+        end = re.compile(r"(?im)^[ \t]*JOURNAL [0-9]{1,3}[ \t]*$")
+        result = wait_screen(qmp, output, end.search, "startup journal diagnostics", 20)
+        if not re.search(r"(?im)^[ \t]*JOURNAL 0[ \t]*$", result):
+            raise AcceptanceError("the guest journal query did not complete")
+        lines = {line.strip().casefold() for line in result.splitlines()}
+        evidence.journal_signals = [code for text, code in JOURNAL_SIGNALS.items() if text in lines]
+        if evidence.collection == "not_attempted":
+            evidence.collection = "complete"
+    except (AcceptanceError, OSError, ValueError, subprocess.SubprocessError):
+        evidence.collection = "journal_unavailable" if evidence.collection == "not_attempted" else "unavailable"
+
+
+def check_installed_services(qmp: Qmp, output: Path, evidence: FailureEvidence) -> None:
+    """Require a fresh, unambiguous active reply for each service within its original deadline.
+
+    Args:
+        qmp: Control connection to the authenticated guest.
+        output: Fixture directory used for transient console frames.
+        evidence: Record that receives normalized service observations.
+    """
+    for prefix, service in zip(("APP", "WORKER"), STARTUP_UNITS[:2], strict=True):
+        evidence.checkpoint = f"{service} active"
+        deadline = time.monotonic() + 150
+        attempt = 0
+        active = False
+        while time.monotonic() < deadline:
+            attempt += 1
+            marker = f"{prefix} {attempt}"
+            pattern = re.compile(rf"(?im)^[ \t]*{marker}[ \t]+({ACTIVE_STATES})[ \t]*$")
+            run_console_command(qmp, f'printf "{marker} %s\\n" "$(systemctl is-active {service})"')
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                result = wait_screen(qmp, output, pattern.search, f"{service} state", min(25, remaining))
+            except ScreenTimeout:
+                evidence.record_state(service, "unrecognized")
+            else:
+                states = pattern.findall(result)
+                state = states[0].casefold() if len(states) == 1 else "ambiguous"
+                evidence.record_state(service, state)
+                if state == "active" and time.monotonic() <= deadline:
+                    active = True
+                    break
+            time.sleep(max(0, min(5, deadline - time.monotonic())))
+        if not active:
+            collect_service_failure(qmp, output, service, evidence)
+            raise AcceptanceError(f"{service} did not become active in the media-free boot")
+
+
+def check_installed_application(qmp: Qmp, output: Path, version: str, commit: str, evidence: FailureEvidence) -> None:
     """Verify installed build metadata, services, and local diagnostic execution.
 
     Args:
@@ -608,6 +806,7 @@ def check_installed_application(qmp: Qmp, output: Path, version: str, commit: st
         output: Fixture directory used for transient image files.
         version: Expected installed Atlaso version.
         commit: Expected installed source commit.
+        evidence: Sanitized failure information for the VM run.
     """
     for setup in ("P=/opt/atlaso/.venv/bin/python", f"export V={version}", f"export C={commit}"):
         run_console_command(qmp, setup)
@@ -615,26 +814,21 @@ def check_installed_application(qmp: Qmp, output: Path, version: str, commit: st
         ("__version__", "V", "installed Atlaso version"),
         ("__build_git_commit__", "C", "installed Atlaso source commit"),
     ):
+        evidence.checkpoint = label
         run_console_command(qmp, installed_identity_command(attribute, expected_name))
         result = wait_screen(qmp, output, lambda text: re.search(r"(?im)^[ \t]*(true|false)[ \t]*$", text), label, 30)
         if not re.search(r"(?im)^[ \t]*true[ \t]*$", result):
             raise AcceptanceError(f"the {label} differs from the verified release")
 
-    status_pattern = re.compile(r"(?im)^[ \t]*(active|inactive|activating|deactivating|failed|unknown)[ \t]*$")
-    for service in ("atlaso.service", "atlaso-worker.service"):
-        deadline = time.monotonic() + 150
-        while time.monotonic() < deadline:
-            run_console_command(qmp, f"systemctl is-active {service}")
-            result = wait_screen(qmp, output, status_pattern.search, f"{service} state", 25)
-            if [status.casefold() for status in status_pattern.findall(result)] == ["active"]:
-                break
-            time.sleep(5)
-        else:
-            raise AcceptanceError(f"{service} did not become active in the media-free boot")
+    check_installed_services(qmp, output, evidence)
     print("The installed version, source commit and both Atlaso services verified.", flush=True)
+
+    if tuple(map(int, version.split("."))) < FIRST_NETWORK_DIAGNOSTICS_VERSION:
+        return
 
     # Exercise the installed implementation as the service account, with the ISO
     # removed and no network peer. Keep console evidence to a public status line.
+    evidence.checkpoint = "installed network diagnostics"
     run_console_command(
         qmp,
         "runuser -u atlaso -- env ATLASO_DRY_RUN_SYSTEM_ADAPTERS=false $P -BI -c "
@@ -651,7 +845,9 @@ def check_installed_application(qmp: Qmp, output: Path, version: str, commit: st
     print("IPv4 and IPv6 loopback probes and localhost lookup verified.", flush=True)
 
 
-def verify_installed(qmp: Qmp, output: Path, version: str, commit: str, password: str) -> None:
+def verify_installed(
+    qmp: Qmp, output: Path, version: str, commit: str, password: str, evidence: FailureEvidence,
+) -> None:
     """Verify the production image through the ordinary authenticated native login.
 
     Args:
@@ -660,26 +856,34 @@ def verify_installed(qmp: Qmp, output: Path, version: str, commit: str, password
         version: Expected installed Atlaso version.
         commit: Expected installed source commit.
         password: Root password entered during this fixture's installation.
+        evidence: Sanitized failure information for the VM run.
     """
-    wait_screen(qmp, output, installed_console_ready, "media-free Atlaso appliance console", BOOT_SECONDS)
+    evidence.checkpoint = "media-free Atlaso appliance console"
+    evidence.boot_screen = "unrecognized"
+    wait_screen(qmp, output, lambda text: observe_boot_console(text, evidence), evidence.checkpoint, BOOT_SECONDS)
     qmp.send_key("alt", "f2")
-    wait_screen(qmp, output, installed_login_prompt, "native Photon tty2 login", 60)
+    evidence.checkpoint = "native Photon tty2 login"
+    wait_screen(qmp, output, installed_login_prompt, evidence.checkpoint, 60)
     type_text(qmp, "root")
+    evidence.checkpoint = "concealed Photon root authentication"
     wait_screen(
         qmp, output,
         lambda text: re.search(r"(?im)^[ \t]*pass[wu]ord[ \t]*:[ \t]*$", text),
         "concealed Photon root authentication", 45,
     )
     type_text(qmp, password)
+    evidence.checkpoint = "authenticated root shell"
     wait_screen(
         qmp, output, lambda text: re.search(r"(?m)^[ \t]*root@[^\r\n]{1,90}#[ \t]*$", text),
         "authenticated root shell", 45,
     )
-    check_installed_application(qmp, output, version, commit)
+    check_installed_application(qmp, output, version, commit, evidence)
     type_text(qmp, "exit")
 
 
-def install(iso: Path, output: Path, args: argparse.Namespace, passwords: dict[str, str]) -> None:
+def install(
+    iso: Path, output: Path, args: argparse.Namespace, passwords: dict[str, str], evidence: FailureEvidence,
+) -> None:
     """Install to the selected disk and verify the appliance without its media.
 
     Args:
@@ -687,6 +891,7 @@ def install(iso: Path, output: Path, args: argparse.Namespace, passwords: dict[s
         output: Owned output directory for this fixture.
         args: Validated firmware, accelerator, and control-socket options.
         passwords: Dedicated administrator and root passwords for the test guest.
+        evidence: Sanitized failure information for the VM run.
     """
     disk = output / "atlaso-target.qcow2"
     decoy = output / "atlaso-unselected.qcow2"
@@ -697,13 +902,16 @@ def install(iso: Path, output: Path, args: argparse.Namespace, passwords: dict[s
     subprocess.run(["qemu-img", "create", "-f", "qcow2", str(decoy), "4G"], check=True, capture_output=True, timeout=30)
     shutil.copyfile(decoy, decoy_baseline)
 
+    evidence.checkpoint = "start installer VM"
     process, qmp = start_qemu(iso, output, disk, vars_copy, args._ovmf_code, "install-qmp",
                                  abstract_sockets=args.abstract_sockets, accelerator=args.accelerator)
     try:
         timeout = time.monotonic() + INSTALL_SECONDS
-        screen = wait_screen(qmp, output, lambda text: "Install Atlaso offline" in text, "UEFI installer menu", 180)
+        evidence.checkpoint = "UEFI installer menu"
+        wait_screen(qmp, output, lambda text: "Install Atlaso offline" in text, evidence.checkpoint, 180)
         qmp.send_key("ret")
-        screen = wait_screen(qmp, output, is_disk_selection_screen, "native disk selection", 600)
+        evidence.checkpoint = "native disk selection"
+        screen = wait_screen(qmp, output, is_disk_selection_screen, evidence.checkpoint, 600)
         rows = list(DISK_ROW.finditer(screen))
         sizes = [row.group(1) for row in rows]
         if sizes.count("64") != 1 or sizes.count("4") != 1:
@@ -715,25 +923,37 @@ def install(iso: Path, output: Path, args: argparse.Namespace, passwords: dict[s
             ("SFTP backup storage", r"\bsftp backup storage\b"),
             ("VCFDT depot storage", r"\bvy?cfdt depot storage\b"),
         ):
+            evidence.checkpoint = title
             wait_screen(qmp, output, lambda text, pattern=pattern: re.search(pattern, text, re.I), title, 180)
             qmp.send_key("ret")
-        review = wait_screen(qmp, output, lambda text: "erase selected disks" in text.casefold(), "destructive layout review", 90)
+        evidence.checkpoint = "destructive layout review"
+        review = wait_screen(qmp, output, lambda text: "erase selected disks" in text.casefold(), evidence.checkpoint, 90)
         if REVIEW_DISK.findall(review) != ["64"]:
             raise AcceptanceError("destructive review did not identify only the intended 64 GiB target")
         qmp.send_key("left")
         qmp.send_key("ret")
+        evidence.checkpoint = "concealed installer credentials"
         enter_installer_passwords(qmp, output, passwords)
+        evidence.checkpoint = "installer-requested reboot"
         wait_for_installer_reboot(qmp, output, timeout)
+    except (AcceptanceError, OSError, ValueError, subprocess.SubprocessError):
+        evidence.qemu_exited = process.poll() is not None
+        raise
     finally:
         stop_qemu(process, qmp)
 
+    evidence.checkpoint = "start media-free VM"
     process, qmp = start_qemu(None, output, disk, vars_copy, args._ovmf_code, "boot-qmp",
                              abstract_sockets=args.abstract_sockets, accelerator=args.accelerator)
     try:
-        verify_installed(qmp, output, args.version, args.commit, passwords["root"])
+        verify_installed(qmp, output, args.version, args.commit, passwords["root"], evidence)
+    except (AcceptanceError, OSError, ValueError, subprocess.SubprocessError):
+        evidence.qemu_exited = process.poll() is not None
+        raise
     finally:
         stop_qemu(process, qmp)
 
+    evidence.checkpoint = "unselected disk comparison"
     comparison = subprocess.run(
         ["qemu-img", "compare", "-f", "qcow2", "-F", "qcow2", str(decoy_baseline), str(decoy)],
         capture_output=True,
@@ -758,13 +978,21 @@ def main() -> int:
     args = parser.parse_args()
     try:
         iso, output, receipt, _, passwords = require_inputs(args)
+        evidence = FailureEvidence()
         try:
-            install(iso, output, args, passwords)
+            install(iso, output, args, passwords, evidence)
+            evidence.checkpoint = "write successful acceptance receipt"
+            value = {"schema": 1, "version": args.version, "commit": args.commit,
+                     "iso_sha256": args.sha256, "checks": CHECKS}
+            write_new_json(receipt, value)
+        except (AcceptanceError, OSError, ValueError, subprocess.SubprocessError):
+            try:
+                evidence.write(receipt, args)
+            except OSError:
+                print("Could not seal VM acceptance failure evidence.", file=sys.stderr)
+            raise
         finally:
             passwords.clear()
-        value = {"schema": 1, "version": args.version, "commit": args.commit,
-                 "iso_sha256": args.sha256, "checks": CHECKS}
-        write_new_json(receipt, value)
         print("Atlaso VM acceptance passed.")
         return 0
     except (AcceptanceError, OSError, ValueError, subprocess.SubprocessError) as error:

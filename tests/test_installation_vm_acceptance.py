@@ -266,3 +266,193 @@ def test_final_receipt_is_new_and_contains_only_public_acceptance_fields(tmp_pat
     assert receipt.stat().st_mode & 0o777 == 0o600 if os.name != "nt" else True
     with pytest.raises(FileExistsError):
         vm_acceptance.write_new_json(receipt, value)
+
+
+def test_service_checks_require_current_unambiguous_replies(monkeypatch, tmp_path):
+    """Ignore stale replies and require one state for the current poll.
+
+    Args:
+        monkeypatch: Fixture that replaces console input and OCR.
+        tmp_path: Directory representing the VM fixture.
+    """
+    evidence = vm_acceptance.FailureEvidence()
+    commands = []
+    frames = iter([
+        ("APP 2 active", "APP 1 activating"),
+        ("APP 1 active", "APP 2 inactive\nAPP 2 active"),
+        ("APP 3 ACTIVE",),
+        ("APP 3 active", "WORKER 1 active"),
+    ])
+    monkeypatch.setattr(vm_acceptance, "run_console_command", lambda _qmp, command: commands.append(command))
+    monkeypatch.setattr(vm_acceptance.time, "sleep", lambda _seconds: None)
+
+    def wait_screen(_qmp, _output, predicate, _label, _seconds):
+        """Match the current frame and reject every stale frame.
+
+        Args:
+            _qmp: Unused control connection.
+            _output: Unused fixture directory.
+            predicate: Matcher for the current request.
+            _label: Unused checkpoint label.
+            _seconds: Unused checkpoint budget.
+        """
+        *stale, current = next(frames)
+        assert all(not predicate(frame) for frame in stale)
+        assert predicate(current)
+        return current
+
+    monkeypatch.setattr(vm_acceptance, "wait_screen", wait_screen)
+    vm_acceptance.check_installed_services(object(), tmp_path, evidence)
+
+    assert evidence.service_states == {
+        "atlaso.service": ["activating", "ambiguous", "active"],
+        "atlaso-worker.service": ["active"],
+    }
+    assert "WORKER 1 %s" in commands[-1]
+
+
+def test_service_timeout_keeps_gate_closed_and_collects_evidence(monkeypatch, tmp_path):
+    """Collect diagnostics after the deadline without admitting a success receipt.
+
+    Args:
+        monkeypatch: Fixture that controls the clock and mimics unrecognized console replies.
+        tmp_path: Directory representing the VM fixture.
+    """
+    evidence = vm_acceptance.FailureEvidence()
+    clock = iter([0, 0, 15, 150, 150])
+    collected = []
+    monkeypatch.setattr(vm_acceptance, "time", SimpleNamespace(monotonic=lambda: next(clock), sleep=lambda _: None))
+    monkeypatch.setattr(vm_acceptance, "run_console_command", lambda *_: None)
+
+    def wait_screen(*_):
+        """Simulate a console reply that OCR cannot recognize.
+
+        Args:
+            *_: Unused console wait arguments.
+        """
+        raise vm_acceptance.ScreenTimeout("unrecognized")
+
+    monkeypatch.setattr(vm_acceptance, "wait_screen", wait_screen)
+    monkeypatch.setattr(vm_acceptance, "collect_service_failure", lambda _vm, _out, unit, _: collected.append(unit))
+    with pytest.raises(vm_acceptance.AcceptanceError, match="atlaso.service did not become active"):
+        vm_acceptance.check_installed_services(object(), tmp_path, evidence)
+
+    assert evidence.service_states == {"atlaso.service": ["unrecognized"]}
+    assert collected == ["atlaso.service"]
+
+
+@pytest.mark.parametrize(("version", "probes_required"), [("0.9.522", False), ("0.9.523", True), ("1.0.0", True)])
+def test_acceptance_exercises_network_diagnostics_from_the_first_shipping_version(
+    monkeypatch, tmp_path, version, probes_required,
+):
+    """Apply the network probe requirement only to versions that ship it.
+
+    Args:
+        monkeypatch: Fixture that supplies synthetic console replies.
+        tmp_path: Directory representing the VM fixture.
+        version: Installed version to verify.
+        probes_required: Whether this version must exercise the network probes.
+    """
+    observed = []
+    monkeypatch.setattr(vm_acceptance, "run_console_command", lambda *_: None)
+    monkeypatch.setattr(vm_acceptance, "check_installed_services", lambda *_: observed.append("services"))
+
+    def wait_screen(_qmp, _output, predicate, label, _seconds):
+        """Supply the correct recognized frame for the current checkpoint.
+
+        Args:
+            _qmp: Unused control connection.
+            _output: Unused fixture directory.
+            predicate: Matcher for the current request.
+            label: Checkpoint used to choose a synthetic reply.
+            _seconds: Unused checkpoint budget.
+        """
+        observed.append(label)
+        response = "PROBES-OK" if label == "installed network diagnostics" else "True"
+        assert predicate(response)
+        return response
+
+    monkeypatch.setattr(vm_acceptance, "wait_screen", wait_screen)
+    vm_acceptance.check_installed_application(object(), tmp_path, version, "a" * 40, vm_acceptance.FailureEvidence())
+
+    expected = ["installed Atlaso version", "installed Atlaso source commit", "services"]
+    if probes_required:
+        expected.append("installed network diagnostics")
+    assert observed == expected
+
+
+def test_failed_acceptance_only_seals_allowlisted_evidence(monkeypatch, tmp_path, capsys):
+    """Write sanitized failure evidence and withhold the success receipt.
+
+    Args:
+        monkeypatch: Fixture that supplies synthetic service and journal diagnostics.
+        tmp_path: Directory that contains the acceptance and diagnostic destinations.
+        capsys: Fixture used to check public stdout and stderr.
+    """
+    receipt = tmp_path / "vm-acceptance.json"
+    iso = tmp_path / "exact.iso"
+    password = "sensitive-fixture-value"
+    monkeypatch.setattr(vm_acceptance.sys, "argv", [
+        "vm_acceptance", "--iso", str(iso), "--output", str(tmp_path / "fixture"),
+        "--receipt", str(receipt), "--version", "0.9.522", "--commit", "a" * 40, "--sha256", "b" * 64,
+    ])
+    monkeypatch.setattr(vm_acceptance, "require_inputs", lambda _: (
+        iso, tmp_path, receipt, tmp_path / "intent.json", {"admin": password, "root": password},
+    ))
+    monkeypatch.setattr(vm_acceptance, "run_console_command", lambda *_: None)
+    frames = iter([
+        f"atlaso.service failed\natlaso-bootstrap-https.service inactive\nsecret.service failed\n"
+        f"Result=exit-code\nExecMainStatus=203\n{password}\nUNITS DONE",
+        f"{password}\nPermission denied\nNo space left on device: {password}\nJOURNAL 0",
+    ])
+
+    def wait_screen(_qmp, _output, predicate, _label, _seconds):
+        """Supply a synthetic diagnostic frame with recognizable and untrusted text.
+
+        Args:
+            _qmp: Unused control connection.
+            _output: Unused fixture directory.
+            predicate: Matcher for the diagnostic completion marker.
+            _label: Unused checkpoint label.
+            _seconds: Unused checkpoint budget.
+        """
+        frame = next(frames)
+        assert predicate(frame)
+        return frame
+
+    def failed_install(_iso, output, _args, _passwords, evidence):
+        """Simulate a failed service check after the disk-only boot.
+
+        Args:
+            _iso: Unused installer image.
+            output: Directory representing the VM fixture.
+            _args: Unused installer arguments.
+            _passwords: Unused concealed credentials.
+            evidence: Record populated by the diagnostic functions.
+        """
+        assert not vm_acceptance.observe_boot_console(f"{password}\nA start job is running", evidence)
+        evidence.checkpoint = "atlaso.service active"
+        evidence.record_state("atlaso.service", "failed")
+        vm_acceptance.collect_service_failure(object(), output, "atlaso.service", evidence)
+        raise vm_acceptance.AcceptanceError("service activation failed")
+
+    monkeypatch.setattr(vm_acceptance, "wait_screen", wait_screen)
+    monkeypatch.setattr(vm_acceptance, "install", failed_install)
+    assert vm_acceptance.main() == 1
+    assert not receipt.exists()
+    raw = vm_acceptance.failure_path(receipt).read_text()
+    record = json.loads(raw)
+    assert record["kind"] == "atlaso-vm-acceptance-failure"
+    assert record["commit"] == "a" * 40
+    assert record["iso_sha256"] == "b" * 64
+    assert record["checkpoint"] == "atlaso.service active"
+    assert record["boot_screen"] == "linux_startup"
+    assert record["units"] == {"atlaso.service": "failed", "atlaso-bootstrap-https.service": "inactive"}
+    assert record["unit_result"] == "exit-code"
+    assert record["exec_main_status"] == 203
+    assert record["journal_signals"] == ["permission_denied"]
+    assert "checks" not in record
+    assert password not in raw
+    captured = capsys.readouterr()
+    assert "atlaso.service state: failed" in captured.out
+    assert password not in captured.out + captured.err
