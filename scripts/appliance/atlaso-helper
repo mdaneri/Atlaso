@@ -20816,15 +20816,12 @@ def _vcf_storage_unbind(target: Path) -> None:
         raise ValueError("The current VCF storage is busy. Retry after active access has drained.")
 
 
-def _vcf_storage_tree_ready(path: Path, *, empty: bool = False, allow_exact_mount: bool = False,
-                            allow_empty_prod: bool = False) -> None:
+def _vcf_storage_tree_ready(path: Path, *, allow_exact_mount: bool = False) -> None:
     """Admit an ordinary service directory without nested mountpoints.
 
     Args:
         path: Source or candidate directory to inspect.
-        empty: Require a candidate directory to contain no entries.
         allow_exact_mount: Whether this is an admitted installed default mount root.
-        allow_empty_prod: Whether an empty initialized Depot PROD scaffold is allowed.
     """
     if path.is_symlink() or not path.is_dir():
         raise ValueError("VCF storage migration requires an ordinary directory without nested mounts.")
@@ -20836,13 +20833,6 @@ def _vcf_storage_tree_ready(path: Path, *, empty: bool = False, allow_exact_moun
         raise ValueError("VCF storage migration refuses a mounted service directory.")
     if any(target != path and target.is_relative_to(path) for target in targets):
         raise ValueError("VCF storage migration refuses nested mounts.")
-    if empty:
-        entries = list(path.iterdir())
-        if allow_empty_prod and len(entries) == 1 and entries[0].name == "PROD" and entries[0].is_dir():
-            if entries[0].is_symlink() or any(entries[0].iterdir()):
-                raise ValueError("The initialized depot PROD directory contains unexpected data.")
-        elif entries:
-            raise ValueError("The selected VCF storage directory is not empty.")
 
 
 def _vcf_storage_open_references(paths: Sequence[Path], *, ignore_fd: int | None = None) -> list[str]:
@@ -21043,46 +21033,74 @@ def _vcf_storage_rsync_options(source: Path) -> str:
     return "-aHX"
 
 
-def _vcf_storage_copy_to_default(target: Path, source: Path, *, depot: bool, rsync_options: str) -> None:
-    """Expose the verified default in a private namespace and copy into it.
+def _vcf_storage_move_command(
+    target: Path, source: Path, role: str, rsync_options: str, *, installed: bool, exclude_recovery: bool,
+    identity: str = "", resume: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    """Inspect or copy into a destination, exposing the installed default privately if needed.
 
     Args:
-        target: Covered installed directory whose host mount must stay in place.
+        target: Candidate directory or covered installed path.
         source: Pinned directory for the fenced and verified registered source.
-        depot: Whether the installed directory may contain an empty PROD scaffold.
+        role: Service whose existing destination scaffolding is permitted.
         rsync_options: Archive flags supported by the installed rsync build.
+        installed: Whether to uncover the installed directory in a private namespace.
+        exclude_recovery: Whether the source contains an intrinsic filesystem recovery directory.
+        identity: Previously inspected device and inode, or empty for inspection only.
+        resume: Whether a durable record authorizes resuming a partial copy at this destination.
     """
-    script = (
-        'set -eu; umount -- "$1"; '
-        '[ -d "$1" ] && [ ! -L "$1" ]; '
-        'findmnt -nro TARGET | awk -v root="$1" \'$0 != root && index($0, root "/") == 1 { bad=1 } END { exit bad }\'; '
-        'for item in "$1"/* "$1"/.[!.]* "$1"/..?*; do '
-        '[ -e "$item" ] || [ -L "$item" ] || continue; '
-        'case "${item##*/}" in '
-        'lost+found) findmnt -n --mountpoint "$1" >/dev/null && [ ! -L "$item" ] || exit 43;; '
-        'PROD) [ "$3" = depot ] && [ -d "$item" ] && [ ! -L "$item" ] '
-        '&& [ -z "$(find "$item" -mindepth 1 -maxdepth 1 -print -quit)" ] || exit 43;; '
-        '*) exit 43;; esac; done; '
-        'mode=$(stat -c %a -- "$1"); '
-        'trap \'chmod -- "$mode" "$1"\' EXIT; '
-        '/usr/bin/rsync "$4" --numeric-ids -- "$2/" "$1/"; '
-        'out=$(/usr/bin/rsync "$4" --numeric-ids --checksum --dry-run --itemize-changes -- "$2/" "$1/"); '
-        '[ -z "$out" ] || exit 42'
-    )
-    command = [
-        "/usr/bin/unshare", "--mount", "--propagation", "private", "/bin/sh", "-c", script,
-        "atlaso-vcf-storage", str(target), str(source), "depot" if depot else "other", rsync_options,
-    ]
-    result = subprocess.run(command, check=False, capture_output=True, text=True, timeout=3600)
-    if result.returncode:
-        raise ValueError("The installed default storage is occupied or could not be verified after copying.")
+    script = r'''
+set -eu
+target=$1 source=$2 role=$3 flags=$4 identity=$5 resume=$6 installed=$7 exclude_recovery=$8
+if [ "$installed" = yes ]; then umount -- "$target"; fi
+[ -d "$target" ] && [ ! -L "$target" ]
+mounts=$(findmnt -nro TARGET)
+printf '%s\n' "$mounts" | awk -v root="$target" '$0 != root && index($0, root "/") == 1 { bad=1 } END { exit bad }'
+actual=$(stat -c '%d:%i' -- "$target")
+dedicated=no
+if [ "$installed" = yes ] && findmnt -n --mountpoint "$target" >/dev/null; then dedicated=yes; fi
+set -- "$flags" --numeric-ids
+if [ "$dedicated" = yes ] || [ "$exclude_recovery" = yes ]; then set -- "$@" --exclude=/lost+found; fi
+occupied=no
+for item in "$target"/* "$target"/.[!.]* "$target"/..?*; do
+    [ -e "$item" ] || [ -L "$item" ] || continue
+    name=${item##*/}
+    if [ "$name" = lost+found ] && [ "$dedicated" = yes ] && [ -d "$item" ] && [ ! -L "$item" ]; then
+        continue
+    fi
+    if [ "$name" = PROD ] && [ "$role" = depot ] && [ -d "$item" ] && [ ! -L "$item" ] &&
+       [ -z "$(find "$item" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+        if [ ! -e "$source/PROD" ] && [ ! -L "$source/PROD" ]; then set -- "$@" --exclude=/PROD; fi
+        continue
+    fi
+    occupied=yes
+done
+if [ -z "$identity" ]; then printf '%s %s\n' "$actual" "$occupied"; exit; fi
+[ "$actual" = "$identity" ] || exit 43
+if [ "$occupied" = yes ]; then
+    [ "$resume" = yes ] || exit 43
+    # A retry may fill in missing files. Refuse any differences in existing files or any extra files.
+    existing=$(/usr/bin/rsync "$@" --existing --delete --checksum --dry-run --itemize-changes -- "$source/" "$target/")
+    printf '%s\n' "$existing" | awk 'NF && $0 !~ /^\.d/ { bad=1 } END { exit bad }' || exit 44
+fi
+mode=$(stat -c %a -- "$target")
+trap 'chmod -- "$mode" "$target"' EXIT
+/usr/bin/rsync "$@" --ignore-existing -- "$source/" "$target/"
+changes=$(/usr/bin/rsync "$@" --delete --checksum --dry-run --itemize-changes -- "$source/" "$target/")
+[ -z "$changes" ] || exit 42
+'''
+    runner = ["/usr/bin/unshare", "--mount", "--propagation", "private"] if installed else []
+    command = [*runner, "/bin/sh", "-c", script, "atlaso-vcf-storage", str(target), str(source), role,
+               rsync_options, identity, "yes" if resume else "no", "yes" if installed else "no",
+               "yes" if exclude_recovery else "no"]
+    return subprocess.run(command, check=False, capture_output=True, text=True, timeout=3600 if identity else 30)
 
 
 def _vcf_storage_copy_previous(
     role: str, source: Path, candidate: Path | None, target: Path, *,
-    source_mode: int, preserve_lost_found: bool,
-) -> None:
-    """Copy and verify the previous service data before storage cutover.
+    source_mode: int, preserve_lost_found: bool, previous: dict[str, str], assignment: dict[str, str],
+) -> Path:
+    """Record and verify the copy, retaining enough provenance for a safe retry.
 
     Args:
         role: Service being reassigned.
@@ -21091,30 +21109,49 @@ def _vcf_storage_copy_previous(
         target: Stable service mountpoint.
         source_mode: Original source root mode captured before fencing.
         preserve_lost_found: Whether the old directory is the root of its installed filesystem.
+        previous: Verified applied assignment of the fenced source.
+        assignment: Reviewed destination assignment.
+
+    Returns:
+        Durable retry record to clear once the new assignment commits.
     """
     if candidate is not None:
-        _vcf_storage_tree_ready(candidate, empty=True, allow_empty_prod=role == "depot")
+        _vcf_storage_tree_ready(candidate)
+    elif os.path.lexists(source / "lost+found"):
+        raise ValueError("Move cannot merge a registered lost+found directory into appliance default storage.")
     rsync_options = _vcf_storage_rsync_options(source)
-    if candidate is None:
-        if os.path.lexists(source / "lost+found"):
-            raise ValueError("Move cannot merge a registered lost+found directory into installed storage.")
-        _vcf_storage_copy_to_default(target, source, depot=role == "depot", rsync_options=rsync_options)
-        return
-    lost_found = ["--exclude=/lost+found"] if preserve_lost_found else []
-    result = subprocess.run(
-        ["/usr/bin/rsync", rsync_options, "--numeric-ids", *lost_found, "--", f"{source}/", f"{candidate}/"],
-        check=False, capture_output=True, text=True, timeout=3600,
-    )
+    destination = candidate or target
+    inspection = _vcf_storage_move_command(destination, source, role, rsync_options, installed=candidate is None,
+                                           exclude_recovery=preserve_lost_found)
+    match = re.fullmatch(r"(\d+:\d+) (yes|no)\n?", inspection.stdout)
+    if inspection.returncode or not match:
+        raise ValueError("Could not inspect the selected VCF storage destination.")
+    identity, occupied = match.groups()
+    key = hashlib.sha256(json.dumps([previous, assignment], sort_keys=True).encode()).hexdigest()
+    record = VCF_STORAGE_STATE_DIR / f"{role}.move-{key}.json"
+    source_info = source.stat()
+    intent = {"source": [source_info.st_dev, source_info.st_ino], "destination": identity}
+    resume = os.path.lexists(record)
+    if resume:
+        info = record.lstat()
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o077 or info.st_nlink != 1
+                or info.st_size > 512 or json.loads(record.read_bytes()) != intent):
+            raise ValueError("The prior storage Move no longer matches the verified source and destination.")
+    else:
+        if occupied == "yes":
+            raise ValueError("The selected VCF storage directory is not empty.")
+        _durable_management_handoff_state_write(intent, record)
+    result = _vcf_storage_move_command(destination, source, role, rsync_options, installed=candidate is None,
+                                       exclude_recovery=preserve_lost_found, identity=identity, resume=resume)
+    if result.returncode == 44:
+        raise ValueError("The failed Move cannot resume because files on the destination differ from the source.")
+    if result.returncode == 42:
+        raise ValueError("VCF storage copy verification failed; the previous data remains in place.")
     if result.returncode:
         raise ValueError("VCF storage data could not be copied to the selected volume.")
-    verify = subprocess.run(
-        ["/usr/bin/rsync", rsync_options, "--numeric-ids", *lost_found, "--checksum", "--dry-run", "--itemize-changes",
-         "--", f"{source}/", f"{candidate}/"],
-        check=False, capture_output=True, text=True, timeout=3600,
-    )
-    if verify.returncode or verify.stdout.strip():
-        raise ValueError("VCF storage copy verification failed; the previous data remains in place.")
-    os.chmod(candidate, source_mode)
+    if candidate is not None:
+        os.chmod(candidate, source_mode)
+    return record
 
 
 def _vcf_storage_remove_previous(source: Path, *, preserve_lost_found: bool) -> None:
@@ -21228,6 +21265,7 @@ def _apply_with_vcf_storage(
                 raise ValueError("The current VCF storage does not match the applied record.")
             fence: tuple[int, int] | None = None
             fenced_source: Path | None = None
+            move_record: Path | None = None
             preserve_lost_found = False
             try:
                 if previous != assignment and disposition in {"move", "delete"}:
@@ -21249,9 +21287,9 @@ def _apply_with_vcf_storage(
                     fence = _vcf_storage_begin_fence(role, fence_path)
                     fenced_source = Path(f"/proc/{os.getpid()}/fd/{fence[0]}")
                     if disposition == "move":
-                        _vcf_storage_copy_previous(
+                        move_record = _vcf_storage_copy_previous(
                             role, fenced_source, candidate, target, source_mode=fence[1],
-                            preserve_lost_found=preserve_lost_found,
+                            preserve_lost_found=preserve_lost_found, previous=previous, assignment=assignment,
                         )
             except Exception:
                 if fence is not None:
@@ -21278,6 +21316,12 @@ def _apply_with_vcf_storage(
                     _durable_management_handoff_state_write(previous, record)
                     raise
                 succeeded = True
+                if move_record is not None:
+                    try:
+                        move_record.unlink()
+                        _fsync_directory(move_record.parent)
+                    except OSError:
+                        print("VCF storage Move applied but its retry record could not be cleared.", file=sys.stderr)
                 if fenced_source is not None:
                     _vcf_storage_remove_previous(fenced_source, preserve_lost_found=preserve_lost_found)
                 return 0

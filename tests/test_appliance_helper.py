@@ -16587,6 +16587,91 @@ def test_vcf_storage_copy_preserves_acl_support(monkeypatch, tmp_path, capabilit
         assert helper._vcf_storage_rsync_options(tmp_path) == expected
 
 
+@pytest.mark.parametrize("installed", [False, True])
+def test_vcf_storage_move_retries_only_its_recorded_destination(monkeypatch, tmp_path, installed):
+    """Keep failed copy evidence and resume only against the same destination.
+
+    Args:
+        monkeypatch: Replace root ownership and real storage copy observations.
+        tmp_path: Isolated source, destination, and durable state.
+        installed: Whether the destination is the covered appliance default.
+    """
+    helper = load_helper_module()
+    state = tmp_path / "state"
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    for path in (state, source, target):
+        path.mkdir()
+    monkeypatch.setattr(helper, "VCF_STORAGE_STATE_DIR", state)
+    monkeypatch.setattr(helper, "_vcf_storage_tree_ready", lambda _: None)
+    monkeypatch.setattr(helper, "_vcf_storage_rsync_options", lambda _: "-aHX")
+    real_lstat = Path.lstat
+
+    def lstat(path):
+        """Report the owner and permissions of the simulated root-owned record.
+
+        Args:
+            path: Record or fixture path being inspected.
+        """
+        info = real_lstat(path)
+        if path.parent == state and path.suffix == ".json":
+            return SimpleNamespace(st_mode=stat.S_IFREG | 0o600, st_uid=0, st_nlink=1, st_size=info.st_size)
+        return info
+
+    monkeypatch.setattr(Path, "lstat", lstat)
+    outcomes = {"occupied": "no", "identity": "92:3", "returncode": 42}
+    attempts = []
+
+    def move_command(_target, _source, _role, _options, *, installed, exclude_recovery, identity="", resume=False):
+        """Return bounded destination observations and injected copy errors.
+
+        Args:
+            _target: Destination of the simulated copy command.
+            _source: Fenced source for the simulated copy command.
+            _role: Service using the destination.
+            _options: Copy options admitted on the host.
+            installed: Whether to expose the installed directory privately.
+            exclude_recovery: Whether to omit the intrinsic recovery directory.
+            identity: Expected destination identity for writes, empty during inspection.
+            resume: Whether a durable record permits retrying an occupied destination.
+        """
+        if not identity:
+            return subprocess.CompletedProcess([], 0, f"{outcomes['identity']} {outcomes['occupied']}\n", "")
+        attempts.append((identity, resume, installed, exclude_recovery))
+        return subprocess.CompletedProcess([], outcomes["returncode"], "", "")
+
+    monkeypatch.setattr(helper, "_vcf_storage_move_command", move_command)
+    def move():
+        """Retry the same reviewed storage assignment."""
+        return helper._vcf_storage_copy_previous(
+            "registry", source, None if installed else target, target, source_mode=0o755,
+            preserve_lost_found=False, previous={"uuid": "old"}, assignment={"uuid": "new"},
+        )
+
+    outcomes["occupied"] = "yes"
+    with pytest.raises(ValueError, match="not empty"):
+        move()
+    assert not attempts and not list(state.iterdir())
+
+    outcomes["occupied"] = "no"
+    with pytest.raises(ValueError, match="copy verification failed"):
+        move()
+    assert attempts == [("92:3", False, installed, False)]
+    (record,) = state.glob("registry.move-*.json")
+
+    outcomes.update(occupied="yes", identity="92:4", returncode=0)
+    with pytest.raises(ValueError, match="no longer matches"):
+        move()
+    assert len(attempts) == 1
+
+    outcomes.update(identity="92:3", returncode=44)
+    with pytest.raises(ValueError, match="files on the destination differ"):
+        move()
+    outcomes["returncode"] = 0
+    assert move() == record
+    assert attempts[1:] == [("92:3", True, installed, False)] * 2
+
+
 def test_vcf_storage_depot_initializes_prod_as_atlaso(monkeypatch, tmp_path):
     """Create the upload root with the service identity before exposing the selected volume.
 

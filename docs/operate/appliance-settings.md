@@ -180,8 +180,10 @@ the VCF service storage wizards and the NFS datastore wizard. Use **Change stora
 or VCF Private Registry to assign it to one service at a time and choose how existing files are handled. See
 [ESX Storage](../services/esx-storage.md#volumes-and-disk-initialization) for disk eligibility and NFS configuration.
 
-For **Move**, select an empty destination. Pause writes before **Move** or **Delete** so Apply can verify the previous
-directory. If a service or client is still using the directory, close that access before retrying.
+For the first **Move** attempt, select an empty destination. If Apply fails after copying starts, correct the reported
+error and retry the same change. Atlaso checks that the copied files still match the source before resuming. Pause
+writes before **Move** or **Delete** so Apply can verify the previous directory. If a service or client is still using
+the directory, close that access before retrying.
 
 ## Before you begin
 
