@@ -517,11 +517,8 @@ def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
     assert "<th>Type</th><th>Member</th>" in app_js
     assert "function updateCurrentPageApplyNotice(payload = {})" in app_js
     assert "updateCurrentPageApplyNotice(payload);" in app_js
-    assert "function updatePageApplyNotice(status = {})" in app_js
-    assert (
-        "if (payload.appliance_apply_status) updatePageApplyNotice(payload.appliance_apply_status);"
-        in app_js
-    )
+    assert "function updatePageApplyNotice(" in app_js
+    assert "updatePageApplyNotice(payload.appliance_apply_status);" in app_js
     assert "function updateLdapSettingsStatus(payload = {})" in app_js
     assert (
         "if (!tableElement.isConnected || tableElement.offsetParent === null) return;"

@@ -194,7 +194,7 @@ def test_settings_page_renders_autosave_validation_and_preview(client, monkeypat
     assert response.text.count('class="help-icon"') >= 2
     assert 'textarea form="appliance-settings-form" name="external_dns_servers"' in response.text
     assert 'input type="hidden" name="external_dns_servers"' not in response.text
-    assert "Appliance Settings has pending appliance changes" in response.text
+    assert "Appliance Settings and NTP / NTS have pending appliance changes" in response.text
     assert "Validation" in response.text
     assert "runtime.atlaso.internal" in response.text
     assert "core.atlaso.internal" in response.text
@@ -292,7 +292,7 @@ def test_vmware_ceip_autosave_updates_global_policy_and_pending_preview(client):
         'data-vmware-ceip-pill class="status-pill good">CEIP on</span>'
         in updated_page.text
     )
-    assert "Appliance Settings has pending appliance changes" in updated_page.text
+    assert "Appliance Settings and NTP / NTS have pending appliance changes" in updated_page.text
 
 
 def test_logging_settings_autosave_updates_preferences(client):
