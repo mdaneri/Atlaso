@@ -50,6 +50,9 @@ On every page load, Atlaso opens the section containing the current page even wh
 collapsed. The active link is revealed before normal keyboard focus begins. This temporary override does not replace
 the saved choice, so the section can return to its preferred state when another section contains the current page.
 
+On desktop, the sidebar remembers its scroll position as you move between pages in the same browser tab. It scrolls
+just far enough to show the active link if that link would otherwise be out of view.
+
 First use starts every authorized section expanded. Selecting the current section heading can still collapse it for the
 remainder of that page visit.
 

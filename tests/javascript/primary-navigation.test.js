@@ -110,10 +110,37 @@ class FakeStorage {
   }
 }
 
+class FakeSidebar extends FakeElement {
+  constructor(activeLinkTop, { clientHeight = 300, scrollHeight = 700 } = {}) {
+    super();
+    this.activeLinkTop = activeLinkTop;
+    this.clientHeight = clientHeight;
+    this.scrollHeight = scrollHeight;
+    this.clientTop = 0;
+    this.scrollTop = 0;
+  }
+
+  getBoundingClientRect() {
+    return { top: 0 };
+  }
+
+  querySelector(selector) {
+    if (selector !== '.nav-link[aria-current="page"]' || this.activeLinkTop === null) return null;
+    return {
+      getBoundingClientRect: () => ({
+        top: this.activeLinkTop - this.scrollTop,
+        bottom: this.activeLinkTop - this.scrollTop + 24,
+      }),
+    };
+  }
+}
+
 class FakeDocument {
-  constructor(groups, bulkControl = new FakeBulkButton()) {
+  constructor(groups, bulkControl, sidebar, footerTop) {
     this.groups = groups;
     this.bulkControl = bulkControl;
+    this.sidebar = sidebar;
+    this.footer = { getBoundingClientRect: () => ({ top: footerTop }) };
   }
 
   querySelectorAll(selector) {
@@ -121,12 +148,19 @@ class FakeDocument {
   }
 
   querySelector(selector) {
+    if (selector === ".sidebar") return this.sidebar;
+    if (selector === ".management-info-footnote") return this.footer;
     return selector === "[data-primary-nav-bulk-toggle]" ? this.bulkControl : null;
   }
 }
 
-function navigationContext(groups, storage, { bulkControl = new FakeBulkButton() } = {}) {
-  const document = new FakeDocument(groups, bulkControl);
+function navigationContext(groups, storage, {
+  bulkControl = new FakeBulkButton(),
+  sidebar = null,
+  footerTop = Infinity,
+  sessionStorage = new FakeStorage(),
+} = {}) {
+  const document = new FakeDocument(groups, bulkControl, sidebar, footerTop);
   const context = vm.createContext({
     Array,
     HTMLButtonElement: FakeButton,
@@ -134,22 +168,84 @@ function navigationContext(groups, storage, { bulkControl = new FakeBulkButton()
     JSON,
     Object,
     document,
-    window: { localStorage: storage },
+    window: {
+      localStorage: storage,
+      sessionStorage,
+      addEventListener(name, callback) {
+        this[`on${name}`] = callback;
+      },
+    },
   });
   vm.runInContext(
     'const PRIMARY_NAVIGATION_STORAGE_KEY = "atlaso:primary-navigation:v1";\n' +
+      'const PRIMARY_NAVIGATION_SCROLL_KEY = "atlaso:primary-navigation-scroll:v1";\n' +
       `${functionSource("primaryNavigationStorage")}\n` +
       `${functionSource("readPrimaryNavigationState")}\n` +
       `${functionSource("writePrimaryNavigationState")}\n` +
       `${functionSource("setPrimaryNavigationGroupExpanded")}\n` +
       `${functionSource("primaryNavigationGroupIsExpanded")}\n` +
       `${functionSource("updatePrimaryNavigationBulkControl")}\n` +
+      `${functionSource("initializePrimaryNavigationScroll")}\n` +
       `${functionSource("initializePrimaryNavigation")}\n` +
       "globalThis.initializePrimaryNavigation = initializePrimaryNavigation;",
     context,
   );
   return context;
 }
+
+test("primary navigation preserves the sidebar position across page loads", () => {
+  const sessionStorage = new FakeStorage();
+  const groups = [new FakeGroup("operations", true)];
+  const before = new FakeSidebar(420);
+  const first = navigationContext(groups, null, { sidebar: before, sessionStorage });
+  first.initializePrimaryNavigation(first.document);
+  before.scrollTop = 295;
+  first.window.onpagehide();
+  assert.equal(sessionStorage.value, "295");
+
+  const after = new FakeSidebar(465);
+  const next = navigationContext(groups, null, { sidebar: after, sessionStorage });
+  next.initializePrimaryNavigation(next.document);
+  assert.equal(after.scrollTop, 295);
+});
+
+test("primary navigation scrolls only far enough to reveal the active link", () => {
+  for (const [activeLinkTop, expected] of [[180, 180], [500, 254]]) {
+    const sidebar = new FakeSidebar(activeLinkTop);
+    const context = navigationContext([new FakeGroup("operations", true)], null, {
+      sidebar,
+      footerTop: 270,
+      sessionStorage: new FakeStorage("200"),
+    });
+    context.initializePrimaryNavigation(context.document);
+    assert.equal(sidebar.scrollTop, expected);
+  }
+});
+
+test("primary navigation reveals a deeply linked page when session storage is blocked or malformed", () => {
+  const blockedStorage = {
+    getItem() { throw new Error("blocked"); },
+    setItem() { throw new Error("blocked"); },
+  };
+  for (const sessionStorage of [blockedStorage, new FakeStorage("bad offset")]) {
+    const sidebar = new FakeSidebar(420);
+    const context = navigationContext([new FakeGroup("operations", true)], null, { sidebar, sessionStorage });
+    context.initializePrimaryNavigation(context.document);
+    assert.equal(sidebar.scrollTop, 144);
+    assert.doesNotThrow(() => context.window.onpagehide());
+  }
+});
+
+test("primary navigation leaves the persisted desktop offset alone on narrow layouts", () => {
+  const sidebar = new FakeSidebar(420, { clientHeight: 700, scrollHeight: 700 });
+  const sessionStorage = new FakeStorage("205");
+  const context = navigationContext([new FakeGroup("operations", true)], null, { sidebar, sessionStorage });
+  context.initializePrimaryNavigation(context.document);
+  context.window.onpagehide();
+  assert.equal(sidebar.scrollTop, 0);
+  assert.equal(sessionStorage.value, "205");
+  assert.equal(sessionStorage.writes.length, 0);
+});
 
 test("primary navigation starts expanded and toggles only the selected group", () => {
   const overview = new FakeGroup("overview");
