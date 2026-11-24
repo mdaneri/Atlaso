@@ -563,6 +563,18 @@ Figure: Rendered Appliance Settings configuration preview.
 
 Figure: Appliance Settings validation error for an invalid FQDN.
 
+## Settings / Storage Volumes
+
+Route: `/ui/management/settings/storage-volumes`
+
+![Add storage volume wizard reviewing Lab Data and /mnt/atlaso-esx-storage/lab-data.](../assets/screenshots/settings-storage-volume-wizard-review.webp)
+
+Figure: Review shows where Atlaso will mount the selected blank disk after Appliance Apply.
+
+![Settings Storage Volumes tab with mounted volumes and the Add storage volume row.](../assets/screenshots/settings-storage-volumes-desktop.webp)
+
+Figure: Settings groups registered volumes and the disk registration wizard together.
+
 ## Settings: Settings Time
 
 Route: `/ui/management/settings#settings-time`

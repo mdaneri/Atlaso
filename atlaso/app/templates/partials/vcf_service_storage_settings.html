@@ -23,7 +23,7 @@
     <label>
       <span class="field-label">
         <span>Storage volume</span>
-        <button class="help-icon" type="button" data-help="Select an applied, registered storage volume. Add or attach a volume under ESX Storage → Storage Volumes before assigning it here.">i</button>
+        <button class="help-icon" type="button" data-help="Select an applied, registered storage volume. Add or attach a volume under Settings → Storage Volumes before assigning it here.">i</button>
       </span>
       <select name="storage_volume_uuid">
         <option value="" data-storage-path="{{ storage_default_path }}" {{ "selected" if not storage_assignment.volume_uuid else "" }}>Installed storage</option>
@@ -41,7 +41,7 @@
       <span class="field-label">Storage directory</span>
       <strong data-vcf-storage-directory aria-live="polite">{{ storage_assignment.mount_path }}</strong>
     </div>
-    <p class="muted">Volumes are registered through <a href="{{ management_ui_root }}/esx-storage#storage-volumes">ESX Storage → Storage Volumes</a>. Existing files stay on their current volume. Changing this setting does not format a disk or copy files.</p>
+    <p class="muted">Volumes are registered through <a href="{{ management_ui_root }}/settings/storage-volumes">Settings → Storage Volumes</a>. Existing files stay on their current volume. Changing this setting does not format a disk or copy files.</p>
     <p id="{{ storage_status_id }}" class="autosave-status" data-state="idle">Changes save automatically. Review them through global Appliance Apply.</p>
   </form>
   {% endif %}

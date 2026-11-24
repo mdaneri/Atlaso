@@ -16,45 +16,17 @@
       <div>
         <h2>ESX NFS Datastore Storage</h2>
         <p class="muted">Publish ESX 9.x datastores over NFS 3 or NFS 4.1. IPv4 and IPv6 are equivalent connection paths.</p>
+        <p class="muted">Manage backing disks in <a href="{{ management_ui_root }}/settings/storage-volumes">Settings → Storage Volumes</a>.</p>
       </div>
       <span class="status-pill {{ 'good' if esx_storage_settings.enabled else 'muted' }}">{{ "enabled" if esx_storage_settings.enabled else "disabled" }}</span>
     </div>
 
     <div class="tab-buttons" role="tablist" aria-label="ESX Storage resources" data-tab-storage-key="atlaso:esx-storage:active-tab">
-      <button class="tab-button active" type="button" role="tab" data-tab-target="storage-volumes" aria-selected="true">Storage Volumes</button>
-      <button class="tab-button" type="button" role="tab" data-tab-target="nfs-datastores" aria-selected="false">NFS Datastores</button>
+      <button class="tab-button active" type="button" role="tab" data-tab-target="nfs-datastores" aria-selected="true">NFS Datastores</button>
       <button class="tab-button" type="button" role="tab" data-tab-target="connection-instructions" aria-selected="false">Connection Instructions</button>
     </div>
     <div class="tab-panels">
-      <section id="storage-volumes" class="tab-panel active" role="tabpanel">
-        <div
-          id="esx-storage-volumes-table"
-          class="tabulator-shell"
-          data-esx-storage-volumes='{{ esx_storage_volume_rows | tojson }}'
-          data-can-write="{{ 'true' if esx_storage_can_write else 'false' }}"
-          data-fallback-id="esx-storage-volumes-fallback"
-        ></div>
-        <table id="esx-storage-volumes-fallback" class="data-table">
-          <thead><tr><th>Name</th><th>Source</th><th>Stable identity / mount</th><th>Capacity</th><th>Filesystem</th><th>State</th></tr></thead>
-          <tbody>
-            {% for volume in esx_storage_volume_rows %}
-              <tr>
-                <td>{{ volume.name }}</td>
-                <td>{{ "blank disk" if volume.source_type == "blank_disk" else "mounted ext4" }}</td>
-                <td><code>{{ volume.stable_device_id or volume.mount_path }}</code></td>
-                <td>{{ volume.capacity_bytes }}</td>
-                <td>{{ volume.filesystem_uuid or "pending ext4 format" }}</td>
-                <td><span class="status-pill {{ 'good' if volume.applied else 'warn' }}">{{ volume.state }}</span></td>
-              </tr>
-            {% else %}
-              <tr><td colspan="6" class="muted">No storage volumes are configured.</td></tr>
-            {% endfor %}
-            {% if esx_storage_can_write %}<tr class="new-record-row"><td colspan="6"><button class="add-row-button" type="button" data-esx-storage-wizard-open="volume">+ Add storage volume here</button></td></tr>{% endif %}
-          </tbody>
-        </table>
-      </section>
-
-      <section id="nfs-datastores" class="tab-panel" role="tabpanel" hidden>
+      <section id="nfs-datastores" class="tab-panel active" role="tabpanel">
         <div
           id="esx-storage-shares-table"
           class="tabulator-shell"
@@ -135,44 +107,6 @@
 </section>
 
 {% if esx_storage_can_write %}
-<dialog id="esx-storage-volume-modal" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="esx-storage-volume-modal-title" aria-describedby="esx-storage-volume-modal-description">
-  <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="{{ management_ui_root }}/esx-storage/volumes" method="post" data-esx-storage-volume-form data-esx-storage-wizard="volume" data-atlaso-wizard>
-    <input type="hidden" name="csrf" value="{{ csrf_token }}">
-    <aside class="vcf-sddc-wizard-rail" aria-label="Storage volume steps">
-      <p class="kicker">ESX Storage</p><h2 id="esx-storage-volume-modal-title">Add storage volume</h2>
-      <ol class="vcf-sddc-step-list">
-        <li><button class="vcf-sddc-step-button active" type="button" data-esx-storage-wizard-nav data-atlaso-wizard-nav="identity"><span>1</span><strong>Volume</strong><small>Name and source type</small></button></li>
-        <li><button class="vcf-sddc-step-button" type="button" data-esx-storage-wizard-nav data-atlaso-wizard-nav="storage" disabled><span>2</span><strong>Storage</strong><small>Select the eligible device</small></button></li>
-        <li><button class="vcf-sddc-step-button" type="button" data-esx-storage-wizard-nav data-atlaso-wizard-nav="review" disabled><span>3</span><strong>Review</strong><small>Confirm desired state</small></button></li>
-      </ol>
-    </aside>
-    <div class="vcf-sddc-wizard-main">
-      <div class="confirm-modal-body vcf-sddc-wizard-body">
-        <div class="vcf-sddc-wizard-heading"><p class="kicker" data-esx-storage-wizard-kicker data-atlaso-wizard-kicker>Step 1 of 3</p><h3 data-esx-storage-wizard-title data-atlaso-wizard-title>Name the volume</h3><p id="esx-storage-volume-modal-description" class="muted" data-esx-storage-wizard-description data-atlaso-wizard-description>Choose a stable Atlaso name and how storage is supplied.</p></div>
-        <div class="alert error hidden" data-esx-storage-wizard-error data-atlaso-wizard-error></div>
-        <section class="vcf-sddc-step-page" data-esx-storage-wizard-step data-atlaso-wizard-step="identity">
-          <div class="form-grid">
-            <label><span class="field-label"><span>Volume name</span><button class="help-icon" type="button" data-help="Stable Atlaso name used to derive the UUID mount path for a newly initialized disk. It does not rename existing data.">i</button></span><input name="name" required maxlength="120" placeholder="esx-data-01"></label>
-            <label><span class="field-label"><span>Source</span><button class="help-icon" type="button" data-help="Choose an approved blank whole disk for ext4 initialization, or an already mounted ext4 filesystem. Atlaso never reformats an existing filesystem.">i</button></span><select name="source_type" data-esx-storage-volume-source><option value="blank_disk">Approved blank whole disk</option><option value="mounted_ext4">Existing mounted ext4 volume</option></select></label>
-          </div>
-        </section>
-        <section class="vcf-sddc-step-page hidden" data-esx-storage-wizard-step data-atlaso-wizard-step="storage">
-          {% set eligible_blank_disks = esx_storage_disk_inventory | selectattr('candidate_type', 'equalto', 'blank_disk') | selectattr('eligible') | list %}
-          {% set eligible_mounted_volumes = esx_storage_disk_inventory | selectattr('candidate_type', 'equalto', 'mounted_ext4') | selectattr('eligible') | list %}
-          <label data-esx-storage-blank-source><span class="field-label"><span>Blank disk</span><button class="help-icon" type="button" data-help="Only whole disks that pass live safety inventory are selectable. The complete model, serial, WWN, size, and /dev/disk/by-id identity are captured for format review and immediate pre-format revalidation.">i</button></span><select name="stable_device_id">{% for disk in eligible_blank_disks %}<option value="{{ disk.stable_device_id }}">{{ disk.model or 'Disk' }} · {{ disk.size_bytes }} bytes · {{ disk.serial or disk.wwn or disk.stable_device_id }}</option>{% else %}<option value="" disabled>No eligible blank disks available</option>{% endfor %}</select></label>
-          <label data-esx-storage-mounted-source hidden><span class="field-label"><span>Mounted ext4 volume</span><button class="help-icon" type="button" data-help="Only eligible mounted ext4 filesystems discovered by live inventory are selectable. Operating-system filesystems, claimed volumes, VCF Backups storage, and VCF Offline Depot / VCFDT storage are excluded.">i</button></span><select name="mount_path">{% for disk in eligible_mounted_volumes %}<option value="{{ disk.mount_path }}">{{ disk.mount_path }} · {{ disk.size_bytes }} bytes · UUID {{ disk.filesystem_uuid }}</option>{% else %}<option value="" disabled>No eligible mounted ext4 volumes available</option>{% endfor %}</select></label>
-          {% if esx_storage_inventory_error %}<p class="autosave-status" data-state="error">{{ esx_storage_inventory_error }}</p>{% endif %}
-        </section>
-        <section class="vcf-sddc-step-page hidden" data-esx-storage-wizard-step data-atlaso-wizard-step="review">
-          <div class="settings-list"><div><span>Volume</span><strong data-esx-storage-review="volume-name"></strong></div><div><span>Source</span><strong data-esx-storage-review="volume-source"></strong></div><div><span>Selected storage</span><code data-esx-storage-review="volume-target"></code></div></div>
-          <p class="muted">A blank disk is formatted only after the global appliance review displays its complete fingerprint and accepts the required format confirmation. Existing ext4 data is never reformatted.</p>
-        </section>
-      </div>
-      <div class="confirm-modal-actions vcf-sddc-wizard-actions"><button class="button secondary" type="button" data-esx-storage-wizard-cancel data-atlaso-wizard-cancel>Cancel</button><button class="button secondary hidden" type="button" data-esx-storage-wizard-back data-atlaso-wizard-back>Back</button><button class="button primary" type="button" data-esx-storage-wizard-next data-atlaso-wizard-next>Next</button><button class="button primary hidden" type="submit" data-esx-storage-wizard-submit data-atlaso-wizard-submit>Add volume to desired state</button></div>
-    </div>
-  </form>
-</dialog>
-
 <dialog id="esx-storage-share-modal" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="esx-storage-share-modal-title" aria-describedby="esx-storage-share-modal-description">
   <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="{{ management_ui_root }}/esx-storage/shares" method="post" data-esx-storage-share-form data-esx-storage-wizard="share" data-atlaso-wizard>
     <input type="hidden" name="csrf" value="{{ csrf_token }}">

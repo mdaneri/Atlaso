@@ -136,7 +136,8 @@ read-only or unavailable surface has a mutation workflow.
 | `/ui/management/vcf-offline-depot/tasks/{job_id}/log` — task log | Established read-only task/log detail | Bounded, redacted log and error state render in HTML | Authenticated read; no mutation | Pass D/N/K/F/Z; V N/A | E1, E3–E5, E7–E8 |
 | `/ui/management/vcf-private-registry` — settings and bundles | Wizard-backed Tabulator and non-grid settings; ESX Storage/DNS references | Bundle fallback, settings, validation, and redacted previews | Admin desired-state writes; shared deletion confirmation; global registry apply only | Pass D/N/K/F/Z/V | E1–E8 |
 | `/ui/management/vcf-backups` — SFTP settings, validation, and backup operations | Non-grid settings; read-only Tabulator using Tasks/Audit Events `createGrid` references | Complete settings and redacted config preview; semantic operations-table fallback; date, local time, elapsed runtime, status, component and source columns | Admin SFTP autosave with CSRF and global `vcf_backups` apply only; admin operation status and read-only reconciliation | Pass D/N/K/F/Z/V | E1–E8 |
-| `/ui/management/esx-storage` — volumes and NFS datastores | Wizard-backed Tabulator; ESX Storage reference | Paired volume/share fallback tables and rendered validation/instructions | Admin writes; format authorization and removal confirmation; global `esx_storage` apply only | Pass D/N/K/F/Z/V | E1–E8 |
+| `/ui/management/settings/storage-volumes` — disk registration | Wizard-backed Tabulator; ESX Storage volume wizard reference | Volume grid and fallback table | Existing ESX Storage scopes; format authorization through global `esx_storage` Apply | Pass D/N/K/F/Z/V | E1–E8 |
+| `/ui/management/esx-storage` — NFS datastores | Wizard-backed Tabulator; ESX Storage reference | Share fallback table and rendered validation/instructions | Existing ESX Storage scopes; removal confirmation; global `esx_storage` Apply only | Pass D/N/K/F/Z/V | E1–E8 |
 | `/ui/management/authentication` — provider, clients, keys, mappings, tokens | Wizard-backed, direct-edit, and read-only Tabulator; ESX Storage/Physical Interfaces/Tasks references | Five paired fallbacks and complete provider settings | Admin writes, CSRF, one-time secret display, shared delete confirmation; no host apply side effect | Pass D/N/K/F/Z/V | E1–E8 |
 | `/ui/management/openid-connect` — canonical OIDC entry | Same authenticated surface and contract as `/ui/management/authentication` | Same server response and paired fallbacks | Same role, secret, validation, and confirmation boundaries | Pass D/N/K/F/Z/V | E1–E8 |
 | `/ui/management/users` — local users and password policy | Wizard-backed Tabulator and non-grid settings; ESX Storage/DNS references | User fallback, policy settings, and password-not-staged states | Admin writes; password values never render; confirmation and global `local_users` apply preserved | Pass D/N/K/F/Z/V | E1–E8 |
@@ -222,7 +223,7 @@ Page templates covered by the route rows are `appliance_update.html`, `audit.htm
 `network_diagnostics.html`,
 `network_objects.html`, `ntp.html`, `physical_interfaces.html`, `placeholder.html`, `public_service_home.html`, `public_terminal.html`,
 `remote_terminal.html`, `traffic_publishing.html`,
-`routes_wan.html`, `services.html`, `settings.html`, `tasks.html`, `terminal.html`, `users.html`,
+`routes_wan.html`, `services.html`, `settings.html`, `settings_storage_volumes.html`, `tasks.html`, `terminal.html`, `users.html`,
 `vaults.html`, `vcf_backups.html`, `vcf_helper.html`, `vcf_offline_depot.html`,
 `vcf_offline_depot_task_log.html`, `vcf_private_registry.html`, and `vlan_interfaces.html`.
 
@@ -234,6 +235,7 @@ non-grid DNS settings reference, and optional schedules reuse the Automation Sch
 Shared-only templates are `base.html`, `public_portal_base.html`, `partials/appliance_apply_status.html`,
 `partials/brand_mark.html`, `partials/config_preview_action.html`, `partials/resource_wizard.html`,
 `partials/monitor_runtime.html`, `partials/port_forwarding.html`, `partials/settings_hardware.html`,
+`partials/settings_storage_volumes.html`, `partials/settings_tabs.html`,
 `partials/vcf_service_storage_settings.html`,
 `partials/task_grid.html`, `partials/task_modals.html`, `partials/terminal_panel.html`, `partials/vcf_ldap_modal.html`,
 `partials/vcf_backup_modal.html`, `partials/vcf_backup_operations.html`, `partials/vcf_backup_status_modal.html`,

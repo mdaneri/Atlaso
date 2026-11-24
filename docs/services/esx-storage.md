@@ -22,18 +22,16 @@ This verified appliance view provides visual orientation before you begin.
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
-The Storage Volumes and NFS Datastores grids each end with an add row. Selecting it opens a guided modal that validates
-the current step before advancing and summarizes the desired state before creation. Storage selectors show discovered
-eligible devices directly and select the first available device; when inventory has no eligible choice, they show a
-disabled unavailable state. Double-click a datastore row or choose **Edit datastore** from its row menu to reopen that
+Register disks in [Settings → Storage Volumes](../operate/appliance-settings.md#register-storage-volumes). This page owns
+NFS Datastores and Connection Instructions. The NFS Datastores add row opens a wizard that validates each step and
+summarizes the proposed datastore before creation. Double-click a datastore row or choose **Edit datastore** from its
+row menu to reopen that
 datastore in the wizard. Its Enabled column uses the standard state icon and is directly editable; the wizard exposes
 the same switch in a dedicated State step after Clients and repeats the choice in Review. Disabling a datastore changes
 desired state only, takes effect through global appliance apply, and never deletes backing data. Server validation
 failures remain in the open wizard; successful creation closes the wizard and reloads the selected tab. Atlaso remembers
-the active Storage Volumes, NFS Datastores, or Connection Instructions tab across refreshes, and a successful global
-appliance apply refreshes this page so formatted UUID, mount, and applied state are current. Volume initialization
-remains only a desired-state operation in this wizard; blank-disk formatting still requires explicit authorization in
-the global appliance review.
+the active NFS Datastores or Connection Instructions tab across refreshes. A successful global Appliance Apply
+refreshes the storage views so the formatted UUID, mount, and applied state are current.
 
 ## Architecture
 
@@ -102,7 +100,7 @@ Storage Volumes supports two sources:
 
 You can prepare a volume before creating an NFS datastore:
 
-1. In **ESX Storage** → **Storage Volumes**, choose **Add storage volume here** and complete the wizard.
+1. In **Settings → Storage Volumes**, choose **Add storage volume here** and complete the wizard.
 2. Open **Review appliance changes** and select **ESX Storage**. For a blank disk, verify the displayed disk identity
    and enter `FORMAT <volume-name>` before submitting.
 3. After Apply succeeds, confirm in **Storage Volumes** that the volume has a filesystem UUID and mount path.

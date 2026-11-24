@@ -49,8 +49,8 @@ unauthenticated browsing do not extend a browser session.
 
 1. On **VCF Offline Depot → Depot Settings**, select a registered volume. Atlaso appends `vcf-offline-depot` to the
    volume's mount path and displays the resulting directory. Installed storage uses `/mnt/atlaso-vcf-offline-depot`.
-   Register or attach additional volumes under **ESX Storage → Storage Volumes**. VCF Helper and profile downloads use
-   the same assignment.
+   Register or attach additional volumes in [Settings → Storage Volumes](../operate/appliance-settings.md#register-storage-volumes).
+   VCF Helper and profile downloads use the same assignment.
 2. Review the current and proposed volume and directory under **Review appliance changes**, then submit **VCF Offline
    Depot** through global Appliance Apply. Storage changes apply even with the HTTPS endpoint disabled because VCF
    Helper uploads also use this directory. Disabling HTTPS alone leaves the current assignment in place even if the

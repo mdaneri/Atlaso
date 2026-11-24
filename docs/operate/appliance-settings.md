@@ -168,6 +168,17 @@ During the first upgrade that introduces the persisted token policy, Atlaso migr
 `ATLASO_API_TOKEN_TTL_DAYS` value instead of silently replacing it with the 90-day default. Subsequent startups retain
 the database policy, so removing or changing that legacy environment variable does not overwrite operator state.
 
+## Register storage volumes
+
+Open **Settings → Storage Volumes** and choose **Add storage volume here**. A newly attached blank disk appears under
+**Approved blank whole disk**. Review its identity and planned mount path under `/mnt/atlaso-esx-storage/` before
+authorizing formatting in Appliance Apply. To register an **Existing mounted ext4 volume**, select its current mount
+point. The wizard lists only unclaimed volumes that pass the appliance's storage checks.
+
+After Apply, confirm the mount path and filesystem UUID on **Storage Volumes**. The applied volume becomes available in
+VCF Backups, VCF Offline Depot, and the NFS datastore wizard. See
+[ESX Storage](../services/esx-storage.md#volumes-and-disk-initialization) for disk eligibility and NFS configuration.
+
 ## Before you begin
 
 Confirm the intended management hostname and DNS records. Keep an alternate console session available before changing
@@ -255,6 +266,16 @@ These captures show responsive layouts and useful operational states referenced 
 ![Atlaso Settings validation card explaining that the appliance FQDN is invalid.](../assets/screenshots/settings-validation-error-desktop.webp)
 
 *Figure: Appliance Settings validation error for an invalid FQDN.*
+
+### Settings / Storage Volumes
+
+![Add storage volume wizard reviewing Lab Data and /mnt/atlaso-esx-storage/lab-data.](../assets/screenshots/settings-storage-volume-wizard-review.webp)
+
+*Figure: Review shows where Atlaso will mount the selected blank disk after Appliance Apply.*
+
+![Settings Storage Volumes tab with mounted volumes and the Add storage volume row.](../assets/screenshots/settings-storage-volumes-desktop.webp)
+
+*Figure: Settings groups registered volumes and the disk registration wizard together.*
 
 ### Settings Time tab
 

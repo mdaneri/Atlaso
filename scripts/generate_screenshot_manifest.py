@@ -209,11 +209,18 @@ CAPTURE_OVERRIDES = {
     },
     **{
         stem: {
-            "source_commit": "fc6395119639e78f24325ac13ea90d86603c9b23",
-            "atlaso_version": "0.9.527",
+            "source_commit": "a7254c84d+working-tree",
+            "atlaso_version": "0.9.528",
             "capture_method": "playwright-chromium",
         }
-        for stem in ("vcf-backups-storage", "vcf-offline-depot-storage")
+        for stem in (
+            "settings-storage-volumes-desktop",
+            "settings-storage-volume-wizard-review",
+            "esx-storage-clean-desktop",
+            "esx-storage-clean-responsive",
+            "vcf-backups-storage",
+            "vcf-offline-depot-storage",
+        )
     },
     "vcf-offline-depot-schedule-action-desktop": {
         "source_commit": "5673a8d9+working-tree",
@@ -530,6 +537,18 @@ SPECIAL = {
         "hardware",
         "Hardware summary with healthy VMware Tools and a protected synchronized NTP clock in the responsive layout.",
         "Atlaso Hardware tab showing detected VMware hardware, installed and available tool versions, and healthy clock protection in the responsive layout.",
+    ),
+    "settings-storage-volumes-desktop": (
+        "/ui/management/settings/storage-volumes",
+        "volume-inventory",
+        "Settings groups registered volumes and the disk registration wizard together.",
+        "Settings Storage Volumes tab with mounted volumes and the Add storage volume row.",
+    ),
+    "settings-storage-volume-wizard-review": (
+        "/ui/management/settings/storage-volumes",
+        "blank-disk-review",
+        "Review shows where Atlaso will mount the selected blank disk after Appliance Apply.",
+        "Add storage volume wizard reviewing Lab Data and /mnt/atlaso-esx-storage/lab-data.",
     ),
     **{
         f"vcf-appliance-certificate-sddc-server-{viewport}": (

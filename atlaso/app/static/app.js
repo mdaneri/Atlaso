@@ -20014,6 +20014,10 @@ function initializeServiceBindEditors(root = document) {
 }
 
 function initializeTabs() {
+  if (window.location.pathname === managementUiPath("/esx-storage") && window.location.hash === "#storage-volumes") {
+    window.location.replace(managementUiPath("/settings/storage-volumes"));
+    return;
+  }
   document.querySelectorAll("[data-tab-target]").forEach((button) => {
     if (!(button instanceof HTMLButtonElement)) {
       return;
@@ -20035,8 +20039,9 @@ function initializeTabs() {
       if (tabList.classList.contains("zone-tabs") && button.hasAttribute("data-domain")) {
         rememberDnsActiveZone(button.dataset.domain || "");
       }
-      rememberActiveTab(tabList.dataset.tabStorageKey || "", targetId);
-      if (tabList.dataset.tabStorageKey === "atlaso:esx-storage:active-tab") {
+      const storageKey = tabList.dataset.tabStorageKey || "";
+      rememberActiveTab(storageKey, targetId);
+      if (storageKey === "atlaso:esx-storage:active-tab") {
         window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#${targetId}`);
       }
       tabList.querySelectorAll(".tab-button").forEach((item) => {
@@ -21080,7 +21085,9 @@ async function refreshCurrentWorkflowAfterApplianceApply(task) {
   const refreshableWorkflows = new Set([managementUiPath("/esx-storage"), managementUiPath("/vcf-offline-depot")]);
   if (task?.status !== "succeeded") return;
   if (await refreshUsersAfterApplianceApply(task)) return;
-  if (!refreshableWorkflows.has(window.location.pathname)) return;
+  const volumes = document.getElementById("esx-storage-volumes-table");
+  const volumeViewVisible = volumes && !volumes.closest("[hidden]");
+  if (!volumeViewVisible && !refreshableWorkflows.has(window.location.pathname)) return;
   window.setTimeout(() => window.location.reload(), 300);
 }
 
@@ -25085,7 +25092,7 @@ function initializeEsxStorageTables() {
       placeholder: "No storage volumes are configured.",
       rowFormatter: (row) => markNewRecordRow(row, "name"),
       columns: [
-        { title: "Name", field: "name", minWidth: 130, formatter: (cell) => cell.getRow().getData().is_new ? '<button class="add-row-button" type="button" data-esx-storage-wizard-open="volume">+ Add storage volume here</button>' : escapeHtml(cell.getValue()) },
+        { title: "Name", field: "name", minWidth: 205, formatter: (cell) => cell.getRow().getData().is_new ? '<button class="add-row-button" type="button" data-esx-storage-wizard-open="volume">+ Add storage volume here</button>' : escapeHtml(cell.getValue()) },
         { title: "Source", field: "source_type", formatter: (cell) => volumeValue(cell, (value) => value === "blank_disk" ? "blank disk" : "mounted ext4") },
         { title: "Stable identity / mount", field: "stable_device_id", minWidth: 260, formatter: (cell) => cell.getRow().getData().is_new ? "" : `<code>${escapeHtml(cell.getValue() || cell.getRow().getData().mount_path || "")}</code>` },
         { title: "Capacity", field: "capacity_bytes", formatter: (cell) => volumeValue(cell, (value) => Number(value || 0).toLocaleString()) },
@@ -25223,6 +25230,7 @@ function initializeEsxStorageWizards() {
     const target = form.querySelector(`[data-esx-storage-review="${key}"]`);
     if (target instanceof HTMLElement) target.textContent = value || "not configured";
   };
+  const volumeSlug = (name) => name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 63);
 
   document.querySelectorAll("[data-esx-storage-wizard]").forEach((form) => {
     if (!(form instanceof HTMLFormElement)) return;
@@ -25237,10 +25245,13 @@ function initializeEsxStorageWizards() {
         const source = form.elements.source_type;
         const blankDisk = form.elements.stable_device_id;
         const mountedVolume = form.elements.mount_path;
-        const target = source.value === "blank_disk" ? blankDisk : mountedVolume;
+        const usesBlankDisk = source.value === "blank_disk";
+        const target = usesBlankDisk ? blankDisk : mountedVolume;
         setReviewValue(form, "volume-name", form.elements.name.value);
         setReviewValue(form, "volume-source", source.selectedOptions[0]?.textContent?.trim());
         setReviewValue(form, "volume-target", target.selectedOptions[0]?.textContent?.trim());
+        setReviewValue(form, "volume-mount-path", usesBlankDisk
+          ? `/mnt/atlaso-esx-storage/${volumeSlug(form.elements.name.value)}` : mountedVolume.value);
         return;
       }
       const families = [...form.querySelectorAll('input[name="address_families"]:checked')].map((input) => input.value === "ipv4" ? "IPv4" : "IPv6");
@@ -25255,6 +25266,10 @@ function initializeEsxStorageWizards() {
       setReviewValue(form, "share-clients", clients.join(" · "));
     };
     const validateStep = ({ step }) => {
+      if (kind === "volume" && step.id === "identity" && form.elements.source_type.value === "blank_disk"
+        && !volumeSlug(form.elements.name.value)) {
+        return { valid: false, message: "Enter a volume name containing at least one letter or number." };
+      }
       if (kind === "share" && step.id === "endpoint" && !form.querySelector('input[name="address_families"]:checked')) {
         return {
           valid: false,
@@ -25303,10 +25318,13 @@ function initializeEsxStorageWizards() {
             const payload = await response.json().catch(() => ({}));
             return { ok: false, message: payload.detail || "The ESX Storage change could not be saved." };
           }
-          const target = kind === "volume" ? managementUiPath("/esx-storage#storage-volumes") : managementUiPath("/esx-storage#nfs-datastores");
           wizard.markClean();
-          window.history.replaceState(null, "", target);
-          window.location.reload();
+          if (kind === "volume") {
+            window.location.assign(managementUiPath("/settings/storage-volumes"));
+          } else {
+            window.history.replaceState(null, "", managementUiPath("/esx-storage#nfs-datastores"));
+            window.location.reload();
+          }
           return { ok: true, close: false };
         } catch (_error) {
           return {
@@ -25356,11 +25374,19 @@ function initializeEsxStorageVolumeSource() {
   const update = () => {
     const usesBlankDisk = source.value === "blank_disk";
     blank?.toggleAttribute("hidden", !usesBlankDisk);
+    blank?.classList.toggle("hidden", !usesBlankDisk);
     mounted?.toggleAttribute("hidden", usesBlankDisk);
+    mounted?.classList.toggle("hidden", usesBlankDisk);
     const stableIdentity = blank?.querySelector('select[name="stable_device_id"]');
     const mountPath = mounted?.querySelector('select[name="mount_path"]');
-    if (stableIdentity instanceof HTMLSelectElement) stableIdentity.required = usesBlankDisk;
-    if (mountPath instanceof HTMLSelectElement) mountPath.required = !usesBlankDisk;
+    if (stableIdentity instanceof HTMLSelectElement) {
+      stableIdentity.required = usesBlankDisk;
+      stableIdentity.disabled = !usesBlankDisk;
+    }
+    if (mountPath instanceof HTMLSelectElement) {
+      mountPath.required = !usesBlankDisk;
+      mountPath.disabled = usesBlankDisk;
+    }
   };
   source.addEventListener("change", update);
   update();

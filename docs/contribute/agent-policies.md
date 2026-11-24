@@ -1759,6 +1759,8 @@ preserved with their affected subsystem below. Keep new requirements at their to
 
 ## ESX Storage
 
+- Disk registration and volume discovery live in **Settings → Storage Volumes**. ESX Storage owns NFS datastore
+  configuration and connection instructions. Both surfaces submit host changes through the same global Apply unit.
 - Real ESX Storage apply stages JSON under `/var/lib/atlaso/apply/esx-storage/atlaso-esx-storage.json`. IPv4 and IPv6
   are equal v1 requirements: one share may enable either or both on one selected interface/VLAN, and each enabled family
   requires its own listener, generated A/AAAA target name, VMkernel client allowlist, ESX command, and nftables rule.
