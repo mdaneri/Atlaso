@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.installation import photon_snapshot
+from scripts.installation import photon_preflight, photon_snapshot
 from scripts.installation.manifest import canonical_json
 
 
@@ -145,3 +145,59 @@ def test_capture_fingerprint_tracks_requirements_and_reviewed_rpm_pins(tmp_path)
     profile = tmp_path / "scripts/installation/content_inspection.py"
     profile.write_text('PHOTON_SYSTEMD_SHA256 = "' + "f" * 64 + '"\n', encoding="utf-8")
     assert photon_snapshot.requirements_sha256(tmp_path) != baseline
+
+
+def test_preflight_reports_changes_to_canonical_capture_inputs(tmp_path):
+    """Show a PR's package, installer pin, and input file changes."""
+    base = tmp_path / "base"
+    candidate = tmp_path / "candidate"
+    write_requirement_source(base)
+    write_requirement_source(candidate)
+
+    unrelated = candidate / "scripts/installation/other.py"
+    unrelated.write_text("# unrelated source file\n", encoding="utf-8")
+    assert "no new capture requirement" in photon_preflight.summarize(base, candidate)
+
+    provision = candidate / "image/common/scripts/provision-atlaso.sh"
+    provision.write_text(
+        provision.read_text(encoding="utf-8").replace("filesystem bash", "filesystem iputils traceroute"),
+        encoding="utf-8",
+    )
+    (candidate / "image/common/powershell/powercli-lock.json").write_text('{"version":"9.1.2"}\n', encoding="utf-8")
+    pin = candidate / "scripts/installation/content_inspection.py"
+    pin.write_text('PHOTON_SYSTEMD_SHA256 = "' + "f" * 64 + '"\n', encoding="utf-8")
+
+    report = photon_preflight.summarize(base, candidate)
+    assert "Prepare a fresh capture unless one has already been approved" in report
+    assert "Added packages: <code>iputils</code>, <code>traceroute</code>" in report
+    assert "Removed packages: <code>bash</code>" in report
+    assert "content_inspection.py / PHOTON_SYSTEMD_SHA256</code>" in report
+    assert "Changed input files: <code>image/common/powershell/powercli-lock.json</code>" in report
+    assert photon_snapshot.requirements_sha256(base) != photon_snapshot.requirements_sha256(candidate)
+
+
+
+def test_preflight_detects_changed_fingerprint_definition(tmp_path):
+    """Use the base's own fingerprint to detect a changed definition."""
+    write_requirement_source(tmp_path)
+
+    report = photon_preflight.summarize(tmp_path, tmp_path, base_fingerprint="0" * 64)
+
+    assert "A compatible Photon capture is needed" in report
+    assert "fingerprint definition also changed" in report
+
+
+def test_preflight_failure_cannot_report_an_unchanged_fingerprint(tmp_path, monkeypatch, capsys):
+    """Surface an unparseable baseline as a failed comparison."""
+    base = tmp_path / "base"
+    candidate = tmp_path / "candidate"
+    write_requirement_source(base)
+    write_requirement_source(candidate)
+    (base / "scripts/installation/build.py").write_text("BASE_PACKAGES = {\n", encoding="utf-8")
+    monkeypatch.setattr("sys.argv", ["photon_preflight", "--base", str(base), "--candidate", str(candidate)])
+
+    assert photon_preflight.main() == 1
+    output = capsys.readouterr()
+    assert "Unable to compare" in output.out
+    assert "Unable to compare" in output.err
+    assert "no new capture requirement" not in output.out

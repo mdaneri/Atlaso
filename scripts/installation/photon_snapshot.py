@@ -30,8 +30,8 @@ RPM_COMPONENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9.+_~^-]{0,191}")
 Package = tuple[str, str, str, str, str, str]
 
 
-def requirements_sha256(source: Path) -> str:
-    """Hash capture requirements using the target tree's data and reviewed identities.
+def requirements_inputs(source: Path) -> dict:
+    """Read the target tree's capture requirements and reviewed identities.
 
     Args:
         source: Exact target release checkout.
@@ -61,7 +61,7 @@ def requirements_sha256(source: Path) -> str:
         for node in build_source.body if isinstance(node, ast.Assign)
         if any(isinstance(target, ast.Name) and target.id == "BASE_PACKAGES" for target in node.targets)
     )
-    value = {
+    return {
         "schema": 1,
         "packages": package_selection(source, base_packages=base_packages),
         "pins": pins,
@@ -70,7 +70,15 @@ def requirements_sha256(source: Path) -> str:
             for path in files
         },
     }
-    return hashlib.sha256(canonical_json(value)).hexdigest()
+
+
+def requirements_sha256(source: Path) -> str:
+    """Hash the canonical requirements used to admit release snapshots.
+
+    Args:
+        source: Exact target release checkout.
+    """
+    return hashlib.sha256(canonical_json(requirements_inputs(source))).hexdigest()
 
 
 def collect(captured_utc: str) -> bytes:
