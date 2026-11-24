@@ -30,9 +30,10 @@
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
     <input type="hidden" name="storage_assignment_only" value="1">
     <section class="vcf-sddc-step-page" data-atlaso-wizard-step="volume">
-      <label>
-        <span class="field-label">Storage volume</span>
-        <select name="storage_volume_uuid">
+      <label for="vcf-service-storage-volume">
+        <span class="field-label"><span>Storage volume</span><button class="help-icon" type="button" aria-label="Help for storage volume"
+          data-help="Choose an available registered volume or the appliance default. A registered volume can be assigned to one VCF service at a time. Appliance Apply switches the backing directory.">i</button></span>
+        <select id="vcf-service-storage-volume" name="storage_volume_uuid">
           <option value="" data-storage-path="{{ vcf_storage.default_path }}" {{ "selected" if not selection.volume_uuid else "" }}>Appliance default</option>
           {% if selection.volume_uuid and not vcf_storage.options|selectattr("uuid", "equalto", selection.volume_uuid)|list %}
             <option selected disabled>Current volume unavailable</option>
@@ -55,7 +56,8 @@
       </div>
       <p data-vcf-storage-unchanged hidden>The selected directory matches the current storage. No data action is needed.</p>
       <fieldset class="form-stack" data-vcf-storage-migration>
-        <legend>Existing files</legend>
+        <legend><span class="field-label"><span>Existing files</span><button class="help-icon" type="button" aria-label="Help for existing files"
+          data-help="Move copies and verifies the files before removing originals. Leave keeps them where they are. Delete removes them after switching and requires you to type the previous directory in Appliance Apply.">i</button></span></legend>
         <label class="choice-row">
           <input type="radio" name="storage_migration_policy" value="move" {{ "checked" if pending and selection.migration_policy == "move" else "" }}>
           <span class="choice-copy"><strong>Move</strong><small>Transfer the files to the new directory before switching.</small></span>

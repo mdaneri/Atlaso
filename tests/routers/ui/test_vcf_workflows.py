@@ -257,6 +257,8 @@ def test_vcf_services_render_the_same_storage_wizard(client, page_path):
     )[0]
     assert f'{page_path}/settings"' in wizard
     assert "data-autosave-form" not in wizard
+    assert 'aria-label="Help for storage volume"' in wizard
+    assert 'aria-label="Help for existing files"' in wizard
     for step in ("volume", "data", "review"):
         assert f'data-atlaso-wizard-step="{step}"' in wizard
     for policy in ("move", "leave", "delete"):

@@ -272,7 +272,7 @@ preserved with their affected subsystem below. Keep new requirements at their to
   all sessions and credentials, activate coherent core defaults while disabling optional services, and preserve depot,
   backup, and managed ESX Storage payload paths. Persist a non-secret recovery marker before database replacement,
   make resume idempotent across interruption or reboot, validate all generated runtime configuration before activation,
-  scrub transient staging plus retained VCF Backup authorized keys and Web Terminal signing material, and leave all 17
+  scrub transient staging plus retained VCF Backup authorized keys and Web Terminal signing material, and leave all
   desired/applied baselines equal with no follow-up Apply workflow. Also remove retained KMIP operational state and
   Atlaso-synchronized package-source staging and registrations, fsyncing repository removal
   before the recovery marker advances. Require explicit keep-or-change choices for both
@@ -2431,8 +2431,8 @@ preserved with their affected subsystem below. Keep new requirements at their to
   table with factory/bootstrap records, invalidates all previous sessions, credentials, jobs, schedules, tokens, and
   audit history, then preflights and activates every factory apply unit through the dedicated reset transaction. Core
   routing, firewall, authentication, and management reachability must finish coherent; optional services must finish
-  disabled; desired/applied baselines must match for all 17 units with no follow-up Apply. Factory reset must reseed only
-  core defaults and must not recreate demo
+  disabled; desired/applied baselines must match for all factory Apply units with no follow-up Apply. Factory reset must
+  reseed only core defaults and must not recreate demo
   VLANs, trunk-only
   parent NIC posture, routes, NAT rules, WAN policies, DHCP scopes/reservations, firewall rules, CA requests, vSphere
   providers/trusted vCenters, depot download profiles, or service listener bindings, including after service restart.

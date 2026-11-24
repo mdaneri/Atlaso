@@ -16622,7 +16622,8 @@ def test_vcf_storage_move_retries_only_its_recorded_destination(monkeypatch, tmp
     outcomes = {"occupied": "no", "identity": "92:3", "returncode": 42}
     attempts = []
 
-    def move_command(_target, _source, _role, _options, *, installed, exclude_recovery, identity="", resume=False):
+    def move_command(_target, _source, _role, _options, *, installed, exclude_recovery, identity="", resume=False,
+                     destination_mode=None):
         """Return bounded destination observations and injected copy errors.
 
         Args:
@@ -16634,10 +16635,11 @@ def test_vcf_storage_move_retries_only_its_recorded_destination(monkeypatch, tmp
             exclude_recovery: Whether to omit the intrinsic recovery directory.
             identity: Expected destination identity for writes, empty during inspection.
             resume: Whether a durable record permits retrying an occupied destination.
+            destination_mode: Expected registered destination permissions after Move.
         """
         if not identity:
             return subprocess.CompletedProcess([], 0, f"{outcomes['identity']} {outcomes['occupied']}\n", "")
-        attempts.append((identity, resume, installed, exclude_recovery))
+        attempts.append((identity, resume, installed, exclude_recovery, destination_mode))
         return subprocess.CompletedProcess([], outcomes["returncode"], "", "")
 
     monkeypatch.setattr(helper, "_vcf_storage_move_command", move_command)
@@ -16656,7 +16658,8 @@ def test_vcf_storage_move_retries_only_its_recorded_destination(monkeypatch, tmp
     outcomes["occupied"] = "no"
     with pytest.raises(ValueError, match="copy verification failed"):
         move()
-    assert attempts == [("92:3", False, installed, False)]
+    mode = None if installed else 0o755
+    assert attempts == [("92:3", False, installed, False, mode)]
     (record,) = state.glob("registry.move-*.json")
 
     outcomes.update(occupied="yes", identity="92:4", returncode=0)
@@ -16667,9 +16670,12 @@ def test_vcf_storage_move_retries_only_its_recorded_destination(monkeypatch, tmp
     outcomes.update(identity="92:3", returncode=44)
     with pytest.raises(ValueError, match="files on the destination differ"):
         move()
+    outcomes["returncode"] = 45
+    with pytest.raises(ValueError, match="Could not flush"):
+        move()
     outcomes["returncode"] = 0
     assert move() == record
-    assert attempts[1:] == [("92:3", True, installed, False)] * 2
+    assert attempts[1:] == [("92:3", True, installed, False, mode)] * 3
 
 
 @pytest.mark.parametrize("role", ["backup", "depot", "registry"])
@@ -16722,6 +16728,80 @@ def test_vcf_storage_reconciles_completed_cutover(monkeypatch, tmp_path, role, r
     )
     assert result == (0 if observed == "committed" else 2)
     assert called == ([role] if observed == "committed" else [])
+
+
+@pytest.mark.parametrize("committed", [False, True])
+@pytest.mark.parametrize("original_verified", [False, True])
+def test_vcf_storage_recovers_fence_beneath_verified_overlay(monkeypatch, tmp_path, committed, original_verified):
+    """Restore the original mode and drop only a transaction's uncommitted bind.
+
+    Args:
+        monkeypatch: Replace native mount and descriptor observations.
+        tmp_path: Isolated storage path and durable fence record.
+        committed: Whether the registered assignment is already durable.
+        original_verified: Whether the hidden directory matches the fence record.
+    """
+    helper = load_helper_module()
+    path = tmp_path / "registry"
+    path.mkdir()
+    original = path.stat()
+    overlay = {"uuid": "registered", "path": str(tmp_path / "volume" / "vcf-registry")}
+    fence = tmp_path / "registry.fence.json"
+    fence.write_text(json.dumps({"path": str(path), "device": original.st_dev, "inode": original.st_ino,
+                                 "mode": 0o755, "overlay": overlay}), encoding="utf-8")
+    fence_size = fence.stat().st_size
+    real_stat = Path.stat
+
+    def fixture_stat(target, **kwargs):
+        """Read the fence record as one protected regular file.
+
+        Args:
+            target: Path whose metadata is being read.
+            **kwargs: Pass-through filesystem observation options.
+        """
+        if target == fence:
+            return SimpleNamespace(st_uid=0, st_nlink=1, st_mode=stat.S_IFREG | 0o600, st_size=fence_size)
+        return real_stat(target, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", fixture_stat)
+    descriptor = SimpleNamespace(st_dev=original.st_dev, st_ino=original.st_ino + 1)
+    monkeypatch.setattr(helper, "os", SimpleNamespace(path=os.path, O_RDONLY=0, O_DIRECTORY=0, O_NOFOLLOW=0,
+                                                      open=lambda *_: 42, fstat=lambda _: descriptor, close=lambda _: None))
+    monkeypatch.setattr(helper, "VCF_STORAGE_STATE_DIR", tmp_path)
+    monkeypatch.setattr(helper, "_vcf_storage_target", lambda _: path)
+    monkeypatch.setattr(helper, "_vcf_storage_read", lambda _: overlay if committed else {})
+    monkeypatch.setattr(helper, "_vcf_storage_metadata", lambda candidate: candidate)
+    monkeypatch.setattr(helper, "_vcf_storage_live_source", lambda _role, candidate: Path(candidate["path"]))
+    monkeypatch.setattr(helper, "_vcf_storage_find_mount", lambda *_: [str(path)])
+    monkeypatch.setattr(helper, "_vcf_storage_mounted", lambda *_: True)
+    monkeypatch.setattr(helper, "_fsync_directory", lambda _: None)
+    commands, unbound = [], []
+    monkeypatch.setattr(helper, "_vcf_storage_unbind", unbound.append)
+
+    def run(command, *, timeout):
+        """Record the private mount namespace restoration command.
+
+        Args:
+            command: Exact original directory restoration command.
+            timeout: Bound for the child process.
+        """
+        commands.append((command, timeout))
+        return subprocess.CompletedProcess(command, 0 if original_verified else 1, "", "")
+
+    monkeypatch.setattr(helper, "_run", run)
+    if original_verified:
+        helper._vcf_storage_recover_fence("registry")
+        assert fence not in list(tmp_path.iterdir())
+    else:
+        with pytest.raises(ValueError, match="could not be restored"):
+            helper._vcf_storage_recover_fence("registry")
+        assert fence in list(tmp_path.iterdir())
+    assert len(commands) == 1
+    command, timeout = commands[0]
+    assert command[:4] == ["/usr/bin/unshare", "--mount", "--propagation", "private"]
+    assert command[-3:] == [str(path), f"{original.st_dev}:{original.st_ino}", "755"]
+    assert timeout == 30
+    assert unbound == ([path] if original_verified and not committed else [])
 
 
 def test_vcf_storage_depot_initializes_prod_as_atlaso(monkeypatch, tmp_path):

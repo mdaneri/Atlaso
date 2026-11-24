@@ -222,8 +222,8 @@ CAPTURE_OVERRIDES = {
     },
     **{
         stem: {
-            "source_commit": "00fefe71e9fc34a7126e8fd65da0f287e58e5977",
-            "atlaso_version": "0.9.530",
+            "source_commit": "a260475708a6513f91a80580d62fab122c3abfe1",
+            "atlaso_version": "0.9.531",
             "capture_method": "playwright-chromium",
         }
         for stem in (

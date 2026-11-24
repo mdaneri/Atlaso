@@ -20913,6 +20913,46 @@ def _vcf_storage_fence_path(role: str) -> Path:
     return VCF_STORAGE_STATE_DIR / f"{role}.fence.json"
 
 
+def _vcf_storage_restore_covered_fence(role: str, path: Path, journal: dict) -> None:
+    """Restore a default directory hidden by the transaction's verified bind.
+
+    Args:
+        role: Service recovering the interrupted change.
+        path: Recorded path of the fenced directory.
+        journal: Protected record of the original directory and optional pending overlay.
+    """
+    if path != _vcf_storage_target(role):
+        raise ValueError("VCF storage recovery path no longer identifies the fenced directory.")
+    applied = _vcf_storage_read(role)
+    overlay = _vcf_storage_metadata(journal["overlay"]) if "overlay" in journal else applied
+    if not overlay or (applied and applied != overlay):
+        raise ValueError("The covering VCF storage bind does not match the interrupted transaction.")
+    source = _vcf_storage_live_source(role, overlay)
+    layers = _vcf_storage_find_mount(path, "TARGET")
+    if layers not in ([str(path)], [str(path), str(path)]) or not _vcf_storage_mounted(source, path):
+        raise ValueError("The covering VCF storage bind could not be verified.")
+
+    # Restore mode on the pinned original identity without unmounting the live destination.
+    script = ('set -eu; umount -- "$1"; [ -d "$1" ] && [ ! -L "$1" ]; '
+              '[ "$(stat -c \'%d:%i\' -- "$1")" = "$2" ]; '
+              'chmod -- "$3" "$1"; /usr/bin/sync -- "$1"')
+    identity = (journal["device"], journal["inode"])
+    result = _run([
+        "/usr/bin/unshare", "--mount", "--propagation", "private", "/bin/sh", "-c", script,
+        "atlaso-vcf-storage-fence", str(path), f"{identity[0]}:{identity[1]}", f"{journal['mode']:o}",
+    ], timeout=30)
+    if result.returncode:
+        raise ValueError("The original VCF storage directory could not be restored beneath its bind.")
+    if not applied:
+        # The bind never committed. Remove only the verified overlay created by that attempt.
+        if not _vcf_storage_mounted(source, path):
+            raise ValueError("The uncommitted VCF storage bind changed during recovery.")
+        _vcf_storage_unbind(path)
+        original = path.lstat()
+        if (original.st_dev, original.st_ino) != identity:
+            raise ValueError("The original VCF storage directory did not reappear after rollback.")
+
+
 def _vcf_storage_recover_fence(role: str) -> None:
     """Restore source permissions from a prior interrupted storage transaction.
 
@@ -20925,31 +20965,38 @@ def _vcf_storage_recover_fence(role: str) -> None:
     if record.is_symlink() or not record.is_file():
         raise ValueError("VCF storage recovery record is unsafe.")
     info = record.stat()
-    if info.st_uid != 0 or info.st_mode & 0o022 or info.st_nlink != 1 or info.st_size > 1000:
+    if info.st_uid != 0 or info.st_mode & 0o022 or info.st_nlink != 1 or info.st_size > 2048:
         raise ValueError("VCF storage recovery record is unsafe.")
     value = json.loads(record.read_bytes())
-    if not isinstance(value, dict) or set(value) != {"path", "device", "inode", "mode"}:
+    fields = {"path", "device", "inode", "mode"}
+    if (not isinstance(value, dict) or set(value) not in (fields, fields | {"overlay"})
+            or not isinstance(value["path"], str) or not Path(value["path"]).is_absolute()
+            or any(type(value[key]) is not int or value[key] < 0 for key in ("device", "inode", "mode"))
+            or value["mode"] > 0o7777):
         raise ValueError("VCF storage recovery record is invalid.")
     path = Path(value["path"])
     descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         current = os.fstat(descriptor)
-        if (current.st_dev, current.st_ino) != (value["device"], value["inode"]):
-            raise ValueError("VCF storage recovery path no longer identifies the fenced directory.")
-        os.fchmod(descriptor, value["mode"])
-        os.fsync(descriptor)
+        restored = (current.st_dev, current.st_ino) == (value["device"], value["inode"])
+        if restored:
+            os.fchmod(descriptor, value["mode"])
+            os.fsync(descriptor)
     finally:
         os.close(descriptor)
+    if not restored:
+        _vcf_storage_restore_covered_fence(role, path, value)
     record.unlink()
     _fsync_directory(record.parent)
 
 
-def _vcf_storage_begin_fence(role: str, path: Path) -> tuple[int, int]:
+def _vcf_storage_begin_fence(role: str, path: Path, *, overlay: dict[str, str] | None = None) -> tuple[int, int]:
     """Pin and deny normal service writes to the previous directory tree.
 
     Args:
         role: Service being reassigned.
         path: Verified old registered tree or installed default path.
+        overlay: Reviewed registered volume that may temporarily cover the original default.
     """
     _vcf_storage_recover_fence(role)
     if path.is_symlink() or not path.is_dir():
@@ -20965,10 +21012,10 @@ def _vcf_storage_begin_fence(role: str, path: Path) -> tuple[int, int]:
         pinned = os.fstat(descriptor)
         if (before.st_dev, before.st_ino) != (pinned.st_dev, pinned.st_ino):
             raise ValueError("VCF storage source changed while the write fence was being prepared.")
-        _durable_management_handoff_state_write(
-            {"path": str(path), "device": pinned.st_dev, "inode": pinned.st_ino, "mode": stat.S_IMODE(pinned.st_mode)},
-            _vcf_storage_fence_path(role),
-        )
+        journal = {"path": str(path), "device": pinned.st_dev, "inode": pinned.st_ino, "mode": stat.S_IMODE(pinned.st_mode)}
+        if overlay:
+            journal["overlay"] = overlay
+        _durable_management_handoff_state_write(journal, _vcf_storage_fence_path(role))
         original_mode = stat.S_IMODE(pinned.st_mode)
         journal_written = True
         os.fchmod(descriptor, 0)
@@ -21039,7 +21086,7 @@ def _vcf_storage_rsync_options(source: Path) -> str:
 
 def _vcf_storage_move_command(
     target: Path, source: Path, role: str, rsync_options: str, *, installed: bool, exclude_recovery: bool,
-    identity: str = "", resume: bool = False,
+    identity: str = "", resume: bool = False, destination_mode: int | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Inspect or copy into a destination, exposing the installed default privately if needed.
 
@@ -21052,10 +21099,11 @@ def _vcf_storage_move_command(
         exclude_recovery: Whether the source contains an intrinsic filesystem recovery directory.
         identity: Previously inspected device and inode, or empty for inspection only.
         resume: Whether a durable record authorizes resuming a partial copy at this destination.
+        destination_mode: Final mode for a registered destination, or None to keep its installed mode.
     """
     script = r'''
 set -eu
-target=$1 source=$2 role=$3 flags=$4 identity=$5 resume=$6 installed=$7 exclude_recovery=$8
+target=$1 source=$2 role=$3 flags=$4 identity=$5 resume=$6 installed=$7 exclude_recovery=$8 destination_mode=$9
 if [ "$installed" = yes ]; then umount -- "$target"; fi
 [ -d "$target" ] && [ ! -L "$target" ]
 mounts=$(findmnt -nro TARGET)
@@ -21092,11 +21140,14 @@ trap 'chmod -- "$mode" "$target"' EXIT
 /usr/bin/rsync "$@" --ignore-existing -- "$source/" "$target/"
 changes=$(/usr/bin/rsync "$@" --delete --checksum --dry-run --itemize-changes -- "$source/" "$target/")
 [ -z "$changes" ] || exit 42
+chmod -- "${destination_mode:-$mode}" "$target"
+/usr/bin/sync -f -- "$target" || exit 45
+trap - EXIT
 '''
     runner = ["/usr/bin/unshare", "--mount", "--propagation", "private"] if installed else []
     command = [*runner, "/bin/sh", "-c", script, "atlaso-vcf-storage", str(target), str(source), role,
                rsync_options, identity, "yes" if resume else "no", "yes" if installed else "no",
-               "yes" if exclude_recovery else "no"]
+               "yes" if exclude_recovery else "no", "" if destination_mode is None else f"{destination_mode:o}"]
     return subprocess.run(command, check=False, capture_output=True, text=True, timeout=3600 if identity else 30)
 
 
@@ -21146,15 +21197,16 @@ def _vcf_storage_copy_previous(
             raise ValueError("The selected VCF storage directory is not empty.")
         _durable_management_handoff_state_write(intent, record)
     result = _vcf_storage_move_command(destination, source, role, rsync_options, installed=candidate is None,
-                                       exclude_recovery=preserve_lost_found, identity=identity, resume=resume)
+                                       exclude_recovery=preserve_lost_found, identity=identity, resume=resume,
+                                       destination_mode=source_mode if candidate is not None else None)
     if result.returncode == 44:
         raise ValueError("The failed Move cannot resume because files on the destination differ from the source.")
     if result.returncode == 42:
         raise ValueError("VCF storage copy verification failed; the previous data remains in place.")
+    if result.returncode == 45:
+        raise ValueError("Could not flush the verified VCF storage copy; the previous data remains in place.")
     if result.returncode:
         raise ValueError("VCF storage data could not be copied to the selected volume.")
-    if candidate is not None:
-        os.chmod(candidate, source_mode)
     return record
 
 
@@ -21320,7 +21372,7 @@ def _apply_with_vcf_storage(
                         _vcf_storage_verify_default_mount(role, target, layers)
                         preserve_lost_found = True
                     fence_path = old_source or target
-                    fence = _vcf_storage_begin_fence(role, fence_path)
+                    fence = _vcf_storage_begin_fence(role, fence_path, overlay=assignment if old_source is None else None)
                     fenced_source = Path(f"/proc/{os.getpid()}/fd/{fence[0]}")
                     if disposition == "move":
                         move_record = _vcf_storage_copy_previous(
