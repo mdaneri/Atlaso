@@ -21213,6 +21213,24 @@ def _handle_vcf_registry_storage(args: list[str]) -> int:
         return 2
 
 
+def _vcf_storage_verify_default_mount(role: str, target: Path, layers: list[str]) -> None:
+    """Verify that the fixed path exposes its installed filesystem.
+
+    Args:
+        role: Service whose appliance default is being checked.
+        target: Exact fixed service path.
+        layers: Observed mounts at that path.
+    """
+    if layers and (layers != [str(target)] or role == "registry"):
+        raise ValueError("The appliance default mount stack is unexpected.")
+    if role == "registry":
+        return
+    if os.path.lexists(VCF_STORAGE_INSTALLATION_PROFILE):
+        _vcf_storage_verify_installation()
+    elif layers or os.path.lexists(ATLASO_DATA_DISK_POLICY_PATH):
+        _vcf_storage_verify_image_mount(role, shadowed=False)
+
+
 def _apply_with_vcf_storage(
     role: str, assignment: dict[str, str], apply: Callable[[], int], *, disabled: bool = False,
     migration: dict[str, object] | None = None,
@@ -21228,6 +21246,8 @@ def _apply_with_vcf_storage(
     """
     try:
         if not assignment and not os.path.lexists(VCF_STORAGE_STATE_DIR):
+            if migration and migration["previous"]:
+                raise ValueError("The VCF storage change is stale; review the current assignment again.")
             return apply()
         import fcntl
 
@@ -21237,11 +21257,28 @@ def _apply_with_vcf_storage(
         with os.fdopen(lock_fd, "r+b") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             _vcf_storage_recover_fence(role)
+            record = VCF_STORAGE_STATE_DIR / f"{role}.json"
             previous = _vcf_storage_read(role)
             if migration is None:
                 migration = {"action": "leave", "previous": previous, "confirmation": ""}
             if migration["previous"] != previous:
-                raise ValueError("The VCF storage change is stale; review the current assignment again.")
+                if previous != assignment or not record.is_file():
+                    raise ValueError("The VCF storage change is stale; review the current assignment again.")
+                # The native switch committed before the Apply worker could save its baseline.
+                target = _vcf_storage_target(role)
+                _vcf_storage_root_directory(target.parent)
+                if not stat.S_ISDIR(target.lstat().st_mode):
+                    raise ValueError("The installed VCF service mount path is unsafe.")
+                layers = _vcf_storage_find_mount(target, "TARGET")
+                if assignment:
+                    candidate = _vcf_storage_live_source(role, assignment)
+                    if layers not in ([str(target)], [str(target), str(target)]) or not _vcf_storage_mounted(candidate, target):
+                        raise ValueError("The applied VCF storage mount is unavailable.")
+                    if len(layers) == 2:
+                        _vcf_storage_verify_shadowed(role, target)
+                else:
+                    _vcf_storage_verify_default_mount(role, target, layers)
+                return apply()
             fixed_children = {"backup": "vcf-backups", "depot": "vcf-offline-depot", "registry": "vcf-registry"}
             if assignment and previous != assignment and Path(assignment["path"]).name != fixed_children[role]:
                 raise ValueError("New VCF storage assignments must use the service's dedicated directory name.")
@@ -21280,12 +21317,7 @@ def _apply_with_vcf_storage(
                         if len(layers) == 2 and candidate is None:
                             _vcf_storage_verify_shadowed(role, target)
                     elif layers:
-                        if layers != [str(target)] or role == "registry":
-                            raise ValueError("The appliance default mount stack is unexpected.")
-                        if os.path.lexists(VCF_STORAGE_INSTALLATION_PROFILE):
-                            _vcf_storage_verify_installation()
-                        else:
-                            _vcf_storage_verify_image_mount(role, shadowed=False)
+                        _vcf_storage_verify_default_mount(role, target, layers)
                         preserve_lost_found = True
                     fence_path = old_source or target
                     fence = _vcf_storage_begin_fence(role, fence_path)
@@ -21312,7 +21344,6 @@ def _apply_with_vcf_storage(
                 status = apply()
                 if status:
                     return status
-                record = VCF_STORAGE_STATE_DIR / f"{role}.json"
                 try:
                     _durable_management_handoff_state_write(assignment, record)
                 except OSError:

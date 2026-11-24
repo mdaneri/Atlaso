@@ -16672,6 +16672,58 @@ def test_vcf_storage_move_retries_only_its_recorded_destination(monkeypatch, tmp
     assert attempts[1:] == [("92:3", True, installed, False)] * 2
 
 
+@pytest.mark.parametrize("role", ["backup", "depot", "registry"])
+@pytest.mark.parametrize("registered", [False, True])
+@pytest.mark.parametrize("observed", ["committed", "missing_record", "wrong_mount"])
+def test_vcf_storage_reconciles_completed_cutover(monkeypatch, tmp_path, role, registered, observed):
+    """Reconcile a stale application baseline only from verified native state.
+
+    Args:
+        monkeypatch: Replace filesystem and lock operations with fixture observations.
+        tmp_path: Isolated storage state and paths.
+        role: Storage service being recovered.
+        registered: Whether the committed destination is a registered volume.
+        observed: Whether native state proves the completed cutover.
+    """
+    helper = load_helper_module()
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    target = tmp_path / "service"
+    target.mkdir()
+    volume = tmp_path / "volume"
+    assignment = {"uuid": "new", "path": str(volume)} if registered else {}
+    if observed != "missing_record":
+        (state_dir / f"{role}.json").write_text(json.dumps(assignment), encoding="utf-8")
+
+    monkeypatch.setitem(sys.modules, "fcntl", SimpleNamespace(
+        flock=lambda handle, flags: None, LOCK_EX=1, LOCK_NB=2,
+    ))
+    monkeypatch.setattr(helper.os, "O_NOFOLLOW", 0, raising=False)
+    monkeypatch.setattr(helper, "VCF_STORAGE_STATE_DIR", state_dir)
+    monkeypatch.setattr(helper, "VCF_STORAGE_INSTALLATION_PROFILE", tmp_path / "no-installation-profile")
+    monkeypatch.setattr(helper, "ATLASO_DATA_DISK_POLICY_PATH", tmp_path / "no-image-policy")
+    monkeypatch.setattr(helper, "_vcf_storage_root_directory", lambda _: None)
+    monkeypatch.setattr(helper, "_vcf_storage_read", lambda _: assignment)
+    monkeypatch.setattr(helper, "_vcf_storage_target", lambda _: target)
+    mount_layers = [str(target)] if registered else []
+    if observed == "wrong_mount" and not registered:
+        mount_layers = [str(target), str(target)]
+    monkeypatch.setattr(helper, "_vcf_storage_find_mount", lambda *_: mount_layers)
+    monkeypatch.setattr(helper, "_vcf_storage_live_source", lambda _role, _assignment: volume)
+    monkeypatch.setattr(helper, "_vcf_storage_mounted", lambda *_: observed == "committed")
+    for operation in ("_vcf_storage_bind", "_vcf_storage_unbind", "_vcf_storage_begin_fence",
+                      "_vcf_storage_copy_previous", "_vcf_storage_remove_previous", "_durable_management_handoff_state_write"):
+        monkeypatch.setattr(helper, operation, lambda *_, **__: pytest.fail("Recovery attempted another cutover."))
+
+    called = []
+    result = helper._apply_with_vcf_storage(
+        role, assignment, lambda: called.append(role) or 0, disabled=role != "registry",
+        migration={"previous": {"uuid": "old", "path": "/mnt/old"}, "action": "delete", "confirmation": "DELETE /mnt/old"},
+    )
+    assert result == (0 if observed == "committed" else 2)
+    assert called == ([role] if observed == "committed" else [])
+
+
 def test_vcf_storage_depot_initializes_prod_as_atlaso(monkeypatch, tmp_path):
     """Create the upload root with the service identity before exposing the selected volume.
 
