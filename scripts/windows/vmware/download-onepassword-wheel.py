@@ -16,12 +16,12 @@ from typing import Any
 from urllib.parse import urlsplit
 
 EXPECTED_REPOSITORY = "mdaneri/onepassword-sdk-python"
-EXPECTED_TAG = "atlaso-wheel-v0.4.1-cp314.1"
-EXPECTED_ASSET = "onepassword_sdk-0.4.1-cp314-cp314-win_amd64.whl"
+EXPECTED_TAG = "atlaso-wheel-v0.4.2-cp314.1"
+EXPECTED_ASSET = "onepassword_sdk-0.4.2-cp314-cp314-win_amd64.whl"
 EXPECTED_WHEEL_TAG = "cp314-cp314-win_amd64"
-EXPECTED_UPSTREAM_TAG = "v0.4.1"
-EXPECTED_UPSTREAM_COMMIT = "50b2adadef5d1cd6b71c387ea36599af62318100"
-EXPECTED_SDIST_SHA256 = "4b9224208aa6e35e13bad8534e6521d3abf5ba166ea4efd370fcdc918c4a4d26"
+EXPECTED_UPSTREAM_TAG = "v0.4.2"
+EXPECTED_UPSTREAM_COMMIT = "5cca07581766bbd03a4011cc65e1d4187a0dd378"
+EXPECTED_SDIST_SHA256 = "fbe98d7e16e16952d1e34d75f2674899cec91d3b26de975168a60b07dc5e6a84"
 ALLOWED_REDIRECT_HOSTS = frozenset(
     {"github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com"}
 )

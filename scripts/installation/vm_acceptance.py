@@ -80,7 +80,12 @@ class FailureEvidence:
     collection: str = "not_attempted"
 
     def record_state(self, unit: str, state: str) -> None:
-        """Record and log changed, normalized observations, keeping the last eight per unit."""
+        """Record and log changed, normalized observations, keeping the last eight per unit.
+
+        Args:
+            unit: Atlaso systemd unit being checked.
+            state: Allowlisted service or recognition state.
+        """
         states = self.service_states.setdefault(unit, [])
         if not states or states[-1] != state:
             states.append(state)
@@ -88,7 +93,12 @@ class FailureEvidence:
             print(f"{unit} state: {state}", flush=True)
 
     def write(self, receipt: Path, args: argparse.Namespace) -> None:
-        """Seal a separate failure record after exact media and fixture admission."""
+        """Seal a separate failure record after exact media and fixture admission.
+
+        Args:
+            receipt: Planned success receipt path used to derive the failure record path.
+            args: Validated version, commit and ISO digest options.
+        """
         write_new_json(failure_path(receipt), {
             "schema": 1,
             "kind": "atlaso-vm-acceptance-failure",
@@ -100,7 +110,11 @@ class FailureEvidence:
 
 
 def failure_path(receipt: Path) -> Path:
-    """Return the diagnostic destination, separate from the publishable success receipt."""
+    """Return the diagnostic destination, separate from the publishable success receipt.
+
+    Args:
+        receipt: Planned success receipt path.
+    """
     return receipt.with_name(receipt.stem + "-failure.json")
 
 
@@ -644,7 +658,12 @@ def installed_login_prompt(text: str) -> bool:
 
 
 def observe_boot_console(text: str, evidence: FailureEvidence) -> bool:
-    """Remember the last recognized pre-login boot screen without saving its text."""
+    """Remember the last recognized pre-login boot screen without saving its text.
+
+    Args:
+        text: Transient OCR text from the boot console.
+        evidence: Record that receives a fixed boot screen category.
+    """
     if installed_console_ready(text):
         evidence.boot_screen = "atlaso_console"
         return True
@@ -684,7 +703,14 @@ def installed_identity_command(attribute: str, expected_name: str) -> str:
 
 
 def collect_service_failure(qmp: Qmp, output: Path, service: str, evidence: FailureEvidence) -> None:
-    """Summarize a fixed set of startup units and classify recent warnings from the failing unit."""
+    """Summarize a fixed set of startup units and classify recent warnings from the failing unit.
+
+    Args:
+        qmp: Control connection to the authenticated guest.
+        output: Fixture directory used for transient console frames.
+        service: Atlaso systemd unit that failed to confirm activation.
+        evidence: Record that receives allowlisted unit and journal observations.
+    """
     units = " ".join(STARTUP_UNITS)
     try:
         run_console_command(
@@ -735,7 +761,13 @@ def collect_service_failure(qmp: Qmp, output: Path, service: str, evidence: Fail
 
 
 def check_installed_services(qmp: Qmp, output: Path, evidence: FailureEvidence) -> None:
-    """Require a fresh, unambiguous active reply for each service within its original deadline."""
+    """Require a fresh, unambiguous active reply for each service within its original deadline.
+
+    Args:
+        qmp: Control connection to the authenticated guest.
+        output: Fixture directory used for transient console frames.
+        evidence: Record that receives normalized service observations.
+    """
     for prefix, service in zip(("APP", "WORKER"), STARTUP_UNITS[:2], strict=True):
         evidence.checkpoint = f"{service} active"
         deadline = time.monotonic() + 150

@@ -269,6 +269,12 @@ def test_final_receipt_is_new_and_contains_only_public_acceptance_fields(tmp_pat
 
 
 def test_service_checks_require_current_unambiguous_replies(monkeypatch, tmp_path):
+    """Ignore stale replies and require one state for the current poll.
+
+    Args:
+        monkeypatch: Fixture that replaces console input and OCR.
+        tmp_path: Directory representing the VM fixture.
+    """
     evidence = vm_acceptance.FailureEvidence()
     commands = []
     frames = iter([
@@ -281,6 +287,15 @@ def test_service_checks_require_current_unambiguous_replies(monkeypatch, tmp_pat
     monkeypatch.setattr(vm_acceptance.time, "sleep", lambda _seconds: None)
 
     def wait_screen(_qmp, _output, predicate, _label, _seconds):
+        """Match the current frame and reject every stale frame.
+
+        Args:
+            _qmp: Unused control connection.
+            _output: Unused fixture directory.
+            predicate: Matcher for the current request.
+            _label: Unused checkpoint label.
+            _seconds: Unused checkpoint budget.
+        """
         *stale, current = next(frames)
         assert all(not predicate(frame) for frame in stale)
         assert predicate(current)
@@ -297,6 +312,12 @@ def test_service_checks_require_current_unambiguous_replies(monkeypatch, tmp_pat
 
 
 def test_service_timeout_keeps_gate_closed_and_collects_evidence(monkeypatch, tmp_path):
+    """Collect diagnostics after the deadline without admitting a success receipt.
+
+    Args:
+        monkeypatch: Fixture that controls the clock and mimics unrecognized console replies.
+        tmp_path: Directory representing the VM fixture.
+    """
     evidence = vm_acceptance.FailureEvidence()
     clock = iter([0, 0, 15, 150, 150])
     collected = []
@@ -304,6 +325,11 @@ def test_service_timeout_keeps_gate_closed_and_collects_evidence(monkeypatch, tm
     monkeypatch.setattr(vm_acceptance, "run_console_command", lambda *_: None)
 
     def wait_screen(*_):
+        """Simulate a console reply that OCR cannot recognize.
+
+        Args:
+            *_: Unused console wait arguments.
+        """
         raise vm_acceptance.ScreenTimeout("unrecognized")
 
     monkeypatch.setattr(vm_acceptance, "wait_screen", wait_screen)
@@ -319,11 +345,28 @@ def test_service_timeout_keeps_gate_closed_and_collects_evidence(monkeypatch, tm
 def test_acceptance_exercises_network_diagnostics_from_the_first_shipping_version(
     monkeypatch, tmp_path, version, probes_required,
 ):
+    """Apply the network probe requirement only to versions that ship it.
+
+    Args:
+        monkeypatch: Fixture that supplies synthetic console replies.
+        tmp_path: Directory representing the VM fixture.
+        version: Installed version to verify.
+        probes_required: Whether this version must exercise the network probes.
+    """
     observed = []
     monkeypatch.setattr(vm_acceptance, "run_console_command", lambda *_: None)
     monkeypatch.setattr(vm_acceptance, "check_installed_services", lambda *_: observed.append("services"))
 
     def wait_screen(_qmp, _output, predicate, label, _seconds):
+        """Supply the correct recognized frame for the current checkpoint.
+
+        Args:
+            _qmp: Unused control connection.
+            _output: Unused fixture directory.
+            predicate: Matcher for the current request.
+            label: Checkpoint used to choose a synthetic reply.
+            _seconds: Unused checkpoint budget.
+        """
         observed.append(label)
         response = "PROBES-OK" if label == "installed network diagnostics" else "True"
         assert predicate(response)
@@ -339,6 +382,13 @@ def test_acceptance_exercises_network_diagnostics_from_the_first_shipping_versio
 
 
 def test_failed_acceptance_only_seals_allowlisted_evidence(monkeypatch, tmp_path, capsys):
+    """Write sanitized failure evidence and withhold the success receipt.
+
+    Args:
+        monkeypatch: Fixture that supplies synthetic service and journal diagnostics.
+        tmp_path: Directory that contains the acceptance and diagnostic destinations.
+        capsys: Fixture used to check public stdout and stderr.
+    """
     receipt = tmp_path / "vm-acceptance.json"
     iso = tmp_path / "exact.iso"
     password = "sensitive-fixture-value"
@@ -357,11 +407,29 @@ def test_failed_acceptance_only_seals_allowlisted_evidence(monkeypatch, tmp_path
     ])
 
     def wait_screen(_qmp, _output, predicate, _label, _seconds):
+        """Supply a synthetic diagnostic frame with recognizable and untrusted text.
+
+        Args:
+            _qmp: Unused control connection.
+            _output: Unused fixture directory.
+            predicate: Matcher for the diagnostic completion marker.
+            _label: Unused checkpoint label.
+            _seconds: Unused checkpoint budget.
+        """
         frame = next(frames)
         assert predicate(frame)
         return frame
 
     def failed_install(_iso, output, _args, _passwords, evidence):
+        """Simulate a failed service check after the disk-only boot.
+
+        Args:
+            _iso: Unused installer image.
+            output: Directory representing the VM fixture.
+            _args: Unused installer arguments.
+            _passwords: Unused concealed credentials.
+            evidence: Record populated by the diagnostic functions.
+        """
         assert not vm_acceptance.observe_boot_console(f"{password}\nA start job is running", evidence)
         evidence.checkpoint = "atlaso.service active"
         evidence.record_state("atlaso.service", "failed")

@@ -911,7 +911,7 @@ function Save-AtlasoOnePasswordWheel {
         -Action 'The approved 1Password compatibility wheel download'
     $wheelPath = ([string]$output).Trim()
     if (-not (Test-Path -LiteralPath $wheelPath -PathType Leaf) -or
-        [System.IO.Path]::GetFileName($wheelPath) -cne 'onepassword_sdk-0.4.1-cp314-cp314-win_amd64.whl') {
+        [System.IO.Path]::GetFileName($wheelPath) -cne 'onepassword_sdk-0.4.2-cp314-cp314-win_amd64.whl') {
         throw 'The approved 1Password compatibility wheel download did not produce the exact expected asset.'
     }
     return $wheelPath
@@ -962,7 +962,7 @@ function New-AtlasoIsolatedPipRuntime {
 Create the hash-locked index-download input without the preverified 1Password SDK wheel.
 
 .PARAMETER LockPath
-Canonical deployment lock containing exactly one onepassword-sdk 0.4.1 requirement.
+Canonical deployment lock containing exactly one onepassword-sdk 0.4.2 requirement.
 
 .PARAMETER DestinationPath
 Private task-specific path that receives the remaining index-download requirements.
@@ -979,13 +979,13 @@ function New-AtlasoOnePasswordIndexLock {
     $lines = [System.IO.File]::ReadAllLines([System.IO.Path]::GetFullPath($LockPath))
     $requirementIndexes = @(
         for ($index = 0; $index -lt $lines.Count; $index++) {
-            if ($lines[$index] -cmatch '^onepassword-sdk==0\.4\.1\s+\\\s*$') {
+            if ($lines[$index] -cmatch '^onepassword-sdk==0\.4\.2\s+\\\s*$') {
                 $index
             }
         }
     )
     if ($requirementIndexes.Count -ne 1) {
-        throw 'The vetted deployment lock must contain exactly one onepassword-sdk==0.4.1 requirement.'
+        throw 'The vetted deployment lock must contain exactly one onepassword-sdk==0.4.2 requirement.'
     }
 
     $startIndex = [int]$requirementIndexes[0]

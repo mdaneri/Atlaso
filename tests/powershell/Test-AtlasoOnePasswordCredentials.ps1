@@ -162,6 +162,7 @@ $indexLockTestRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
 [void][System.IO.Directory]::CreateDirectory($indexLockTestRoot)
 try {
     $canonicalLockPath = Join-Path $repositoryRoot 'requirements-onepassword-deploy.lock'
+    $canonicalLockHash = (Get-FileHash -LiteralPath $canonicalLockPath -Algorithm SHA256).Hash
     $indexLockPath = Join-Path $indexLockTestRoot 'remaining.lock'
     New-AtlasoOnePasswordIndexLock `
         -LockPath $canonicalLockPath `
@@ -171,7 +172,7 @@ try {
         $indexLockText -cnotmatch '(?m)^paramiko==') {
         throw 'The index-download lock did not exclude only the preverified 1Password SDK requirement.'
     }
-    if ((Get-Content -LiteralPath $canonicalLockPath -Raw) -cnotmatch '(?m)^onepassword-sdk==0\.4\.1') {
+    if ((Get-FileHash -LiteralPath $canonicalLockPath -Algorithm SHA256).Hash -cne $canonicalLockHash) {
         throw 'Creating the index-download lock modified the canonical deployment lock.'
     }
     $pipConfigurationPath = & $credentialModule {
@@ -197,7 +198,7 @@ try {
 
     $duplicateLockPath = Join-Path $indexLockTestRoot 'duplicate.lock'
     $duplicateRequirement = @(
-        'onepassword-sdk==0.4.1 \'
+        'onepassword-sdk==0.4.2 \'
         '    --hash=sha256:070541f5d007f8bfa63ffd937e4717e4d3d04100096e807a05028a8a62d49b94'
     )
     [System.IO.File]::WriteAllLines(
@@ -212,7 +213,7 @@ try {
         throw 'A duplicate 1Password SDK requirement was accepted for index resolution.'
     }
     catch {
-        if ($_.Exception.Message -notlike '*exactly one onepassword-sdk==0.4.1*') {
+        if ($_.Exception.Message -notlike '*exactly one onepassword-sdk==0.4.2*') {
             throw
         }
     }

@@ -1707,7 +1707,7 @@ using the password-backed path, verify that exactly one Environment named `Atlas
 exact Environment. Configure the service-account token with the lifecycle guide's secure setup helper, or pass
 `-OnePasswordAccount '<account-name-or-id>'` to retain desktop authorization.
 The parent performs local build and input preparation without the credential, then invokes one isolated Python child.
-Atlaso temporarily consumes one immutable `onepassword-sdk 0.4.1` Windows x64 CPython 3.14 compatibility wheel from
+Atlaso temporarily consumes one immutable `onepassword-sdk 0.4.2` Windows x64 CPython 3.14 compatibility wheel from
 `mdaneri/onepassword-sdk-python`. The checked-in manifest binds the release URL, filename, size, SHA-256, upstream
 source identity, attestation workflow, wheel tag, and MIT license. The script validates that asset and selects standard
 GIL-enabled Windows x64 CPython 3.14 before build or deployment work; `-OnePasswordPython` is only an explicit override.
