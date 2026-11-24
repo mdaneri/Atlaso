@@ -1581,6 +1581,10 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     attempt_receipt = "name: vm-acceptance-${{ github.run_id }}-${{ github.run_attempt }}"
     assert attempt_receipt in acceptance_job
     assert attempt_receipt in publish_job
+    failure_artifact = "name: vm-acceptance-failure-${{ github.run_id }}-${{ github.run_attempt }}"
+    assert failure_artifact in acceptance_job
+    assert "if: ${{ failure() && steps.vm.outcome == 'failure' }}" in acceptance_job
+    assert failure_artifact not in publish_job
     assert "needs: [prepare, stage, acceptance]" in publish_job
     assert "needs.acceptance.result == 'success'" in publish_job
     assert "needs.stage.outputs.legacy == 'true'" in publish_job

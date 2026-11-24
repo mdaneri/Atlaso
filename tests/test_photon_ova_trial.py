@@ -181,10 +181,23 @@ def test_guest_bootstrap_uses_the_admitted_source_archive(tmp_path: Path, monkey
     uploads: list[tuple[str, ...]] = []
 
     def capture_command(*args: str, **_kwargs: object) -> str:
+        """Record a host command without executing it.
+
+        Args:
+            *args: Executable and positional command arguments.
+            **_kwargs: Host command options ignored by the stand-in.
+        """
         commands.append(args)
         return ""
 
     def capture_guestfish(_disk: Path, *actions: tuple[str, ...], readonly: bool = False) -> str:
+        """Record uploads and return the expected disk metadata.
+
+        Args:
+            _disk: Image path ignored by the stand-in.
+            *actions: Ordered guestfish operations and arguments.
+            readonly: Include the EFI file check for the initial inspection.
+        """
         uploads.extend(action[1:] for action in actions if action[0] == "upload")
         layout = ["gpt", "c724cded-cf33-4d1c-b510-59478c322f84", "df4477b9-3574-4e94-9729-c60d1b211fc7", "ext4", "vfat"]
         return "\n".join([*layout, "true"] if readonly else layout)
