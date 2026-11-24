@@ -3030,6 +3030,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#trial-ova-build-on-linux" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Trial OVA build on Linux
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#verify-release-assets" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4419,6 +4430,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#trial-ova-build-on-linux" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Trial OVA build on Linux
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#verify-release-assets" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5040,50 +5062,97 @@ publish the unchanged bytes.</p>
 <p>The OVA contains files for the two payload disks. Its two 500 GiB data disks are fileless declarations. Import helpers
 retain fileless disks when the platform creates them, create only missing data disks, and reject reordered or
 conflicting disks.</p>
+<h2 id="trial-ova-build-on-linux">Trial OVA build on Linux<a class="headerlink" href="#trial-ova-build-on-linux" title="Permanent link">&para;</a></h2>
+<p>The manual <strong>Build trial Photon OVA</strong> workflow builds a VMware appliance directly from the
+<a href="https://github.com/vmware/photon/wiki/Downloading-Photon-OS#downloading-photon-os-50-ga">official Photon OS 5.0 GA OVA</a>.
+It pins the x86-64 build <code>dde71ec57</code> and verifies the published SHA-512 before opening the archive. The upstream
+OVF describes one 16 GiB disk and UEFI. The disk has a GPT, an ext4 root at partition 2 and a FAT EFI system
+partition at partition 3. The build preserves both partition UUIDs and the EFI fallback bootloader. It expands
+the existing root partition and filesystem to use the 40 GiB Photon disk.</p>
+<p>Set up an isolated, disposable Ubuntu 24.04 x86-64 GitHub Actions runner with the <code>atlaso-photon-ova</code> label.
+Give the runner access to <code>/dev/kvm</code> and at least four logical CPUs, 8 GiB of RAM, and 140 GiB of free scratch
+space. Install Python 3.12 or later, Git, QEMU x86 and disk utilities, OVMF, and libguestfs tools with GPT support.
+Verify that the libguestfs supermin appliance can use KVM and acquire an address and DNS through its DHCP client.
+Restrict use of the runner to the intended repositories and workflows. Standard hosted runners and
+software emulation lack a verified capacity or runtime profile for this build.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>sudo<span class="w"> </span>apt-get<span class="w"> </span>install<span class="w"> </span>qemu-system-x86<span class="w"> </span>qemu-utils<span class="w"> </span>ovmf<span class="w"> </span>libguestfs-tools<span class="w"> </span>gdisk<span class="w"> </span>isc-dhcp-client
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>libguestfs-test-tool
+</span></code></pre></div>
+<p>On the prepared runner, you can also build from a clean checkout before the new workflow exists on the default
+branch. Supply an existing scratch parent and a new output directory.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>python3<span class="w"> </span>-m<span class="w"> </span>scripts.virtualization.build_photon_ova<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>--scratch<span class="w"> </span>/mnt/atlaso-build<span class="w"> </span>--output<span class="w"> </span>/mnt/atlaso-build/trial
+</span></code></pre></div>
+<p>Use <code>--photon-ova /path/to/photon.ova</code> to repeat an experiment with an existing copy of the same pinned image.
+Allow guest outbound DNS and HTTPS for Photon package updates, locked Python dependencies, and PowerCLI.
+The runner build does not receive release signing keys or deployment passwords. The builder clears the upstream
+root password and forced-change state offline. Before first boot, libguestfs installs the generic Photon kernel
+and an initramfs with drivers for the exported VMware PVSCSI controller. The bundled ESXi kernel panics on KVM
+during early timekeeping initialization. QEMU boots the updated Photon disk on SATA with OVMF. The live guest runs
+the canonical Atlaso provisioner and finalizer, including the package, PowerCLI, VCF SDK, time service, and offline guest-tools
+checks. The provisioner formats the 20 GiB Atlaso System Content disk
+and binds <code>/opt/atlaso</code> and the machine-wide PowerShell modules to that UUID-mounted filesystem.</p>
+<p>The output has two stream-optimized VMDKs and empty OVF definitions for the 500 GiB Depot and Backups disks.
+The builder removes verified zero padding after each VMDK's end-of-stream marker before writing the manifest,
+so VMware Workstation checks the same bytes as the archive validator during import.
+It passes the existing OVA validator before the local build emits the OVA, checksum, and provenance. The
+descriptor supplies <code>atlaso.fqdn</code>, <code>atlaso.admin_password</code>, <code>atlaso.root_password</code>, and the existing management
+network properties to the deployed guest through the runtime OVF environment. The existing VMware first-boot
+services own credential application and cleanup.</p>
+<p>Actions retains the checksum and provenance for seven days. Select <strong>Upload the OVA to Actions when
+distribution is permitted</strong> only when you can distribute the derived binary to users with access to the run.
+Review the <a href="https://ftpdocs.broadcom.com/cadocs/0/VMware_Photon_OS_SPD_2026.pdf">Photon binary distribution terms</a>
+for the official base. With the default selection, the OVA is available only on the runner for the lifetime
+of the job.</p>
+<p>Treat the output as a trial image. Before considering promotion, validate this exact OVA digest on a supported
+VMware target using the existing import and smoke procedures. Verify readiness, both NIC roles, all four disk
+roles, runtime OVF credentials and their cleanup, and a reboot. Compare the software inventory with the canonical
+build and use the existing portable-target smoke procedures when evaluating parity for release. The Workstation
+build remains the production path and the existing release process still requires signed software-source provenance.</p>
 <h2 id="verify-release-assets">Verify release assets<a class="headerlink" href="#verify-release-assets" title="Permanent link">&para;</a></h2>
 <p>Download the release into a new directory, then obtain the trusted public key from the immutable source tag. The
 release key ID is <code>atlaso-release-2026-01</code>; its SHA-256 fingerprint is
 <code>b0bb5614342c4f432a01c53fc4c9aae54c1eeffb12806539a92babbcda74b58e</code>. This example verifies the detached Ed25519
 signature, expected version, and every indexed asset before import:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nv">TAG</span><span class="o">=</span>virtualization-vX.Y.Z
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nv">ASSET_ROOT</span><span class="o">=</span><span class="s2">&quot;atlaso-</span><span class="nv">$TAG</span><span class="s2">&quot;</span>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>mkdir<span class="w"> </span>--<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">&quot;</span>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>gh<span class="w"> </span>release<span class="w"> </span>download<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$TAG</span><span class="s2">&quot;</span><span class="w"> </span>--repo<span class="w"> </span>mdaneri/Atlaso<span class="w"> </span>--dir<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">&quot;</span>
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>curl<span class="w"> </span>--fail<span class="w"> </span>--location<span class="w"> </span>--output<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/atlaso-release-2026-01.pem&quot;</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">  </span><span class="s2">&quot;https://raw.githubusercontent.com/mdaneri/Atlaso/</span><span class="nv">$TAG</span><span class="s2">/image/common/update-trust/atlaso-release-2026-01.pem&quot;</span>
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="nb">printf</span><span class="w"> </span><span class="s1">&#39;%s  %s\n&#39;</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">  </span><span class="s1">&#39;b0bb5614342c4f432a01c53fc4c9aae54c1eeffb12806539a92babbcda74b58e&#39;</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">  </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/atlaso-release-2026-01.pem&quot;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>sha256sum<span class="w"> </span>--check<span class="w"> </span>--strict
-</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>jq<span class="w"> </span>-e<span class="w"> </span>--arg<span class="w"> </span>version<span class="w"> </span><span class="s2">&quot;</span><span class="si">${</span><span class="nv">TAG</span><span class="p">#virtualization-v</span><span class="si">}</span><span class="s2">&quot;</span><span class="w"> </span>--arg<span class="w"> </span>tag<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$TAG</span><span class="s2">&quot;</span><span class="w"> </span><span class="s1">&#39;</span>
-</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="s1">  .schema_version == 2 and .kind == &quot;atlaso-virtualization-artifacts&quot; and</span>
-</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="s1">  .classification == &quot;stable&quot; and .release_tag == $tag and</span>
-</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="s1">  .source_software_tag == (&quot;v&quot; + $version) and</span>
-</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="s1">  .version == $version and .signing_key_id == &quot;atlaso-release-2026-01&quot; and</span>
-</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="s1">  (.source_release_manifest_sha256 | test(&quot;^[0-9a-f]{64}$&quot;)) and</span>
-</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="s1">  (.application_wheel_sha256 | test(&quot;^[0-9a-f]{64}$&quot;)) and</span>
-</span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="s1">  (.source_commit | test(&quot;^[0-9a-f]{40}$&quot;)) and</span>
-</span><span id="__span-1-18"><a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="s1">  (.assets | type == &quot;array&quot; and length &gt; 0 and</span>
-</span><span id="__span-1-19"><a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="s1">    all(.[]; (.name | test(&quot;^[A-Za-z0-9][A-Za-z0-9._-]*$&quot;)) and</span>
-</span><span id="__span-1-20"><a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a><span class="s1">      (.size | type == &quot;number&quot;) and (.sha256 | test(&quot;^[0-9a-f]{64}$&quot;))) and</span>
-</span><span id="__span-1-21"><a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a><span class="s1">    ([.[].name] | length == (unique | length)))</span>
-</span><span id="__span-1-22"><a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a><span class="s1">&#39;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.json&quot;</span><span class="w"> </span>&gt;/dev/null
-</span><span id="__span-1-23"><a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a>jq<span class="w"> </span>-e<span class="w"> </span><span class="s1">&#39;</span>
-</span><span id="__span-1-24"><a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a><span class="s1">  .schema_version == 1 and .algorithm == &quot;ed25519&quot; and</span>
-</span><span id="__span-1-25"><a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a><span class="s1">  .key_id == &quot;atlaso-release-2026-01&quot; and (.signature | type == &quot;string&quot;)</span>
-</span><span id="__span-1-26"><a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a><span class="s1">&#39;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.json.sig&quot;</span><span class="w"> </span>&gt;/dev/null
-</span><span id="__span-1-27"><a id="__codelineno-1-27" name="__codelineno-1-27" href="#__codelineno-1-27"></a>jq<span class="w"> </span>-r<span class="w"> </span>.signature<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.json.sig&quot;</span><span class="w"> </span><span class="p">|</span>
-</span><span id="__span-1-28"><a id="__codelineno-1-28" name="__codelineno-1-28" href="#__codelineno-1-28"></a><span class="w">  </span>base64<span class="w"> </span>--decode<span class="w"> </span>&gt;<span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.raw.sig&quot;</span>
-</span><span id="__span-1-29"><a id="__codelineno-1-29" name="__codelineno-1-29" href="#__codelineno-1-29"></a>openssl<span class="w"> </span>pkeyutl<span class="w"> </span>-verify<span class="w"> </span>-pubin<span class="w"> </span>-rawin<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-1-30"><a id="__codelineno-1-30" name="__codelineno-1-30" href="#__codelineno-1-30"></a><span class="w">  </span>-inkey<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/atlaso-release-2026-01.pem&quot;</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-1-31"><a id="__codelineno-1-31" name="__codelineno-1-31" href="#__codelineno-1-31"></a><span class="w">  </span>-in<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.json&quot;</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-1-32"><a id="__codelineno-1-32" name="__codelineno-1-32" href="#__codelineno-1-32"></a><span class="w">  </span>-sigfile<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.raw.sig&quot;</span>
-</span><span id="__span-1-33"><a id="__codelineno-1-33" name="__codelineno-1-33" href="#__codelineno-1-33"></a><span class="k">while</span><span class="w"> </span><span class="nv">IFS</span><span class="o">=</span><span class="s1">$&#39;\t&#39;</span><span class="w"> </span><span class="nb">read</span><span class="w"> </span>-r<span class="w"> </span>digest<span class="w"> </span>size<span class="w"> </span>name<span class="p">;</span><span class="w"> </span><span class="k">do</span>
-</span><span id="__span-1-34"><a id="__codelineno-1-34" name="__codelineno-1-34" href="#__codelineno-1-34"></a><span class="w">  </span><span class="nb">test</span><span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span>stat<span class="w"> </span>--format<span class="o">=</span><span class="s1">&#39;%s&#39;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/</span><span class="nv">$name</span><span class="s2">&quot;</span><span class="k">)</span><span class="s2">&quot;</span><span class="w"> </span>-eq<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$size</span><span class="s2">&quot;</span>
-</span><span id="__span-1-35"><a id="__codelineno-1-35" name="__codelineno-1-35" href="#__codelineno-1-35"></a><span class="w">  </span><span class="nb">printf</span><span class="w"> </span><span class="s1">&#39;%s  %s\n&#39;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$digest</span><span class="s2">&quot;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$name</span><span class="s2">&quot;</span>
-</span><span id="__span-1-36"><a id="__codelineno-1-36" name="__codelineno-1-36" href="#__codelineno-1-36"></a><span class="k">done</span><span class="w"> </span>&lt;<span class="w"> </span>&lt;<span class="o">(</span>jq<span class="w"> </span>-r<span class="w"> </span><span class="s1">&#39;.assets[] | [.sha256, .size, .name] | @tsv&#39;</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-1-37"><a id="__codelineno-1-37" name="__codelineno-1-37" href="#__codelineno-1-37"></a><span class="w">  </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.json&quot;</span><span class="o">)</span><span class="w"> </span><span class="p">|</span>
-</span><span id="__span-1-38"><a id="__codelineno-1-38" name="__codelineno-1-38" href="#__codelineno-1-38"></a><span class="w">  </span><span class="o">(</span><span class="nb">cd</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">&quot;</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>sha256sum<span class="w"> </span>--check<span class="w"> </span>--strict<span class="o">)</span>
-</span><span id="__span-1-39"><a id="__codelineno-1-39" name="__codelineno-1-39" href="#__codelineno-1-39"></a>rm<span class="w"> </span>--<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.raw.sig&quot;</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nv">TAG</span><span class="o">=</span>virtualization-vX.Y.Z
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="nv">ASSET_ROOT</span><span class="o">=</span><span class="s2">&quot;atlaso-</span><span class="nv">$TAG</span><span class="s2">&quot;</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>mkdir<span class="w"> </span>--<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">&quot;</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>gh<span class="w"> </span>release<span class="w"> </span>download<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$TAG</span><span class="s2">&quot;</span><span class="w"> </span>--repo<span class="w"> </span>mdaneri/Atlaso<span class="w"> </span>--dir<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">&quot;</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>curl<span class="w"> </span>--fail<span class="w"> </span>--location<span class="w"> </span>--output<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/atlaso-release-2026-01.pem&quot;</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">  </span><span class="s2">&quot;https://raw.githubusercontent.com/mdaneri/Atlaso/</span><span class="nv">$TAG</span><span class="s2">/image/common/update-trust/atlaso-release-2026-01.pem&quot;</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="nb">printf</span><span class="w"> </span><span class="s1">&#39;%s  %s\n&#39;</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">  </span><span class="s1">&#39;b0bb5614342c4f432a01c53fc4c9aae54c1eeffb12806539a92babbcda74b58e&#39;</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">  </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/atlaso-release-2026-01.pem&quot;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>sha256sum<span class="w"> </span>--check<span class="w"> </span>--strict
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>jq<span class="w"> </span>-e<span class="w"> </span>--arg<span class="w"> </span>version<span class="w"> </span><span class="s2">&quot;</span><span class="si">${</span><span class="nv">TAG</span><span class="p">#virtualization-v</span><span class="si">}</span><span class="s2">&quot;</span><span class="w"> </span>--arg<span class="w"> </span>tag<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$TAG</span><span class="s2">&quot;</span><span class="w"> </span><span class="s1">&#39;</span>
+</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="s1">  .schema_version == 2 and .kind == &quot;atlaso-virtualization-artifacts&quot; and</span>
+</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="s1">  .classification == &quot;stable&quot; and .release_tag == $tag and</span>
+</span><span id="__span-3-13"><a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="s1">  .source_software_tag == (&quot;v&quot; + $version) and</span>
+</span><span id="__span-3-14"><a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="s1">  .version == $version and .signing_key_id == &quot;atlaso-release-2026-01&quot; and</span>
+</span><span id="__span-3-15"><a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="s1">  (.source_release_manifest_sha256 | test(&quot;^[0-9a-f]{64}$&quot;)) and</span>
+</span><span id="__span-3-16"><a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="s1">  (.application_wheel_sha256 | test(&quot;^[0-9a-f]{64}$&quot;)) and</span>
+</span><span id="__span-3-17"><a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a><span class="s1">  (.source_commit | test(&quot;^[0-9a-f]{40}$&quot;)) and</span>
+</span><span id="__span-3-18"><a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a><span class="s1">  (.assets | type == &quot;array&quot; and length &gt; 0 and</span>
+</span><span id="__span-3-19"><a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a><span class="s1">    all(.[]; (.name | test(&quot;^[A-Za-z0-9][A-Za-z0-9._-]*$&quot;)) and</span>
+</span><span id="__span-3-20"><a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a><span class="s1">      (.size | type == &quot;number&quot;) and (.sha256 | test(&quot;^[0-9a-f]{64}$&quot;))) and</span>
+</span><span id="__span-3-21"><a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a><span class="s1">    ([.[].name] | length == (unique | length)))</span>
+</span><span id="__span-3-22"><a id="__codelineno-3-22" name="__codelineno-3-22" href="#__codelineno-3-22"></a><span class="s1">&#39;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.json&quot;</span><span class="w"> </span>&gt;/dev/null
+</span><span id="__span-3-23"><a id="__codelineno-3-23" name="__codelineno-3-23" href="#__codelineno-3-23"></a>jq<span class="w"> </span>-e<span class="w"> </span><span class="s1">&#39;</span>
+</span><span id="__span-3-24"><a id="__codelineno-3-24" name="__codelineno-3-24" href="#__codelineno-3-24"></a><span class="s1">  .schema_version == 1 and .algorithm == &quot;ed25519&quot; and</span>
+</span><span id="__span-3-25"><a id="__codelineno-3-25" name="__codelineno-3-25" href="#__codelineno-3-25"></a><span class="s1">  .key_id == &quot;atlaso-release-2026-01&quot; and (.signature | type == &quot;string&quot;)</span>
+</span><span id="__span-3-26"><a id="__codelineno-3-26" name="__codelineno-3-26" href="#__codelineno-3-26"></a><span class="s1">&#39;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.json.sig&quot;</span><span class="w"> </span>&gt;/dev/null
+</span><span id="__span-3-27"><a id="__codelineno-3-27" name="__codelineno-3-27" href="#__codelineno-3-27"></a>jq<span class="w"> </span>-r<span class="w"> </span>.signature<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.json.sig&quot;</span><span class="w"> </span><span class="p">|</span>
+</span><span id="__span-3-28"><a id="__codelineno-3-28" name="__codelineno-3-28" href="#__codelineno-3-28"></a><span class="w">  </span>base64<span class="w"> </span>--decode<span class="w"> </span>&gt;<span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.raw.sig&quot;</span>
+</span><span id="__span-3-29"><a id="__codelineno-3-29" name="__codelineno-3-29" href="#__codelineno-3-29"></a>openssl<span class="w"> </span>pkeyutl<span class="w"> </span>-verify<span class="w"> </span>-pubin<span class="w"> </span>-rawin<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-30"><a id="__codelineno-3-30" name="__codelineno-3-30" href="#__codelineno-3-30"></a><span class="w">  </span>-inkey<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/atlaso-release-2026-01.pem&quot;</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-31"><a id="__codelineno-3-31" name="__codelineno-3-31" href="#__codelineno-3-31"></a><span class="w">  </span>-in<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.json&quot;</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-32"><a id="__codelineno-3-32" name="__codelineno-3-32" href="#__codelineno-3-32"></a><span class="w">  </span>-sigfile<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.raw.sig&quot;</span>
+</span><span id="__span-3-33"><a id="__codelineno-3-33" name="__codelineno-3-33" href="#__codelineno-3-33"></a><span class="k">while</span><span class="w"> </span><span class="nv">IFS</span><span class="o">=</span><span class="s1">$&#39;\t&#39;</span><span class="w"> </span><span class="nb">read</span><span class="w"> </span>-r<span class="w"> </span>digest<span class="w"> </span>size<span class="w"> </span>name<span class="p">;</span><span class="w"> </span><span class="k">do</span>
+</span><span id="__span-3-34"><a id="__codelineno-3-34" name="__codelineno-3-34" href="#__codelineno-3-34"></a><span class="w">  </span><span class="nb">test</span><span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span>stat<span class="w"> </span>--format<span class="o">=</span><span class="s1">&#39;%s&#39;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/</span><span class="nv">$name</span><span class="s2">&quot;</span><span class="k">)</span><span class="s2">&quot;</span><span class="w"> </span>-eq<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$size</span><span class="s2">&quot;</span>
+</span><span id="__span-3-35"><a id="__codelineno-3-35" name="__codelineno-3-35" href="#__codelineno-3-35"></a><span class="w">  </span><span class="nb">printf</span><span class="w"> </span><span class="s1">&#39;%s  %s\n&#39;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$digest</span><span class="s2">&quot;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$name</span><span class="s2">&quot;</span>
+</span><span id="__span-3-36"><a id="__codelineno-3-36" name="__codelineno-3-36" href="#__codelineno-3-36"></a><span class="k">done</span><span class="w"> </span>&lt;<span class="w"> </span>&lt;<span class="o">(</span>jq<span class="w"> </span>-r<span class="w"> </span><span class="s1">&#39;.assets[] | [.sha256, .size, .name] | @tsv&#39;</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-37"><a id="__codelineno-3-37" name="__codelineno-3-37" href="#__codelineno-3-37"></a><span class="w">  </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.json&quot;</span><span class="o">)</span><span class="w"> </span><span class="p">|</span>
+</span><span id="__span-3-38"><a id="__codelineno-3-38" name="__codelineno-3-38" href="#__codelineno-3-38"></a><span class="w">  </span><span class="o">(</span><span class="nb">cd</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">&quot;</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>sha256sum<span class="w"> </span>--check<span class="w"> </span>--strict<span class="o">)</span>
+</span><span id="__span-3-39"><a id="__codelineno-3-39" name="__codelineno-3-39" href="#__codelineno-3-39"></a>rm<span class="w"> </span>--<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.raw.sig&quot;</span>
 </span></code></pre></div>
 <p>Run the verification from a trusted administrative workstation with OpenSSL 3, <code>jq</code>, GNU coreutils, and GitHub CLI.
 The standard tools authenticate the signed index before trusting its asset records; no downloaded verifier executes
@@ -5122,8 +5191,8 @@ any failed verification leaves the VM powered on and blocks export.</p>
 <h2 id="import-on-proxmox-ve">Import on Proxmox VE<a class="headerlink" href="#import-on-proxmox-ve" title="Permanent link">&para;</a></h2>
 <p>The Proxmox VE node needs <code>qm</code>, <code>pvesm</code>, <code>qemu-img</code>, <code>jq</code>, Python 3, and access to the selected storage and bridges. Copy
 the OVA, <code>import-atlaso-proxmox.sh</code>, and <code>validate_ova.py</code> into one ordinary directory, then run:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>chmod<span class="w"> </span><span class="m">0755</span><span class="w"> </span>import-atlaso-proxmox.sh
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>./import-atlaso-proxmox.sh<span class="w"> </span>atlaso-vX.Y.Z.ova<span class="w"> </span><span class="m">240</span><span class="w"> </span>local-lvm<span class="w"> </span>vmbr0<span class="w"> </span>vmbr1
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>chmod<span class="w"> </span><span class="m">0755</span><span class="w"> </span>import-atlaso-proxmox.sh
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>./import-atlaso-proxmox.sh<span class="w"> </span>atlaso-vX.Y.Z.ova<span class="w"> </span><span class="m">240</span><span class="w"> </span>local-lvm<span class="w"> </span>vmbr0<span class="w"> </span>vmbr1
 </span></code></pre></div>
 <p>Arguments are the OVA, an unused VM ID, destination storage, management bridge, and optional services bridge. The
 helper uses the platform OVF/OVA importer, then enforces q35, OVMF without pre-enrolled Secure Boot keys, four CPUs,
@@ -5137,8 +5206,8 @@ unreferenced storage that it created after all preflight checks passed.</p>
 <p>The KVM host needs <code>virt-v2v</code>, <code>virsh</code>, <code>qemu-img</code>, <code>jq</code>, Python 3, q35-compatible OVMF firmware, one active storage
 pool, and two existing libvirt networks. Copy the OVA, <code>import-atlaso-kvm.sh</code>, <code>validate_ova.py</code>, and
 <code>normalize_libvirt.py</code> into one ordinary directory, then run:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>chmod<span class="w"> </span><span class="m">0755</span><span class="w"> </span>import-atlaso-kvm.sh
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>sudo<span class="w"> </span>./import-atlaso-kvm.sh<span class="w"> </span>atlaso-vX.Y.Z.ova<span class="w"> </span>atlaso<span class="w"> </span>default<span class="w"> </span>atlaso-management<span class="w"> </span>atlaso-services
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>chmod<span class="w"> </span><span class="m">0755</span><span class="w"> </span>import-atlaso-kvm.sh
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>sudo<span class="w"> </span>./import-atlaso-kvm.sh<span class="w"> </span>atlaso-vX.Y.Z.ova<span class="w"> </span>atlaso<span class="w"> </span>default<span class="w"> </span>atlaso-management<span class="w"> </span>atlaso-services
 </span></code></pre></div>
 <p>Arguments are the OVA, an unused domain name, active storage pool, management network, and optional services network.
 The helper imports with <code>virt-v2v -i ova</code>, creates only missing 500 GiB data volumes, verifies the resulting disk order
@@ -5151,12 +5220,12 @@ Rollback removes only the domain and matching volumes created after that locked 
 <h2 id="import-on-hyper-v">Import on Hyper-V<a class="headerlink" href="#import-on-hyper-v" title="Permanent link">&para;</a></h2>
 <p>Download and extract <code>atlaso-v&lt;version&gt;-hyperv-x86_64.zip</code> into a new ordinary directory on the Hyper-V host. Open an
 elevated PowerShell 7.4 or newer (<code>pwsh</code>) session and run:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">pwsh</span> <span class="o">-File</span> <span class="p">.\</span><span class="nb">Import-Atlaso</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>  <span class="n">-Name</span> <span class="n">Atlaso</span> <span class="p">`</span>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>  <span class="n">-ManagementSwitch</span> <span class="s1">&#39;Management&#39;</span> <span class="p">`</span>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>  <span class="n">-ServiceSwitch</span> <span class="s1">&#39;Services&#39;</span> <span class="p">`</span>
-</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>  <span class="n">-DestinationRoot</span> <span class="s1">&#39;D:\Hyper-V\Atlaso&#39;</span> <span class="p">`</span>
-</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>  <span class="n">-Start</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">pwsh</span> <span class="o">-File</span> <span class="p">.\</span><span class="nb">Import-Atlaso</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>  <span class="n">-Name</span> <span class="n">Atlaso</span> <span class="p">`</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>  <span class="n">-ManagementSwitch</span> <span class="s1">&#39;Management&#39;</span> <span class="p">`</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>  <span class="n">-ServiceSwitch</span> <span class="s1">&#39;Services&#39;</span> <span class="p">`</span>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>  <span class="n">-DestinationRoot</span> <span class="s1">&#39;D:\Hyper-V\Atlaso&#39;</span> <span class="p">`</span>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>  <span class="n">-Start</span>
 </span></code></pre></div>
 <p>The importer verifies its manifest and checksums before creating state. It copies four dynamic VHDX disks into a new
 destination, creates a Generation 2 VM with Secure Boot off, attaches two selected switches and the four ordered SCSI
@@ -5408,9 +5477,9 @@ repair it. Both initial and post-reboot SSH, disk, service, and OpenAPI checks r
 <h2 id="protected-release-runners">Protected release runners<a class="headerlink" href="#protected-release-runners" title="Permanent link">&para;</a></h2>
 <p>The primary Windows producer is a maintainer workstation, not a permanent GitHub runner. From a clean attached branch
 or detached checkout at the successful software-release SHA, run:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">pip</span> <span class="n">install</span> <span class="p">-</span><span class="n">-require-hashes</span> <span class="p">-</span><span class="n">-requirement</span> <span class="n">requirements-virtualization-smoke</span><span class="p">.</span><span class="n">lock</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">export-ovf</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-Prerelease</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">pip</span> <span class="n">install</span> <span class="p">-</span><span class="n">-require-hashes</span> <span class="p">-</span><span class="n">-requirement</span> <span class="n">requirements-virtualization-smoke</span><span class="p">.</span><span class="n">lock</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">export-ovf</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-Prerelease</span>
 </span></code></pre></div>
 <p>The command verifies and extracts the exact published software bundle, installs it while building the canonical
 VMware template, exports that checked powered-off template directly, derives
@@ -5439,7 +5508,7 @@ The image-builder handoff uses named parameters and deliberately leaves both <co
 unbound so the reviewed 1Password defaults remain authoritative.</p>
 <p>For production-path acceptance without creating a virtualization tag or Release, use the matching signed software
 release from its clean source checkout:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">export-ovf</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-Prerelease</span> <span class="n">-CandidateOnly</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">export-ovf</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-Prerelease</span> <span class="n">-CandidateOnly</span>
 </span></code></pre></div>
 <p>Before merge, validate development construction and deployment using PR-owned test VMs. Protected candidate production
 still requires the matching successful <code>main</code> software release; do not weaken that binding to test a feature branch.
@@ -5486,10 +5555,10 @@ Python-ABI fields to exactly match the verified software-source sidecar. A retry
 uploaded reconstructs the deterministic pair, verifies the retained byte without clobbering it, and uploads only the
 missing counterpart.</p>
 <p>Stable promotion never rebuilds:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">export-ovf</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-Release</span> <span class="p">`</span>
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>  <span class="n">-FromPrerelease</span> <span class="n">virtualization-vX</span><span class="p">.</span><span class="n">Y</span><span class="p">.</span><span class="n">Z-rc</span><span class="p">.</span><span class="n">1</span> <span class="p">`</span>
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>  <span class="n">-ProxmoxRunnerLabel</span> <span class="n">atlaso-proxmox-virtualization-vX-Y-Z-rc</span><span class="p">-</span><span class="n">1</span> <span class="p">`</span>
-</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>  <span class="n">-KvmRunnerLabel</span> <span class="n">atlaso-kvm-virtualization-vX-Y-Z-rc</span><span class="p">-</span><span class="n">1</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">export-ovf</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-Release</span> <span class="p">`</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>  <span class="n">-FromPrerelease</span> <span class="n">virtualization-vX</span><span class="p">.</span><span class="n">Y</span><span class="p">.</span><span class="n">Z-rc</span><span class="p">.</span><span class="n">1</span> <span class="p">`</span>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>  <span class="n">-ProxmoxRunnerLabel</span> <span class="n">atlaso-proxmox-virtualization-vX-Y-Z-rc</span><span class="p">-</span><span class="n">1</span> <span class="p">`</span>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>  <span class="n">-KvmRunnerLabel</span> <span class="n">atlaso-kvm-virtualization-vX-Y-Z-rc</span><span class="p">-</span><span class="n">1</span>
 </span></code></pre></div>
 <p>Bring the uniquely labelled Proxmox and KVM <code>--ephemeral</code> runners online only for that approved promotion, then destroy
 or sanitize them after the job. They receive read-only Actions/contents permissions, no signing secret, and no
