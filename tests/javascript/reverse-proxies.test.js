@@ -5,6 +5,14 @@ const test = require("node:test");
 
 const reverseProxies = require("../../atlaso/app/static/reverse-proxies.js");
 
+function fallbackClickListenerSource(source) {
+  const normalized = source.replace(/\r\n/g, "\n");
+  const start = normalized.lastIndexOf('    fallback?.addEventListener("click",');
+  const end = normalized.indexOf("\n\n    try {", start);
+  assert.ok(start >= 0 && end > start, "Expected the fallback click listener before initial data loading");
+  return normalized.slice(start, end);
+}
+
 test("Routes step accepts 64 paths and rejects the affected 65th path before Review", () => {
   const source = fs.readFileSync("atlaso/app/static/reverse-proxies.js", "utf8");
   const start = source.indexOf("    function validateStep({ step }) {");
@@ -474,8 +482,6 @@ test("fallback deletes share confirmation and consume returned collections witho
   const helperEnd = source.indexOf("    function openWizard(", helperStart);
   const actionStart = source.indexOf("    async function deleteProxy(");
   const actionEnd = source.indexOf("    const fallback =", actionStart);
-  const fallbackStart = source.lastIndexOf('    fallback?.addEventListener("click",');
-  const fallbackEnd = source.indexOf("\n\n    try {", fallbackStart);
   class Element {
     constructor(id) { this.dataset = { reverseProxyDelete: id }; }
     closest(selector) { return selector === "[data-reverse-proxy-delete]" ? this : null; }
@@ -494,7 +500,7 @@ test("fallback deletes share confirmation and consume returned collections witho
     fetch: async (url, options) => { calls.push([url, options]); return { ok, json: async () => malformed ? {} : deleted }; },
   });
   vm.runInContext(source.slice(queueStart, helperStart) + source.slice(helperStart, helperEnd) + source.slice(actionStart, actionEnd)
-    + source.slice(fallbackStart, fallbackEnd), context);
+    + fallbackClickListenerSource(source), context);
   const button = new Element("7");
   await handler({ target: button });
   assert.equal(confirmations[0].title, "Delete reverse proxy Proxy?");
@@ -563,15 +569,20 @@ test("browser retains slashless PROD prefix parity with canonical backend invent
   assert.equal(reverseProxies.validPathPrefix("/app/product"), true);
 });
 
+test("fallback click listener extraction works with LF and CRLF checkouts", () => {
+  const source = fs.readFileSync("atlaso/app/static/reverse-proxies.js", "utf8");
+  const lf = source.replace(/\r\n/g, "\n");
+  const crlf = lf.replace(/\n/g, "\r\n");
+  assert.equal(fallbackClickListenerSource(crlf), fallbackClickListenerSource(lf));
+});
+
 test("fallback add action opens the existing new-proxy wizard", () => {
   const source = fs.readFileSync("atlaso/app/static/reverse-proxies.js", "utf8");
-  const start = source.lastIndexOf('    fallback?.addEventListener("click",');
-  const end = source.indexOf("\n\n    try {", start);
   class Element { closest(selector) { return selector === "[data-reverse-proxy-add]" ? this : null; } }
   let handler; const opened = [];
   const context = vm.createContext({ Element, fallback: { addEventListener: (_type, callback) => { handler = callback; } },
     edit: (...args) => opened.push(args), items: [] });
-  vm.runInContext(source.slice(start, end), context);
+  vm.runInContext(fallbackClickListenerSource(source), context);
   const launcher = new Element();
   handler({target: launcher});
   assert.equal(opened.length, 1);
