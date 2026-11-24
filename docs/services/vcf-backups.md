@@ -38,19 +38,22 @@ synchronization, then apply **VCF Backups** through the shared [Appliance Apply]
 
 ### Choose backup storage
 
-On **VCF Backups → SFTP Settings**, select a registered volume. Atlaso appends `vcf-backups` to the volume's mount path
-and displays the resulting storage directory. Register additional volumes in
+On **VCF Backups → SFTP Settings**, choose **Change storage** to open the shared storage wizard. Select a registered
+volume; Atlaso appends `vcf-backups` to its mount path and displays the resulting storage directory. Register additional
+volumes in
 [Settings → Storage Volumes](../operate/appliance-settings.md#register-storage-volumes).
-Installed storage uses `/mnt/atlaso-vcf-backups`.
+**Appliance default** uses the storage configured during installation at `/mnt/atlaso-vcf-backups`. To reuse a volume
+selected by VCF Offline Depot or VCF Private Registry, reassign that service first; each volume can serve one VCF
+storage assignment at a time.
 
-The selected directory is saved as desired state. Review the current and proposed volume and directory under **Review
-appliance changes**, then submit **VCF Backups** through global Appliance Apply with SFTP enabled. While SFTP is
-disabled, Atlaso keeps the last applied mount and saves new selections for the next enabled Apply. You can disable SFTP
-even if its assigned storage is unavailable. Atlaso preserves the existing backup
-files and does not format the selected volume. If the new mount cannot be applied, the current assignment remains in
-service. After Apply succeeds, confirm the selected volume and directory in VCF Backups, reboot the appliance, and
-check again that the assignment and SFTP writes persist. VCF clients continue to use the stable `/backups` remote
-directory when chroot is enabled.
+The wizard asks whether to **Move**, **Leave**, or **Delete** existing files when changing directories. Saving stages the
+choice for Appliance Apply. Review the current and proposed directories and selected data action under
+**Review appliance changes**. Delete requires typing the exact confirmation shown there before submitting Appliance
+Apply. An explicit storage reassignment can be staged and applied while SFTP is disabled; disabling SFTP by itself
+retains the current storage assignment. Disabling SFTP remains available even when its assigned volume is unavailable.
+The service uses the new directory only after the storage change applies successfully. After Apply, confirm the
+selected volume and directory in VCF Backups, reboot the appliance, and check that the assignment and SFTP writes
+persist. VCF clients continue to use the stable `/backups` remote directory when chroot is enabled.
 
 The SFTP server must present the ECDSA key used for fingerprint confirmation and advertise a modern RSA-SHA2 host-key
 algorithm as well as an ECDSA host-key algorithm. These are separate requirements: an ECDSA fingerprint alone does not
@@ -245,8 +248,12 @@ These captures show responsive layouts and useful operational states referenced 
 
 *Figure: VCF Backups in the verified clean-appliance responsive state.*
 
-![VCF Backups storage volume selector showing VCF Data and the derived /mnt/vcf-data/vcf-backups directory.](../assets/screenshots/vcf-backups-storage.webp)
+![Existing data step in the VCF Backups storage wizard showing Move, Leave and Delete.](../assets/screenshots/vcf-backups-storage-data.webp)
 
-*Figure: SFTP Settings derives the backup directory from the selected registered volume.*
+*Figure: Choose what Appliance Apply will do with existing backup files.*
+
+![VCF Backups storage wizard Review with the current path, proposed path and choice for existing files.](../assets/screenshots/vcf-backups-storage.webp)
+
+*Figure: Review the backing directory for the SFTP service before staging a storage change.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->

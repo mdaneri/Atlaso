@@ -751,6 +751,14 @@ from atlaso.app.services.vcf_sddc_deployment import (
     ova_inventory,
     tls_sha256_fingerprint,
 )
+from atlaso.app.services.vcf_service_storage import (
+    REGISTRY_STORAGE_CONFIG_PATH,
+    REGISTRY_STORAGE_UNIT,
+    STORAGE_UNITS,
+    clear_applied_storage_policy,
+    storage_change_metadata,
+    verify_storage_confirmations,
+)
 from atlaso.app.services.vcf_trust import (
     RootCaInfo,
     VcfApiClient,
@@ -10404,6 +10412,7 @@ APPLIANCE_APPLY_UNIT_IDS = {
     "vcf_backups",
     "vcf_offline_depot",
     "vcf_private_registry",
+    REGISTRY_STORAGE_UNIT,
     "public_services",
 }
 
@@ -12480,8 +12489,10 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
     from atlaso.app.services.reverse_proxies import ServiceDnsAliasConflict
     from atlaso.app.services.vcf_service_storage import (
         storage_assignment,
+        storage_change,
         storage_config_metadata,
         storage_review,
+        storage_settings,
     )
 
     if not reconcile and db.scalar(select(CaSettings)) is None:
@@ -12519,24 +12530,40 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
     ldap = ldap_context(db, reconcile=reconcile)
     vcf_backup = vcf_backup_context(db, reconcile=reconcile)
     vcf_depot = vcf_offline_depot_context(db, reconcile=reconcile)
+    vcf_registry = vcf_private_registry_context(db, reconcile=reconcile)
+    vcf_registry_storage_errors: list[str] = []
+    vcf_registry["vcf_registry_storage_validation_errors"] = vcf_registry_storage_errors
+    vcf_registry["vcf_registry_storage_config_preview"] = "# VCF Private Registry storage\n"
     for role, context, prefix in (
         ("backup", vcf_backup, "vcf_backup"), ("depot", vcf_depot, "vcf_depot"),
+        ("registry", vcf_registry, "vcf_registry_storage"),
     ):
-        if role == "backup" and not context["vcf_backup_settings"].enabled:
-            # Shutdown does not change the mount. Keep the applied assignment in
-            # the baseline and resolve the desired selection when SFTP is enabled.
-            previous = (baselines.get("vcf_backups") or {}).get("snapshot_marker")
+        previous = (baselines.get(STORAGE_UNITS[role]) or {}).get("snapshot_marker")
+        selected = storage_settings(db, role)
+        backup = context["vcf_backup_settings"] if role == "backup" else None
+        if backup is not None and not backup.enabled and (
+            not backup.storage_migration_policy
+            or (
+                isinstance(previous, dict)
+                and (previous.get("uuid"), previous.get("path")) == (selected["volume_uuid"], selected["mount_path"])
+            )
+            or (not previous and not selected["volume_uuid"])
+        ):
+            # Endpoint-only shutdown does not validate or change the applied mount.
             context["storage_assignment"] = previous if isinstance(previous, dict) else {}
+            context["storage_change"] = None
+            context["vcf_backup_config_preview"] += storage_config_metadata(context["storage_assignment"])
             continue
         try:
             assignment = storage_assignment(db, role)
+            context["storage_change"] = storage_change(role, previous, assignment, selected["migration_policy"])
         except ValueError as error:
             context[f"{prefix}_validation_errors"].append(str(error))
             assignment = {}
+            context["storage_change"] = None
         context["storage_assignment"] = assignment
         preview_key = f"{prefix}_{'https_' if role == 'depot' else ''}config_preview"
         context[preview_key] += storage_config_metadata(assignment)
-    vcf_registry = vcf_private_registry_context(db, reconcile=reconcile)
     public_services = public_services_context(db, reconcile=reconcile)
     if reconcile:
         refresh_interface_service_dns_aliases(db, actor=None)
@@ -13057,6 +13084,23 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
             snapshot_marker=public_services.get("reverse_proxy_intent_marker"),
         ),
     ]
+    if (
+        vcf_registry["vcf_registry_settings"].storage_volume_uuid
+        or REGISTRY_STORAGE_UNIT in baselines
+        or vcf_registry_storage_errors
+    ):
+        units.append(make_appliance_apply_unit(
+            unit_id=REGISTRY_STORAGE_UNIT,
+            label="VCF Private Registry Storage",
+            page_url="/vcf-private-registry",
+            context=vcf_registry,
+            summary=["Private Registry storage"],
+            validation_errors=vcf_registry_storage_errors,
+            config_path=REGISTRY_STORAGE_CONFIG_PATH,
+            config_preview=vcf_registry["vcf_registry_storage_config_preview"],
+            baseline=baselines.get(REGISTRY_STORAGE_UNIT),
+            snapshot_marker=vcf_registry["storage_assignment"] or None,
+        ))
     for unit in units:
         unit["connection_warnings"] = appliance_apply_connection_warnings(
             unit["id"],
@@ -13067,13 +13111,20 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
     for role, unit_id, settings_key in (
         ("backup", "vcf_backups", "vcf_backup_settings"),
         ("depot", "vcf_offline_depot", "vcf_depot_settings"),
+        ("registry", REGISTRY_STORAGE_UNIT, "vcf_registry_settings"),
     ):
+        if unit_id not in unit_map:
+            continue
         unit = unit_map[unit_id]
         previous = baselines.get(unit_id) or {}
-        unit["summary"].extend(storage_review(
-            role, previous.get("snapshot_marker"), unit["context"]["storage_assignment"],
-            enabled=unit["context"][settings_key].enabled or "service enabled" in (previous.get("summary") or []),
-        ))
+        change = unit["context"]["storage_change"]
+        unit["storage_change"] = change
+        if change is not None:
+            unit["summary"].extend(storage_review(
+                role, previous.get("snapshot_marker"), unit["context"]["storage_assignment"],
+                enabled=unit["context"][settings_key].enabled or "service enabled" in (previous.get("summary") or []),
+                action=change["action"],
+            ))
     legacy_source_errors = network_legacy_listener_source_errors(db, unit_map)
     if legacy_source_errors:
         network_unit["validation_errors"].extend(legacy_source_errors)
@@ -16169,7 +16220,10 @@ def execute_appliance_apply_unit(
         settings = context["vcf_backup_settings"]
         config_path = settings.config_path
         if not adapter.dry_run:
-            config_path = stage_appliance_apply_config(VCF_BACKUP_STAGED_CONFIG_PATH, unit["raw_config_preview"])
+            config_path = stage_appliance_apply_config(
+                VCF_BACKUP_STAGED_CONFIG_PATH,
+                unit["raw_config_preview"] + storage_change_metadata(unit.get("authorized_storage_change")),
+            )
         results = run_adapter_steps(
             [
                 lambda: adapter.validate_vcf_backup_config(config_path),
@@ -16185,7 +16239,10 @@ def execute_appliance_apply_unit(
         properties_path = VCF_DEPOT_STAGED_APPLICATION_PROPERTIES_PATH
         if not adapter.dry_run:
             if not software_depot_id_only:
-                config_path = stage_appliance_apply_config(VCF_DEPOT_STAGED_CONFIG_PATH, context["vcf_depot_https_config_preview"])
+                config_path = stage_appliance_apply_config(
+                    VCF_DEPOT_STAGED_CONFIG_PATH,
+                    context["vcf_depot_https_config_preview"] + storage_change_metadata(unit.get("authorized_storage_change")),
+                )
             properties_path = stage_appliance_apply_config(
                 VCF_DEPOT_STAGED_APPLICATION_PROPERTIES_PATH,
                 str(context["vcf_depot_application_properties"].get("content") or ""),
@@ -16219,6 +16276,14 @@ def execute_appliance_apply_unit(
                 ]
             )
         results = run_adapter_steps(steps)
+    elif unit_id == REGISTRY_STORAGE_UNIT:
+        config_path = REGISTRY_STORAGE_CONFIG_PATH
+        if not adapter.dry_run:
+            config_path = stage_appliance_apply_config(
+                config_path,
+                unit["raw_config_preview"] + storage_change_metadata(unit.get("authorized_storage_change")),
+            )
+        results = [adapter.apply_vcf_private_registry_storage(config_path)]
     elif unit_id == "vcf_private_registry":
         settings = context["vcf_registry_settings"]
         results = run_adapter_steps(
@@ -17063,6 +17128,12 @@ def update_appliance_apply_baselines(
     for unit in units:
         if unit["id"] not in selected_ids:
             continue
+        change = unit.get("storage_change")
+        if change:
+            for role, storage_unit in STORAGE_UNITS.items():
+                if storage_unit == unit["id"]:
+                    clear_applied_storage_policy(db, role, change, unit.get("snapshot_marker"))
+                    break
         baseline = {
             "snapshot_hash": unit["snapshot_hash"],
             "snapshot_marker": unit.get("snapshot_marker"),
@@ -18526,6 +18597,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                 for unit in selected_units
                 if (
                     str(captured_by_id.get(unit["id"], {}).get("snapshot_hash") or "") != str(unit["snapshot_hash"])
+                    or captured_by_id.get(unit["id"], {}).get("storage_change") != unit.get("storage_change")
                     or (
                         unit["id"] in {"ntpd", "ldap", "kms", "vcf_offline_depot"}
                         and "applied_listener_interface" in captured_by_id.get(unit["id"], {})
@@ -18934,6 +19006,11 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         "refresh_vcf_depot_software_depot_id": bool(
                             job_result.get("refresh_vcf_depot_software_depot_id")
                         ),
+                    }
+                if unit.get("storage_change") is not None:
+                    execution_unit = {
+                        **execution_unit,
+                        "authorized_storage_change": captured_by_id[unit["id"]]["storage_change"],
                     }
                 # Seal the exact staged input before host mutation, not a later
                 # refreshed desired state or a redacted task/display result.
@@ -20148,7 +20225,8 @@ def appliance_apply_plan_token(plan: dict[str, Any]) -> str:
         plan: Server-owned expanded execution plan.
     """
     return appliance_snapshot_hash({
-        "units": [(unit["id"], unit["snapshot_hash"], unit["changed"], unit["has_baseline"], unit["config_diff"])
+        "units": [(unit["id"], unit["snapshot_hash"], unit["changed"], unit["has_baseline"], unit["config_diff"],
+                   unit.get("storage_change"))
                   for unit in plan["selected_ordered_units"]],
         "applied_baseline": plan["applied_baseline_fingerprint"],
         "execution_controls": {key: value for key, value in plan.items() if isinstance(value, bool)},
@@ -20231,6 +20309,7 @@ def _submit_appliance_apply(
     background_tasks: BackgroundTasks,
     selected_units: list[str] = Form(default=[]),
     format_confirmations: list[str] = Form(default=[]),
+    vcf_storage_confirmations: list[str] = Form(default=[]),
     refresh_vcf_depot_software_depot_id: bool = Form(False),
     csrf: str = Form(...),
     reviewed_plan: str = Form(""),
@@ -20245,6 +20324,7 @@ def _submit_appliance_apply(
         background_tasks: Background tasks supplied by the caller.
         selected_units: Selected units supplied by the caller.
         format_confirmations: Format confirmations supplied by the caller.
+        vcf_storage_confirmations: Explicit confirmations for reviewed VCF storage deletions.
         refresh_vcf_depot_software_depot_id: Identifier of the refresh vcf depot software depot.
         csrf: Validated CSRF token authorizing the request.
         reviewed_plan: Fingerprint of the effective snapshots shown before submission.
@@ -20286,6 +20366,15 @@ def _submit_appliance_apply(
             plan = appliance_apply_execution_plan(db, units, roots, consented_ids=selected_ids)
             if selected_ids != plan["selected_ids"] or reviewed_plan != appliance_apply_plan_token(plan):
                 raise ApplianceApplyPlanError("Appliance changes or dependencies changed since review. Reopen appliance review and try again.")
+            required_deletions = {
+                unit["id"]: change["confirmation"]
+                for unit in plan["selected_ordered_units"]
+                if (change := unit.get("storage_change")) and change["confirmation"]
+            }
+            try:
+                verify_storage_confirmations(required_deletions, vcf_storage_confirmations)
+            except ValueError as exc:
+                raise ApplianceApplyPlanError(str(exc)) from exc
         except ApplianceApplyPlanError as exc:
             detail = exc.public_detail
             return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(
@@ -20358,6 +20447,7 @@ def _submit_appliance_apply(
                     "config_path": unit["config_path"],
                     "config_preview": unit["config_preview"],
                     "config_diff": unit["config_diff"],
+                    **({"storage_change": unit["storage_change"]} if unit.get("storage_change") else {}),
                     **({"applied_listener_interface": unit.get("applied_listener_interface", "")}
                        if unit["id"] in {"ntpd", "ldap", "kms", "vcf_offline_depot"} else {}),
                     **({"applied_listener_sources": dict(unit.get("applied_listener_sources") or {})}

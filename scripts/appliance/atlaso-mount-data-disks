@@ -37,6 +37,7 @@ vcf_storage_is_bound() {
   case "$target" in
     /mnt/atlaso-vcf-backups) role=backup ;;
     /mnt/atlaso-vcf-offline-depot) role=depot ;;
+    /mnt/atlaso-vcf-registry) role=registry ;;
     *) return 1 ;;
   esac
   [ -d "$VCF_STORAGE_STATE_DIR" ] && "$ATLASO_HELPER" vcf-storage is-bound "$role" "$@" --real
@@ -709,7 +710,7 @@ revalidate_blank_format_target() {
   printf '%s\n' "$format_expected_disk"
 }
 
-verify_shadowed_mount() {
+verify_existing_vcf_mount() {
   case "$1" in
     backup)
       underlay_label=ATLASO_BKUP
@@ -734,14 +735,22 @@ verify_shadowed_mount() {
   underlay_uuid="$(blkid -s UUID -o value "$underlay_disk")"
   [ -n "$underlay_uuid" ] && fstab_uuid_mount_exists "$underlay_uuid" "$underlay_target" ||
     fail "$underlay_label has no persistent filesystem mount"
-  validate_mount_state "$underlay_label" "$underlay_disk" "$underlay_target" require-shadowed
+  if [ "$2" = "--verify-shadowed" ]; then
+    validate_mount_state "$underlay_label" "$underlay_disk" "$underlay_target" require-shadowed
+  else
+    ! vcf_storage_is_bound "$underlay_target" || fail "$underlay_target is covered by a service bind"
+    [ "$(findmnt -rn -M "$underlay_target" -o UUID)" = "$underlay_uuid" ] ||
+      fail "$underlay_target does not expose the trusted $underlay_label mount"
+    validate_mount_state "$underlay_label" "$underlay_disk" "$underlay_target"
+  fi
 }
 
 main() {
   if [ "$#" -gt 0 ]; then
-    [ "$#" -eq 2 ] && [ "$1" = "--verify-shadowed" ] || fail "unsupported data-disk arguments"
+    [ "$#" -eq 2 ] || fail "unsupported data-disk arguments"
+    case "$1" in --verify-shadowed|--verify-default) ;; *) fail "unsupported data-disk arguments" ;; esac
     load_policy inspect
-    verify_shadowed_mount "$2"
+    verify_existing_vcf_mount "$2" "$1"
     return
   fi
   for command in findmnt lsblk blkid readlink mkfs.ext4 mount awk head sed stat; do

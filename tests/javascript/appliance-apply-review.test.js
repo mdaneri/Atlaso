@@ -364,6 +364,25 @@ test("checked disabled review units are serialized in the submit FormData", asyn
   Object.assign(network, { name: "selected_units", value: "network", type: "checkbox", checked: true, disabled: true });
   const dependent = new HTMLInputElement();
   Object.assign(dependent, { name: "selected_units", value: "public_services", type: "checkbox", checked: true, disabled: true });
+  const storageUnit = new HTMLInputElement();
+  Object.assign(storageUnit, { name: "selected_units", value: "vcf_backups", type: "checkbox", checked: true, disabled: false });
+  const storageConfirmation = new HTMLInputElement();
+  Object.assign(storageConfirmation, {
+    name: "vcf_storage_confirmations", type: "hidden", disabled: false,
+    value: JSON.stringify({ unit_id: "vcf_backups", confirmation: "DELETE /mnt/old/vcf-backups" }),
+  });
+  const unselectedStorageConfirmation = new HTMLInputElement();
+  Object.assign(unselectedStorageConfirmation, {
+    name: "vcf_storage_confirmations", type: "hidden", disabled: false,
+    value: JSON.stringify({ unit_id: "vcf_private_registry_storage", confirmation: "DELETE /mnt/old/registry" }),
+  });
+  const storageRow = new HTMLElement();
+  storageRow.querySelectorAll = (selector) => selector === '[name="vcf_storage_confirmations"]:not(:disabled)'
+    ? [storageConfirmation] : [];
+  storageUnit.closest = () => storageRow;
+  network.closest = dependent.closest = () => ({ querySelectorAll: () => [] });
+  const unselectedStorageUnit = new HTMLInputElement();
+  Object.assign(unselectedStorageUnit, { name: "selected_units", value: "vcf_private_registry_storage", type: "checkbox", checked: false, disabled: false });
   const modal = new HTMLDialogElement();
   modal.dataset = {
     serverPlanAvailable: "true",
@@ -371,10 +390,11 @@ test("checked disabled review units are serialized in the submit FormData", asyn
     requestedUnits: JSON.stringify(["network", "wan"]),
   };
   modal.querySelectorAll = (selector) => selector === "[data-appliance-apply-review-checkbox]:checked:disabled"
-    ? [network, dependent] : [];
+    ? [network, dependent]
+    : selector === "[data-appliance-apply-review-checkbox]:checked" ? [network, dependent, storageUnit] : [];
   const submit = new HTMLButtonElement();
   const form = new HTMLFormElement();
-  form.controls = [network, dependent];
+  form.controls = [network, dependent, storageUnit, unselectedStorageUnit, storageConfirmation, unselectedStorageConfirmation];
   let submittedBody;
   const context = vm.createContext({
     HTMLDialogElement, HTMLInputElement, HTMLElement, HTMLButtonElement, HTMLFormElement, FormData,
@@ -393,6 +413,8 @@ test("checked disabled review units are serialized in the submit FormData", asyn
 
   await context.submitReview(form);
   assert.deepEqual(submittedBody.values, [
+    ["selected_units", "vcf_backups"],
+    ["vcf_storage_confirmations", JSON.stringify({ unit_id: "vcf_backups", confirmation: "DELETE /mnt/old/vcf-backups" })],
     ["reviewed_plan", "plan-fingerprint"],
     ["requested_units", "network"],
     ["requested_units", "wan"],
@@ -424,7 +446,10 @@ test("format confirmation survives only the same reviewed manifest and disk iden
     const input = Object.assign(new HTMLInputElement(), { value, dataset: {
       expected: "FORMAT datastore", formatIdentity: context.applianceApplyFormatIdentity(identity.unit || unit, identity),
     }, parentElement: { querySelector: () => hidden } });
-    const row = Object.assign(new HTMLElement(), { dataset: { applyUnitId: "esx_storage" }, querySelectorAll: () => [input] });
+    const row = Object.assign(new HTMLElement(), {
+      dataset: { applyUnitId: "esx_storage" },
+      querySelectorAll: (selector) => selector === "[data-esx-format-confirmation]" ? [input] : [],
+    });
     return { row, input, hidden };
   };
   const old = makeRow(volume, "FORMAT datastore");
@@ -441,6 +466,7 @@ test("format confirmation survives only the same reviewed manifest and disk iden
     { ...volume, unit: {} },
   ]) {
     const fresh = makeRow(replacement);
+    assert.notEqual(fresh.input.dataset.formatIdentity, old.input.dataset.formatIdentity);
     context.restoreApplianceApplyReviewState({ querySelectorAll: () => [fresh.row] }, saved);
     assert.equal(fresh.input.value, "");
     assert.equal(fresh.hidden.disabled, true);
@@ -450,6 +476,42 @@ test("format confirmation survives only the same reviewed manifest and disk iden
   context.restoreApplianceApplyReviewState({ querySelectorAll: () => [missing.row] }, saved);
   assert.equal(missing.input.value, "");
   assert.equal(missing.hidden.disabled, true);
+});
+
+test("VCF storage deletion confirmation survives plan refresh only for the same unit and phrase", () => {
+  class HTMLElement {}
+  class HTMLInputElement extends HTMLElement {}
+  const context = vm.createContext({ HTMLElement, HTMLInputElement, document: { activeElement: null } });
+  vm.runInContext(reviewStateSource, context);
+  const makeRow = (unitId, expected, value = "") => {
+    const hidden = Object.assign(new HTMLInputElement(), { disabled: true, value: "" });
+    const input = Object.assign(new HTMLInputElement(), {
+      value,
+      dataset: { expected },
+      matches: (selector) => selector === "[data-vcf-storage-confirmation]",
+      parentElement: { querySelector: () => hidden },
+    });
+    const row = Object.assign(new HTMLElement(), {
+      dataset: { applyUnitId: unitId },
+      querySelectorAll: (selector) => selector === "[data-vcf-storage-confirmation]" ? [input] : [],
+      querySelector: (selector) => selector === "[data-vcf-storage-confirmation]" ? input : null,
+    });
+    return { row, input, hidden };
+  };
+  const old = makeRow("vcf_offline_depot", "DELETE /mnt/vcf-data/vcf-offline-depot", "DELETE /mnt/vcf-data/vcf-offline-depot");
+  const saved = context.preserveApplianceApplyReviewState({ querySelectorAll: () => [old.row] });
+  const same = makeRow("vcf_offline_depot", "DELETE /mnt/vcf-data/vcf-offline-depot");
+  context.restoreApplianceApplyReviewState({ querySelectorAll: () => [same.row] }, saved);
+  assert.equal(same.input.value, "DELETE /mnt/vcf-data/vcf-offline-depot");
+  assert.equal(same.hidden.disabled, false);
+  for (const replacement of [
+    makeRow("vcf_backups", "DELETE /mnt/vcf-data/vcf-offline-depot"),
+    makeRow("vcf_offline_depot", "DELETE /mnt/new/vcf-offline-depot"),
+  ]) {
+    context.restoreApplianceApplyReviewState({ querySelectorAll: () => [replacement.row] }, saved);
+    assert.equal(replacement.input.value, "");
+    assert.equal(replacement.hidden.disabled, true);
+  }
 });
 const refreshPlanSource = source.slice(source.indexOf("async function refreshApplianceApplyPlan"), source.indexOf("function applianceApplyDuration"));
 

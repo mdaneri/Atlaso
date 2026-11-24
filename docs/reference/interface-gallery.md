@@ -719,9 +719,13 @@ Figure: VCF Backups in the verified clean-appliance desktop state.
 
 Figure: VCF Backups in the verified clean-appliance responsive state.
 
-![VCF Backups storage volume selector showing VCF Data and the derived /mnt/vcf-data/vcf-backups directory.](../assets/screenshots/vcf-backups-storage.webp)
+![Existing data step in the VCF Backups storage wizard showing Move, Leave and Delete.](../assets/screenshots/vcf-backups-storage-data.webp)
 
-Figure: SFTP Settings derives the backup directory from the selected registered volume.
+Figure: Choose what Appliance Apply will do with existing backup files.
+
+![VCF Backups storage wizard Review with the current path, proposed path and choice for existing files.](../assets/screenshots/vcf-backups-storage.webp)
+
+Figure: Review the backing directory for the SFTP service before staging a storage change.
 
 ## Vcf Helper
 
@@ -791,9 +795,9 @@ Figure: VCFDT Software Depot ID generation ends at Review, which immediately dis
 
 Figure: VCF Offline Depot review binds the selected profile in the contextual schedule flow.
 
-![VCF Offline Depot storage volume selector showing VCF Data and the derived /mnt/vcf-data/vcf-offline-depot directory.](../assets/screenshots/vcf-offline-depot-storage.webp)
+![VCF Offline Depot storage wizard Review showing the current and proposed directories and data action.](../assets/screenshots/vcf-offline-depot-storage.webp)
 
-Figure: Depot Settings derives the directory shared by the depot and VCF Helper uploads.
+Figure: Review the destination shared by VCFDT and VCF Helper uploads before saving.
 
 ## Vcf Private Registry
 
@@ -803,9 +807,13 @@ Route: `/ui/management/vcf-private-registry`
 
 Figure: VCF Private Registry in the verified clean-appliance desktop state.
 
-![Atlaso VCF Private Registry page in the clean-appliance responsive viewport.](../assets/screenshots/vcf-private-registry-clean-responsive.webp)
+![VCF Private Registry settings showing the Change storage button in a narrow viewport.](../assets/screenshots/vcf-private-registry-clean-responsive.webp)
 
-Figure: VCF Private Registry in the verified clean-appliance responsive state.
+Figure: Open the storage wizard from Harbor Settings in the narrow layout.
+
+![VCF Private Registry storage wizard Review with the current path, proposed path and choice for existing files.](../assets/screenshots/vcf-private-registry-storage.webp)
+
+Figure: Review and stage the storage change independently of the Harbor settings.
 
 ## Vlan Interfaces
 

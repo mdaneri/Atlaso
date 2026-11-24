@@ -176,8 +176,12 @@ authorizing formatting in Appliance Apply. To register an **Existing mounted ext
 point. The wizard lists only unclaimed volumes that pass the appliance's storage checks.
 
 After Apply, confirm the mount path and filesystem UUID on **Storage Volumes**. The applied volume becomes available in
-VCF Backups, VCF Offline Depot, and the NFS datastore wizard. See
+the VCF service storage wizards and the NFS datastore wizard. Use **Change storage** in VCF Backups, VCF Offline Depot,
+or VCF Private Registry to assign it to one service at a time and choose how existing files are handled. See
 [ESX Storage](../services/esx-storage.md#volumes-and-disk-initialization) for disk eligibility and NFS configuration.
+
+For **Move**, select an empty destination. Pause writes before **Move** or **Delete** so Apply can verify the previous
+directory. If a service or client is still using the directory, close that access before retrying.
 
 ## Before you begin
 

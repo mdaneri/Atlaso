@@ -245,9 +245,9 @@ def _reconcile_vcf_service_storage_columns(connection: Connection) -> None:
         connection: Transaction holding the startup schema lock.
     """
     inspector = inspect(connection)
-    for table in ("vcf_backup_settings", "vcf_offline_depot_settings"):
+    for table in ("vcf_backup_settings", "vcf_offline_depot_settings", "vcf_private_registry_settings"):
         columns = {column["name"] for column in inspector.get_columns(table)}
-        for field, length in (("storage_volume_uuid", 120), ("storage_volume_path", 240)):
+        for field, length in (("storage_volume_uuid", 120), ("storage_volume_path", 240), ("storage_migration_policy", 8)):
             if field not in columns:
                 connection.execute(text(
                     f"ALTER TABLE {table} ADD COLUMN {field} VARCHAR({length}) NOT NULL DEFAULT ''"

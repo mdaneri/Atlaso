@@ -218,8 +218,21 @@ CAPTURE_OVERRIDES = {
             "settings-storage-volume-wizard-review",
             "esx-storage-clean-desktop",
             "esx-storage-clean-responsive",
+        )
+    },
+    **{
+        stem: {
+            "source_commit": "e3adf1e1c0eb5685a72c76dce6502d4b21d9e5aa",
+            "atlaso_version": "0.9.530",
+            "capture_method": "playwright-chromium",
+        }
+        for stem in (
             "vcf-backups-storage",
+            "vcf-backups-storage-data",
             "vcf-offline-depot-storage",
+            "vcf-private-registry-storage",
+            "vcf-private-registry-clean-desktop",
+            "vcf-private-registry-clean-responsive",
         )
     },
     "vcf-offline-depot-schedule-action-desktop": {
@@ -780,15 +793,33 @@ SPECIAL = {
     ),
     "vcf-backups-storage": (
         "/ui/management/vcf-backups",
-        "backup-storage",
-        "SFTP Settings derives the backup directory from the selected registered volume.",
-        "VCF Backups storage volume selector showing VCF Data and the derived /mnt/vcf-data/vcf-backups directory.",
+        "backup-storage-review",
+        "Review the backing directory for the SFTP service before staging a storage change.",
+        "VCF Backups storage wizard Review with the current path, proposed path and choice for existing files.",
+    ),
+    "vcf-backups-storage-data": (
+        "/ui/management/vcf-backups",
+        "storage-data-action",
+        "Choose what Appliance Apply will do with existing backup files.",
+        "Existing data step in the VCF Backups storage wizard showing Move, Leave and Delete.",
     ),
     "vcf-offline-depot-storage": (
         "/ui/management/vcf-offline-depot",
-        "depot-storage",
-        "Depot Settings derives the directory shared by the depot and VCF Helper uploads.",
-        "VCF Offline Depot storage volume selector showing VCF Data and the derived /mnt/vcf-data/vcf-offline-depot directory.",
+        "depot-storage-review",
+        "Review the destination shared by VCFDT and VCF Helper uploads before saving.",
+        "VCF Offline Depot storage wizard Review showing the current and proposed directories and data action.",
+    ),
+    "vcf-private-registry-storage": (
+        "/ui/management/vcf-private-registry",
+        "registry-storage-review",
+        "Review and stage the storage change independently of the Harbor settings.",
+        "VCF Private Registry storage wizard Review with the current path, proposed path and choice for existing files.",
+    ),
+    "vcf-private-registry-clean-responsive": (
+        "/ui/management/vcf-private-registry",
+        "registry-storage-settings",
+        "Open the storage wizard from Harbor Settings in the narrow layout.",
+        "VCF Private Registry settings showing the Change storage button in a narrow viewport.",
     ),
     "vcf-offline-depot-configuration-wizard": (
         "/vcf-offline-depot",

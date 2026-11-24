@@ -182,6 +182,6 @@ def test_every_autosave_form_has_a_nearby_status_target():
             status = re.search(r'data-autosave-status-id="([^"]+)"', attributes)
             assert status is not None, f"{template}:{source.count(chr(10), 0, match.start()) + 1}"
             assert f'id="{status.group(1)}"' in source, f"{template}:{status.group(1)}"
-    # Managed PowerShell modules and Network Objects use reviewed wizard-backed
-    # editors, so they are intentionally excluded from direct autosave forms.
-    assert autosave_count == 23
+    # Managed PowerShell modules, Network Objects, and VCF storage use reviewed
+    # wizard editors outside direct autosave.
+    assert autosave_count == 22

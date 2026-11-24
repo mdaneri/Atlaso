@@ -233,11 +233,7 @@
       </form>
       {% set storage_heading = "Depot Storage" %}
       {% set storage_action = "vcf-offline-depot/settings" %}
-      {% set storage_assignment = vcf_depot_storage_assignment %}
-      {% set storage_options = vcf_depot_storage_options %}
       {% set storage_writable = identity.can("write:repository") %}
-      {% set storage_default_path = "/mnt/atlaso-vcf-offline-depot" %}
-      {% set storage_status_id = "vcf-depot-storage-status" %}
       {% include "partials/vcf_service_storage_settings.html" %}
       <div class="settings-list">
           <div><span>Version</span><strong data-vcf-depot-tool-version>{{ vcf_depot_tool_display_version or "unknown" }}</strong></div>

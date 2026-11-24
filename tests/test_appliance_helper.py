@@ -16398,6 +16398,66 @@ def test_vcf_storage_path_syntax_matches_service_and_helper(path, valid):
     assert _storage_path_syntax(path) is valid
 
 
+def test_vcf_storage_change_metadata_requires_exact_previous_and_delete_confirmation():
+    """Bind a staged Move/Leave/Delete choice to the precise prior assignment.
+
+    Args:
+        None.
+    """
+    helper = load_helper_module()
+    old = {"uuid": "12345678-1234-0000-9000-123456789abc", "path": "/mnt/data/vcf-backups",
+           "volume_path": "/mnt/data", "device": "/dev/disk/by-id/data"}
+    marker = helper.VCF_STORAGE_CHANGE_COMMENT
+    move = {"action": "move", "previous": old, "confirmation": ""}
+    assert helper._vcf_storage_change_from_config(marker + json.dumps(move), "backup") == move
+    delete = {"action": "delete", "previous": old, "confirmation": "DELETE /mnt/data/vcf-backups"}
+    assert helper._vcf_storage_change_from_config(marker + json.dumps(delete), "backup") == delete
+    default_delete = {"action": "delete", "previous": {},
+                      "confirmation": f"DELETE {helper.VCF_BACKUPS_DEFAULT_STORAGE_PATH}"}
+    assert helper._vcf_storage_change_from_config(marker + json.dumps(default_delete), "backup") == default_delete
+    invalid_action = {"action": [], "previous": old, "confirmation": ""}
+    with pytest.raises(ValueError, match="Invalid VCF storage change metadata"):
+        helper._vcf_storage_change_from_config(marker + json.dumps(invalid_action), "backup")
+    delete["confirmation"] = "DELETE /mnt/data/elsewhere"
+    with pytest.raises(ValueError, match="Delete confirmation"):
+        helper._vcf_storage_change_from_config(marker + json.dumps(delete), "backup")
+
+
+def test_vcf_registry_storage_handler_accepts_only_exact_staged_file(monkeypatch, tmp_path):
+    """Validate the root helper admission path and apply of registry-only storage.
+
+    Args:
+        monkeypatch: Replace staged path and account identity.
+        tmp_path: Isolated registry apply directory.
+    """
+    helper = load_helper_module()
+    staged = tmp_path / "atlaso-storage.conf"
+    monkeypatch.setenv("ATLASO_HELPER_USE_SYSTEMD_RUN", "1")
+    monkeypatch.delenv("ATLASO_HELPER_SYSTEMD_RUN_CHILD", raising=False)
+    monkeypatch.setattr(helper.shutil, "which", lambda _name: "/usr/bin/systemd-run")
+    monkeypatch.setattr(helper, "_validate_path", lambda value: value)
+    delegated = []
+    monkeypatch.setattr(helper, "_run_real_action_with_systemd",
+                        lambda *args: delegated.append(args) or 0)
+    assert helper.main(["atlaso-helper", "vcf-storage", "apply-registry", "--real", str(staged)]) == 0
+    assert delegated == [("vcf-storage", "apply-registry", [str(staged)])]
+    staged.write_text("# VCF Private Registry storage\n", encoding="utf-8")
+    staged.chmod(0o600)
+    monkeypatch.setattr(helper, "VCF_REGISTRY_APPLY_CONFIG", staged)
+    monkeypatch.setattr(helper.pwd, "getpwnam", lambda _: SimpleNamespace(pw_uid=staged.stat().st_uid))
+    monkeypatch.setattr(helper.os, "O_NOFOLLOW", getattr(os, "O_NOFOLLOW", 0), raising=False)
+    monkeypatch.setattr(helper.os, "O_NONBLOCK", getattr(os, "O_NONBLOCK", 0), raising=False)
+    monkeypatch.setattr(helper.os, "fstat", lambda _fd: SimpleNamespace(
+        st_uid=staged.stat().st_uid, st_mode=stat.S_IFREG | 0o600, st_nlink=1, st_size=staged.stat().st_size,
+    ))
+    applied = []
+    monkeypatch.setattr(helper, "_apply_with_vcf_storage",
+                        lambda role, assignment, callback, **kwargs: applied.append((role, assignment, kwargs)) or 0)
+    assert helper._handle_vcf_registry_storage([str(staged)]) == 0
+    assert applied == [("registry", {}, {"migration": None})]
+    assert helper._handle_vcf_registry_storage([str(tmp_path / "other.conf")]) == 2
+
+
 @pytest.mark.parametrize("role", ["backup", "depot"])
 @pytest.mark.parametrize("mismatch", [None, "uuid", "volume", "source", "target", "ambiguity", "unavailable",
                                       "dedicated", "unrecorded", "wrong-original", "image", "wrong-image"])
@@ -16499,6 +16559,34 @@ def test_esx_storage_admits_only_verified_vcf_service_binds(monkeypatch, tmp_pat
     assert errors == ([] if mismatch in {None, "dedicated", "image"} else ["has unexpected additional mounts"])
 
 
+@pytest.mark.parametrize(
+    ("capabilities", "attributes", "expected"),
+    [("ACLs, xattrs", [], "-aHAX"), ("no ACLs, xattrs", ["user.fixture"], "-aHX"),
+     ("no ACLs, xattrs", ["system.posix_acl_access"], None)],
+)
+def test_vcf_storage_copy_preserves_acl_support(monkeypatch, tmp_path, capabilities, attributes, expected):
+    """Keep POSIX ACLs when selecting the storage copy flags.
+
+    Args:
+        monkeypatch: Replace rsync capabilities and filesystem attribute observations.
+        tmp_path: Temporary source directory for the mocked copy.
+        capabilities: Capabilities reported by rsync.
+        attributes: Extended attributes on the fixture file.
+        expected: Copy flags, or None when Move must stop.
+    """
+    helper = load_helper_module()
+    fixture = tmp_path / "fixture"
+    fixture.touch()
+    monkeypatch.setattr(helper, "_run", lambda *_, **__: subprocess.CompletedProcess([], 0, capabilities, ""))
+    monkeypatch.setattr(helper.os, "listxattr", lambda path: attributes if path == fixture else [], raising=False)
+
+    if expected is None:
+        with pytest.raises(ValueError, match="ACL-capable rsync"):
+            helper._vcf_storage_rsync_options(tmp_path)
+    else:
+        assert helper._vcf_storage_rsync_options(tmp_path) == expected
+
+
 def test_vcf_storage_depot_initializes_prod_as_atlaso(monkeypatch, tmp_path):
     """Create the upload root with the service identity before exposing the selected volume.
 
@@ -16555,20 +16643,26 @@ def test_vcf_storage_depot_initializes_prod_as_atlaso(monkeypatch, tmp_path):
     monkeypatch.setattr(helper, "ESX_STORAGE_EXPORT_ROOT", tmp_path / "exports")
     monkeypatch.setattr(helper, "_vcf_storage_root_directory", lambda _: None)
     monkeypatch.setattr(helper, "_vcf_storage_read", lambda _: {})
-    monkeypatch.setattr(helper, "_vcf_storage_find_mount", lambda path, _: [f"uuid ext4 / rw {device}"] if path == volume else [])
+    mount_rows = [f"uuid ext4 / rw {device}"]
+    monkeypatch.setattr(helper, "_vcf_storage_find_mount", lambda path, _: mount_rows if path == volume else [])
     monkeypatch.setattr(helper.subprocess, "run", run)
     assignment = {"uuid": "uuid", "path": str(source), "volume_path": str(volume), "device": str(device)}
 
     assert helper._vcf_storage_live_source("depot", assignment) == source
     assert not prod.exists()
+    mount_rows.append(mount_rows[0])
     assert helper._vcf_storage_live_source("depot", assignment, create=True) == source
     assert prod.is_dir()
     assert helper._vcf_storage_live_source("depot", assignment, create=True) == source
     assert calls == [["/usr/bin/mkdir", "-m", "0755", "--", str(prod)]]
+    mount_rows.append(f"uuid ext4 / ro {device}")
+    with pytest.raises(ValueError, match="mount is unavailable or ambiguous"):
+        helper._vcf_storage_live_source("depot", assignment)
 
 
-@pytest.mark.parametrize(("role", "disabled"), [("backup", False), ("depot", False), ("depot", True)])
-@pytest.mark.parametrize("failure", ["prepare", "bind", "service", None])
+@pytest.mark.parametrize(("role", "disabled"), [("backup", False), ("depot", False), ("depot", True),
+                                                  ("registry", False)])
+@pytest.mark.parametrize("failure", ["reserved", "prepare", "bind", "service", None])
 def test_vcf_storage_switch_preserves_previous_assignment(monkeypatch, tmp_path, role, disabled, failure):
     """Exercise the previous mount, candidate verification, service step, and boot record.
 
@@ -16583,7 +16677,8 @@ def test_vcf_storage_switch_preserves_previous_assignment(monkeypatch, tmp_path,
     state_dir = tmp_path / "state"
     state_dir.mkdir()
     old = {"path": str(tmp_path / "old"), "uuid": "old"}
-    desired = {"path": str(tmp_path / "candidate"), "uuid": "next"}
+    child = {"backup": "vcf-backups", "depot": "vcf-offline-depot", "registry": "vcf-registry"}[role]
+    desired = {"path": str(tmp_path / child), "uuid": "next"}
     target = tmp_path / "service"
     target.mkdir()
     state = {"source": Path(old["path"])}
@@ -16612,7 +16707,8 @@ def test_vcf_storage_switch_preserves_previous_assignment(monkeypatch, tmp_path,
     monkeypatch.setattr(helper.os, "O_NOFOLLOW", 0, raising=False)
     monkeypatch.setattr(helper, "VCF_STORAGE_STATE_DIR", state_dir)
     monkeypatch.setattr(helper, "_vcf_storage_root_directory", lambda path: None)
-    monkeypatch.setattr(helper, "_vcf_storage_read", lambda selected: old if selected == role else {})
+    other = {"uuid": desired["uuid"], "path": str(tmp_path / "other")} if failure == "reserved" else {}
+    monkeypatch.setattr(helper, "_vcf_storage_read", lambda selected: old if selected == role else other)
     monkeypatch.setattr(helper, "_vcf_storage_target", lambda _: target)
     def prepare(_role, assignment, **options):
         """Simulate a filesystem refusal before committing an Apply plan.

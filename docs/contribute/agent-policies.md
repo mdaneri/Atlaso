@@ -2203,6 +2203,7 @@ preserved with their affected subsystem below. Keep new requirements at their to
 - The VCF-facing remote directory should be short and stable: `/backups`.
 - The installed backup default is `/mnt/atlaso-vcf-backups`. VCF Backups → SFTP Settings owns volume selection.
   Derive new assignments by appending `vcf-backups` to the mount path of an applied Storage Volumes registration.
+  Reserve a registered volume for one VCF service at a time, including saved selections and applied mounts.
   Only Appliance Apply may attach the selected volume directory.
   Preserve the original filesystem and the SFTP chroot, and verify the selected volume before activating it.
 - The VCF Backup config preview should make the host-side volume and VCF remote directory clear, and OpenSSH should use
@@ -2277,6 +2278,7 @@ preserved with their affected subsystem below. Keep new requirements at their to
   `/mnt/atlaso-vcf-offline-depot`. Depot Settings derives new assignments by appending `vcf-offline-depot` to the mount
   path of an applied Storage Volumes registration. Appliance Apply attaches the selected directory. A storage change
   preserves the previous files and keeps VCFDT and `/PROD/` on the same storage.
+  Keep a registered backup volume out of the depot picker while Backups selects or uses it.
 - The default VCF Offline Depot HTTP user is `vcf-depot`. Keep it visible in Users, selectable by the depot service, and
   disabled while VCF Offline Depot desired state is off.
 - Apply Local Users before VCF Offline Depot when the selected HTTP user is new, renamed, disabled/enabled, has a
@@ -2322,8 +2324,8 @@ preserved with their affected subsystem below. Keep new requirements at their to
   IPs and VLAN interfaces with IPs; exclude trunk physical interfaces.
 - The factory registry hostname is `registry.<appliance-domain>`, and the default Harbor project is
   `vcf-supervisor-services`.
-- The registry storage path is a fixed appliance volume mount, currently `/mnt/atlaso-vcf-registry`; do not make this a
-  routine UI-configurable field.
+- Harbor uses the fixed `/mnt/atlaso-vcf-registry` mount. The Storage wizard can select its backing filesystem from
+  registered volumes. Keep that storage Apply unit independent of Harbor and bundle command previews.
 - The registry CA bundle should come from the local Atlaso CA when CA is enabled. When the local CA is disabled, require
   an uploaded PEM CA bundle and stage it through global appliance apply; do not expose a routine free-form CA bundle
   path editor.
