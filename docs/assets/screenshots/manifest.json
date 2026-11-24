@@ -1905,6 +1905,20 @@
       "sensitive_data_reviewed": true
     },
     {
+      "path": "assets/screenshots/vcf-backups-storage.webp",
+      "route": "/ui/management/vcf-backups",
+      "state": "backup-storage",
+      "viewport": "1600x1000",
+      "source_commit": "fc6395119639e78f24325ac13ea90d86603c9b23",
+      "atlaso_version": "0.9.527",
+      "caption": "SFTP Settings derives the backup directory from the selected registered volume.",
+      "alt": "VCF Backups storage volume selector showing VCF Data and the derived /mnt/vcf-data/vcf-backups directory.",
+      "capture_method": "playwright-chromium",
+      "documentation_page": "services/vcf-backups.md",
+      "brand_variant": "light",
+      "sensitive_data_reviewed": true
+    },
+    {
       "path": "assets/screenshots/vcf-depot-browser-clean-desktop.webp",
       "route": "/PROD/",
       "state": "published-content",
@@ -2029,6 +2043,20 @@
       "caption": "VCF Offline Depot review binds the selected profile in the contextual schedule flow.",
       "alt": "VCF Offline Depot contextual Schedule wizard Review showing Schedule, Timing, State, and Review steps with Binaries fixed as the selected profile.",
       "capture_method": "codex-in-app-browser",
+      "documentation_page": "services/vcf-offline-depot.md",
+      "brand_variant": "light",
+      "sensitive_data_reviewed": true
+    },
+    {
+      "path": "assets/screenshots/vcf-offline-depot-storage.webp",
+      "route": "/ui/management/vcf-offline-depot",
+      "state": "depot-storage",
+      "viewport": "1600x1000",
+      "source_commit": "fc6395119639e78f24325ac13ea90d86603c9b23",
+      "atlaso_version": "0.9.527",
+      "caption": "Depot Settings derives the directory shared by the depot and VCF Helper uploads.",
+      "alt": "VCF Offline Depot storage volume selector showing VCF Data and the derived /mnt/vcf-data/vcf-offline-depot directory.",
+      "capture_method": "playwright-chromium",
       "documentation_page": "services/vcf-offline-depot.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true

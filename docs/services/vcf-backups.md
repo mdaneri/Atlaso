@@ -244,4 +244,8 @@ These captures show responsive layouts and useful operational states referenced 
 
 *Figure: VCF Backups in the verified clean-appliance responsive state.*
 
+![VCF Backups storage volume selector showing VCF Data and the derived /mnt/vcf-data/vcf-backups directory.](../assets/screenshots/vcf-backups-storage.webp)
+
+*Figure: SFTP Settings derives the backup directory from the selected registered volume.*
+
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->

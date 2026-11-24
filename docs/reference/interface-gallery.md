@@ -707,6 +707,10 @@ Figure: VCF Backups in the verified clean-appliance desktop state.
 
 Figure: VCF Backups in the verified clean-appliance responsive state.
 
+![VCF Backups storage volume selector showing VCF Data and the derived /mnt/vcf-data/vcf-backups directory.](../assets/screenshots/vcf-backups-storage.webp)
+
+Figure: SFTP Settings derives the backup directory from the selected registered volume.
+
 ## Vcf Helper
 
 Route: `/ui/management/vcf-helper`
@@ -774,6 +778,10 @@ Figure: VCFDT Software Depot ID generation ends at Review, which immediately dis
 ![VCF Offline Depot contextual Schedule wizard Review showing Schedule, Timing, State, and Review steps with Binaries fixed as the selected profile.](../assets/screenshots/vcf-offline-depot-schedule-action-desktop.webp)
 
 Figure: VCF Offline Depot review binds the selected profile in the contextual schedule flow.
+
+![VCF Offline Depot storage volume selector showing VCF Data and the derived /mnt/vcf-data/vcf-offline-depot directory.](../assets/screenshots/vcf-offline-depot-storage.webp)
+
+Figure: Depot Settings derives the directory shared by the depot and VCF Helper uploads.
 
 ## Vcf Private Registry
 

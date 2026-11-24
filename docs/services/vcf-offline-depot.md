@@ -199,6 +199,10 @@ These captures show responsive layouts and useful operational states referenced 
 
 *Figure: VCF Offline Depot review binds the selected profile in the contextual schedule flow.*
 
+![VCF Offline Depot storage volume selector showing VCF Data and the derived /mnt/vcf-data/vcf-offline-depot directory.](../assets/screenshots/vcf-offline-depot-storage.webp)
+
+*Figure: Depot Settings derives the directory shared by the depot and VCF Helper uploads.*
+
 ### VCF Offline Depot browser
 
 ![Atlaso public VCF Offline Depot browser showing a directory link in the desktop read-only grid.](../assets/screenshots/vcf-depot-browser-clean-desktop.webp)

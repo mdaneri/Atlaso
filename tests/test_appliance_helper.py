@@ -16486,26 +16486,33 @@ def test_vcf_storage_depot_initializes_prod_as_atlaso(monkeypatch, tmp_path):
             return info
         return SimpleNamespace(st_uid=123, st_dev=info.st_dev, st_mode=stat.S_IFDIR | 0o755)
 
-    def run(command, *, timeout):
+    def run(command, *, user, group, extra_groups, check, capture_output, timeout):
         """Record how the helper creates PROD and simulate the resulting directory.
 
         Args:
             command: External command including its effective user.
+            user: The Atlaso user's numeric UID.
+            group: The Atlaso user's primary GID.
+            extra_groups: Supplementary groups retained by the creator.
+            check: Whether the subprocess raises on a nonzero exit.
+            capture_output: Whether subprocess diagnostics are captured.
             timeout: Bound for the command.
         """
         calls.append(command)
+        assert (user, group, extra_groups) == (123, 456, ())
+        assert not check and capture_output
         assert timeout == 10
         prod.mkdir()
         return SimpleNamespace(returncode=0)
 
     monkeypatch.setattr(Path, "stat", source_stat)
-    monkeypatch.setattr(helper.pwd, "getpwnam", lambda _: SimpleNamespace(pw_uid=123))
+    monkeypatch.setattr(helper.pwd, "getpwnam", lambda _: SimpleNamespace(pw_uid=123, pw_gid=456))
     monkeypatch.setattr(helper, "ESX_STORAGE_DISK_ALLOWLIST_PATH", allowlist)
     monkeypatch.setattr(helper, "ESX_STORAGE_EXPORT_ROOT", tmp_path / "exports")
     monkeypatch.setattr(helper, "_vcf_storage_root_directory", lambda _: None)
     monkeypatch.setattr(helper, "_vcf_storage_read", lambda _: {})
     monkeypatch.setattr(helper, "_vcf_storage_find_mount", lambda path, _: [f"uuid ext4 / rw {device}"] if path == volume else [])
-    monkeypatch.setattr(helper, "_run", run)
+    monkeypatch.setattr(helper.subprocess, "run", run)
     assignment = {"uuid": "uuid", "path": str(source), "volume_path": str(volume), "device": str(device)}
 
     assert helper._vcf_storage_live_source("depot", assignment) == source
@@ -16513,7 +16520,7 @@ def test_vcf_storage_depot_initializes_prod_as_atlaso(monkeypatch, tmp_path):
     assert helper._vcf_storage_live_source("depot", assignment, create=True) == source
     assert prod.is_dir()
     assert helper._vcf_storage_live_source("depot", assignment, create=True) == source
-    assert calls == [["runuser", "-u", "atlaso", "-g", "atlaso", "--", "mkdir", "-m", "0755", "--", str(prod)]]
+    assert calls == [["/usr/bin/mkdir", "-m", "0755", "--", str(prod)]]
 
 
 @pytest.mark.parametrize(("role", "disabled"), [("backup", False), ("depot", False), ("depot", True)])

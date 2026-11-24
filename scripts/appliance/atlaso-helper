@@ -20714,16 +20714,18 @@ def _vcf_storage_live_source(
             raise ValueError("The SFTP backup directory cannot be a symbolic link.")
     else:
         info = source.stat()
-        if info.st_uid != pwd.getpwnam(ATLASO_SERVICE_USER).pw_uid or not info.st_mode & 0o200 or info.st_mode & 0o022:
+        account = pwd.getpwnam(ATLASO_SERVICE_USER)
+        if info.st_uid != account.pw_uid or not info.st_mode & 0o200 or info.st_mode & 0o022:
             raise ValueError("The depot directory must be writable by Atlaso and only Atlaso.")
         prod = source / "PROD"
         if prod.is_symlink():
             raise ValueError("The depot PROD directory cannot be a symbolic link.")
         if create and not os.path.lexists(prod):
-            result = _run([
-                "runuser", "-u", ATLASO_SERVICE_USER, "-g", ATLASO_SERVICE_USER,
-                "--", "mkdir", "-m", "0755", "--", str(prod),
-            ], timeout=10)
+            result = subprocess.run(
+                ["/usr/bin/mkdir", "-m", "0755", "--", str(prod)],
+                user=account.pw_uid, group=account.pw_gid, extra_groups=(),
+                check=False, capture_output=True, timeout=10,
+            )
             if result.returncode:
                 raise ValueError("Could not initialize the depot PROD directory as Atlaso.")
     return source

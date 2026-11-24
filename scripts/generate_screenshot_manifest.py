@@ -207,6 +207,14 @@ CAPTURE_OVERRIDES = {
         "atlaso_version": "0.9.80",
         "capture_method": "codex-in-app-browser",
     },
+    **{
+        stem: {
+            "source_commit": "fc6395119639e78f24325ac13ea90d86603c9b23",
+            "atlaso_version": "0.9.527",
+            "capture_method": "playwright-chromium",
+        }
+        for stem in ("vcf-backups-storage", "vcf-offline-depot-storage")
+    },
     "vcf-offline-depot-schedule-action-desktop": {
         "source_commit": "5673a8d9+working-tree",
         "atlaso_version": "0.9.127",
@@ -750,6 +758,18 @@ SPECIAL = {
         "published-content",
         "The public VCF Offline Depot browser remains contained in the narrow viewport.",
         "Atlaso public VCF Offline Depot browser showing its read-only contents grid in the narrow viewport.",
+    ),
+    "vcf-backups-storage": (
+        "/ui/management/vcf-backups",
+        "backup-storage",
+        "SFTP Settings derives the backup directory from the selected registered volume.",
+        "VCF Backups storage volume selector showing VCF Data and the derived /mnt/vcf-data/vcf-backups directory.",
+    ),
+    "vcf-offline-depot-storage": (
+        "/ui/management/vcf-offline-depot",
+        "depot-storage",
+        "Depot Settings derives the directory shared by the depot and VCF Helper uploads.",
+        "VCF Offline Depot storage volume selector showing VCF Data and the derived /mnt/vcf-data/vcf-offline-depot directory.",
     ),
     "vcf-offline-depot-configuration-wizard": (
         "/vcf-offline-depot",
