@@ -300,6 +300,9 @@ def test_disabled_backups_show_pending_storage_only_when_staged_for_apply(client
     deferred = client.get(page_path)
     assert "Storage after SFTP is enabled" in deferred.text
     assert "Pending storage directory" not in deferred.text
+    dormant_review = client.get("/appliance-apply/review", params={"selected_units": unit_id}).json()
+    dormant_unit = next(unit for unit in dormant_review["units"] if unit["id"] == unit_id)
+    assert not dormant_unit["changed"] and "storage_change" not in dormant_unit
     response = client.post(f"{page_path}/settings", data={
         "csrf": csrf, "storage_assignment_only": "1", "storage_volume_uuid": volume_uuid,
         "storage_migration_policy": "leave",

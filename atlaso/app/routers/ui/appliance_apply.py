@@ -151,10 +151,13 @@ def build_router(dependencies: ApplianceApplyUiDependencies) -> ApplianceApplyUi
                     for volume in unit.get("context", {}).get("esx_storage_manifest", {}).get("volumes", [])
                     if volume.get("requires_format")
                 ],
-                "storage_change": {
-                    key: unit["storage_change"][key]
-                    for key in ("action", "previous_path", "proposed_path", "confirmation")
-                } if unit.get("storage_change") else None,
+                **(
+                    {"storage_change": {
+                        key: change[key] for key in ("action", "previous_path", "proposed_path", "confirmation")
+                    }}
+                    if (change := unit.get("storage_change"))
+                    else {}
+                ),
             }
             for unit in context["review_apply_units"]
         ]

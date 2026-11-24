@@ -40,6 +40,9 @@ opens automatically. The `/ui/management/appliance-apply` POST, `/ui/management/
 transport ownership lives in `atlaso/app/routers/ui/appliance_apply.py`; the stable `atlaso/app/ui.py` facade retains
 the unit, projection, submission, execution, recovery, logging, and audit helpers injected into that router.
 
+The review response includes `storage_change` only for units with a staged storage change. The object contains the
+data action, previous and proposed paths, and the exact confirmation required for Delete.
+
 The status route is deliberately a lightweight desired-state projection: it compares current snapshots with stored
 baselines without running apply-time reconciliation or privileged observation helpers. Full review, validation, and
 submission still reconcile current host observations and therefore retain fail-closed DHCP DNS fallback behavior.
