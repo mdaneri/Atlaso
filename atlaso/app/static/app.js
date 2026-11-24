@@ -513,6 +513,7 @@ function storedDnsActiveZone() {
 }
 
 const PRIMARY_NAVIGATION_STORAGE_KEY = "atlaso:primary-navigation:v1";
+const PRIMARY_NAVIGATION_SCROLL_KEY = "atlaso:primary-navigation-scroll:v1";
 
 function primaryNavigationStorage() {
   try {
@@ -573,6 +574,43 @@ function updatePrimaryNavigationBulkControl(control, groups) {
   control.textContent = visibleLabel;
 }
 
+function initializePrimaryNavigationScroll(root) {
+  const sidebar = root.querySelector(".sidebar");
+  if (!(sidebar instanceof HTMLElement)) return;
+
+  window.addEventListener("pagehide", () => {
+    if (sidebar.scrollHeight <= sidebar.clientHeight) return;
+    try {
+      window.sessionStorage.setItem(PRIMARY_NAVIGATION_SCROLL_KEY, String(sidebar.scrollTop));
+    } catch {
+      // The active link can still be revealed when storage is unavailable.
+    }
+  });
+
+  if (sidebar.scrollHeight <= sidebar.clientHeight) return;
+  try {
+    const storedOffset = window.sessionStorage.getItem(PRIMARY_NAVIGATION_SCROLL_KEY);
+    const offset = Number(storedOffset);
+    if (storedOffset !== null && Number.isFinite(offset) && offset >= 0) {
+      sidebar.scrollTop = offset;
+    }
+  } catch {
+    // The active link can still be revealed when storage is unavailable.
+  }
+
+  const activeLink = sidebar.querySelector('.nav-link[aria-current="page"]');
+  if (!activeLink) return;
+  const top = sidebar.getBoundingClientRect().top + sidebar.clientTop;
+  const footerTop = root.querySelector(".management-info-footnote")?.getBoundingClientRect().top;
+  const bottom = Math.min(top + sidebar.clientHeight, footerTop ?? Infinity);
+  const active = activeLink.getBoundingClientRect();
+  if (active.top < top) {
+    sidebar.scrollTop += active.top - top;
+  } else if (active.bottom > bottom) {
+    sidebar.scrollTop += active.bottom - bottom;
+  }
+}
+
 function initializePrimaryNavigation(root = document) {
   const groups = Array.from(root.querySelectorAll("[data-primary-nav-group]")).filter(
     (group) => group instanceof HTMLElement,
@@ -619,6 +657,7 @@ function initializePrimaryNavigation(root = document) {
     });
   }
   refreshBulkControl();
+  initializePrimaryNavigationScroll(root);
 }
 
 function dnsZoneTabButtonForDomain(domain) {
