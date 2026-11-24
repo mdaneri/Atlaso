@@ -4398,7 +4398,7 @@ def host_state_checks(args: argparse.Namespace) -> dict[str, Any]:
     ).decode("ascii")
     powercli_probe = base64.b64encode(
         (
-            '$m = Get-Module VCF.PowerCLI -ListAvailable | Where-Object Version -eq "9.1.1.25718932" | '
+            '$m = Get-Module VCF.PowerCLI -ListAvailable | Where-Object Version -eq "9.1.2.25952617" | '
             'Select-Object -First 1; if (-not $m) { exit 1 }; Import-Module $m.Path -Force; '
             '$configured = Get-PowerCLIConfiguration -Scope AllUsers; if ([bool]$configured.ParticipateInCEIP) { exit 1 }; '
             'if (-not (Get-Command Connect-VIServer -ErrorAction SilentlyContinue)) { exit 1 }'

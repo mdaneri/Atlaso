@@ -1,193 +1,193 @@
 {
   "schema_version": 2,
-  "suite_version": "9.1.1.25718932",
+  "suite_version": "9.1.2.25952617",
   "modules": {
-    "VCF.PowerCLI": "9.1.1.25718932",
-    "VMware.CloudServices": "13.5.1.25718932",
-    "VMware.DeployAutomation": "13.5.1.25718932",
-    "VMware.ImageBuilder": "13.5.1.25718932",
-    "VMware.OpenAPI": "13.5.1.25718932",
-    "VMware.Sdk.Nsx.Policy": "13.5.1.25718932",
-    "VMware.Sdk.Nsx.Policy.GlobalInfra": "13.5.1.25718932",
-    "VMware.Sdk.Nsx.Policy.Infra": "13.5.1.25718932",
-    "VMware.Sdk.Nsx.Policy.Initialize": "13.5.1.25718932",
-    "VMware.Sdk.Srm": "13.5.1.25718932",
-    "VMware.Sdk.Vcf.CloudBuilder": "13.5.1.25718932",
-    "VMware.Sdk.Vcf.Installer": "13.5.1.25718932",
-    "VMware.Sdk.Vcf.Ops": "13.5.1.25718932",
-    "VMware.Sdk.Vcf.SddcManager": "13.5.1.25718932",
-    "VMware.Sdk.Vr": "13.5.1.25718932",
-    "VMware.Sdk.vSphere": "13.5.1.25718932",
-    "VMware.Vcf.SddcManager": "13.5.1.25718932",
-    "VMware.Vcf.Sso": "13.5.1.25718932",
-    "VMware.Vim": "9.1.0.25718932",
-    "VMware.VimAutomation.Cis.Core": "13.5.1.25718932",
-    "VMware.VimAutomation.Cloud": "13.5.1.25718932",
-    "VMware.VimAutomation.Common": "13.5.1.25718932",
-    "VMware.VimAutomation.Core": "13.5.1.25718932",
-    "VMware.VimAutomation.Hcx": "13.5.1.25718932",
-    "VMware.VimAutomation.License": "13.5.1.25718932",
-    "VMware.VimAutomation.Nsxt": "13.5.1.25718932",
-    "VMware.VimAutomation.Sdk": "13.5.1.25718932",
-    "VMware.VimAutomation.Security": "13.5.1.25718932",
-    "VMware.VimAutomation.Srm": "13.5.1.25718932",
-    "VMware.VimAutomation.Storage": "13.5.1.25718932",
+    "VCF.PowerCLI": "9.1.2.25952617",
+    "VMware.CloudServices": "13.5.2.25952617",
+    "VMware.DeployAutomation": "13.5.2.25952617",
+    "VMware.ImageBuilder": "13.5.2.25952617",
+    "VMware.OpenAPI": "13.5.2.25952617",
+    "VMware.Sdk.Nsx.Policy": "13.5.2.25952617",
+    "VMware.Sdk.Nsx.Policy.GlobalInfra": "13.5.2.25952617",
+    "VMware.Sdk.Nsx.Policy.Infra": "13.5.2.25952617",
+    "VMware.Sdk.Nsx.Policy.Initialize": "13.5.2.25952617",
+    "VMware.Sdk.Srm": "13.5.2.25952617",
+    "VMware.Sdk.Vcf.CloudBuilder": "13.5.2.25952617",
+    "VMware.Sdk.Vcf.Installer": "13.5.2.25952617",
+    "VMware.Sdk.Vcf.Ops": "13.5.2.25952617",
+    "VMware.Sdk.Vcf.SddcManager": "13.5.2.25952617",
+    "VMware.Sdk.Vr": "13.5.2.25952617",
+    "VMware.Sdk.vSphere": "13.5.2.25952617",
+    "VMware.Vcf.SddcManager": "13.5.2.25952617",
+    "VMware.Vcf.Sso": "13.5.2.25952617",
+    "VMware.Vim": "9.1.0.25952617",
+    "VMware.VimAutomation.Cis.Core": "13.5.2.25952617",
+    "VMware.VimAutomation.Cloud": "13.5.2.25952617",
+    "VMware.VimAutomation.Common": "13.5.2.25952617",
+    "VMware.VimAutomation.Core": "13.5.2.25952617",
+    "VMware.VimAutomation.Hcx": "13.5.2.25952617",
+    "VMware.VimAutomation.License": "13.5.2.25952617",
+    "VMware.VimAutomation.Nsxt": "13.5.2.25952617",
+    "VMware.VimAutomation.Sdk": "13.5.2.25952617",
+    "VMware.VimAutomation.Security": "13.5.2.25952617",
+    "VMware.VimAutomation.Srm": "13.5.2.25952617",
+    "VMware.VimAutomation.Storage": "13.5.2.25952617",
     "VMware.VimAutomation.StorageUtility": "1.6.1",
-    "VMware.VimAutomation.Vds": "13.5.1.25718932",
-    "VMware.VimAutomation.Vmc": "13.5.1.25718932",
-    "VMware.VimAutomation.Vpc": "13.5.1.25718932",
-    "VMware.VimAutomation.WorkloadManagement": "13.5.1.25718932",
-    "VMware.VimAutomation.vROps": "13.5.1.25718932",
-    "VMware.VumAutomation": "13.5.1.25718932"
+    "VMware.VimAutomation.Vds": "13.5.2.25952617",
+    "VMware.VimAutomation.Vmc": "13.5.2.25952617",
+    "VMware.VimAutomation.Vpc": "13.5.2.25952617",
+    "VMware.VimAutomation.WorkloadManagement": "13.5.2.25952617",
+    "VMware.VimAutomation.vROps": "13.5.2.25952617",
+    "VMware.VumAutomation": "13.5.2.25952617"
   },
   "hashes": {
     "VCF.PowerCLI": {
-      "archive_sha256": "484dc041330809968ccaf1849b78ee2c5d8c0cb9f4525e46d3bf79b5c5305225",
-      "content_sha256": "797bd2ec3de9d5a118dbc5b4f62a784df6aa3e1ab25723a407190dd5fd4b4512"
+      "archive_sha256": "f385967337e6c4a9caeb1b59ac01645e8304c3691e43e0bfc4b115338104b624",
+      "content_sha256": "713cb23a32f0dea1d56cc3902ddc9cf69fb9da20f714546fe8acbc6ddcb45b15"
     },
     "VMware.CloudServices": {
-      "archive_sha256": "546f4d5f31f2ae8ee4ab92cdc6010b2c6397aee41fea12b9ff65ed571a33ef6d",
-      "content_sha256": "1c399b67166d5005bc0ac1889285a9b22bdf833f92ec921950b2a4474f7d331c"
+      "archive_sha256": "703e083cc1e51cc46c5f4a9f3539cea3a56afd039011c62c211be413d077fe45",
+      "content_sha256": "444b304bcc3d030b58c025c6a24c2d931c9faa14d215db3d426774fa0399c18f"
     },
     "VMware.DeployAutomation": {
-      "archive_sha256": "d636b66192517c722e1f7768c31351348aa6a2f5dc9d24420d53ad1f98cd3830",
-      "content_sha256": "c74d4db65eafd4ca090112d92bddc2f5cd6fb4b88f53655c1fa2659b1fe37860"
+      "archive_sha256": "c426a08240cf30d7b7461ff673cc788cb68a193391e6130866a4f5a6d4e288fc",
+      "content_sha256": "b4f5199873133aaeac8d6a501006cecacedf6afeef5f63563128449d00e3bf7a"
     },
     "VMware.ImageBuilder": {
-      "archive_sha256": "84635109063c738290a8433a80f19cee22ee8388bf29f88eb311e0950bdab264",
-      "content_sha256": "c2c812647938934e45ef80c0b7884ea4e06c801060ebf28b6d4c03d530705c2d"
+      "archive_sha256": "38b8820794bbc5fc14ae34c4d5a89e27018dec10600af0564e9cbdea426c2682",
+      "content_sha256": "e86e15723034caa0149d2f21e2093102b7876d98af5798da131cd5947fec1794"
     },
     "VMware.OpenAPI": {
-      "archive_sha256": "caf9f806d984b78d580e8731d7cf2fb2f0ecfb298de48793750ae9224aa3c4e4",
-      "content_sha256": "02e954e8d0822abb2eb0bc2bf4463e12a7c5da0a591aa085fa10154565f8a019"
+      "archive_sha256": "e7c7c2cfcaaaa564194400d89f09022c7daccbc04aa30aca52530f944899694c",
+      "content_sha256": "35f375d35c7504b3aa3287a682c1d489f1da8eec986bd129f25ac8a05aec706f"
     },
     "VMware.Sdk.Nsx.Policy": {
-      "archive_sha256": "edd7f3c5398ae7dcaf9cb6b43580a061ffaf5b6ac6995d2c80412c7858d5f4f4",
-      "content_sha256": "8f6bc99030fd4272b3a37815f9d3a4c66e0678161075af54a8e5bcb73177da57"
+      "archive_sha256": "e42604957030af470e4463bb4b0c194728f7eddcf3f0064d1c88b715564bc51e",
+      "content_sha256": "9932312dd69968c9a92f62b5bf2a72ed66444ffb4451a0735974cb8e5dd1780a"
     },
     "VMware.Sdk.Nsx.Policy.GlobalInfra": {
-      "archive_sha256": "0216ed878305d6662d3d82df7dc758d8d943e83d48ed9a1cc2b7f16450f69690",
-      "content_sha256": "e2412143abab3c54cad5784fdc7772286325a9b31f82f76a1ab70d41697c60b2"
+      "archive_sha256": "1542190721bfd628ff947ead1b9e4bc9071bb2aab493e4df881ce8a0d2f9e61b",
+      "content_sha256": "434be48971c488758f9ff67bc7b33b30ff4a40c41bfe97e9c36c6bd965aa5637"
     },
     "VMware.Sdk.Nsx.Policy.Infra": {
-      "archive_sha256": "ff4d74965cb64c3f6b126d7df78beb7374d8dfb22291340d2f166eeed12e6356",
-      "content_sha256": "d7152655c9e5c3ca770c34e375305221e2021be24a72eb8b6533976ee0ebb85b"
+      "archive_sha256": "3a5ba8bc8e5fa743de78d2e73c5e48d4895e9617437b912f9405c3b87a8d700f",
+      "content_sha256": "3c341a6148e7aecce005ea3d44b1c660181ac2440740dbb2a28eea5300131796"
     },
     "VMware.Sdk.Nsx.Policy.Initialize": {
-      "archive_sha256": "c4a0290fd03247ee1416ac760ba02af2283ae2ea119aababe0d1900e3db15a7b",
-      "content_sha256": "39be2f1688ab549d8fed2a5a8f6bd7bec6fde3eeec9dcaec10af4de18ec7d51d"
+      "archive_sha256": "4412cca1efcfe34e7eb67b4cc75163f16651567a7c4f4c6122d86a1fa460b2b2",
+      "content_sha256": "8cd35d8c972ae3acfc31d60173ed770e9e1f14830b8ee0cdf36b4b6e43223994"
     },
     "VMware.Sdk.Srm": {
-      "archive_sha256": "b03c7310ae75f4bc87659173decbec1f4ee174ff3262c29312a9ddf2c00e1cd2",
-      "content_sha256": "725010ce897e723957bc9d55ae5af49adf0d447e247588a192196370a7f20d90"
+      "archive_sha256": "d0e8ae339e0965bb54674db895a018889dbcc8f0762e73a081ae505d76a1bb75",
+      "content_sha256": "5c804394e8aca88e91e020129879d48f3d7ce73ef5fb9b586970f13e7b611853"
     },
     "VMware.Sdk.Vcf.CloudBuilder": {
-      "archive_sha256": "35e4e4a2ede750a029ffce70298f2826d8c0871f3891139544aacbebdd071b6e",
-      "content_sha256": "606937ad9d442dfd293bb8d999ca8b136d2e083da469d1838d89cf82a21cf8ec"
+      "archive_sha256": "d8e59ab0d68a52f226e491a6f14df5871e2fd28d1845788f8cd1db476536e947",
+      "content_sha256": "f9347f4b02f7f10df031ea2a10ce5cb7af7a7d55b6a02058fd05d8c04be47804"
     },
     "VMware.Sdk.Vcf.Installer": {
-      "archive_sha256": "a36a1b2a3ef2fd0bef28d8f4f7ac9792339a6162e99fcc6d80168be158136528",
-      "content_sha256": "4173bf8a7fcd147ab8762aed01219e7ace3bbaca0485a3e25fc5a772bef8eed9"
+      "archive_sha256": "073c52591959a2f3007167a720f43daf913b5635115338c45028813795030cd2",
+      "content_sha256": "6611771cf5d9ac4eff8c2538e68eeeb30d0339f3d3ef9c42c8d23adcf1a048be"
     },
     "VMware.Sdk.Vcf.Ops": {
-      "archive_sha256": "2a81f56152d42edc9c7bf4f015f5971d8ad98472f923721b1d75f72d5a614a0c",
-      "content_sha256": "df68f5476279e7f1a7de51028f06b072bf76bbdf0da0d3282eca221fc255d120"
+      "archive_sha256": "7be57be03c5adeaa885deb38640731e792c5fea530bf301acf199627fddbbd0f",
+      "content_sha256": "15cb703ae9bf3c4eb025e45b84a803cc0304c9667acf57b8e0a318537712765a"
     },
     "VMware.Sdk.Vcf.SddcManager": {
-      "archive_sha256": "b9a10dc85adecf0680c93edb5af78486ba2f307d7b497599afcf944cf5e38263",
-      "content_sha256": "e56a491148ad83518d23fa744dc1c08a8d0d07245e59f0a7536050e473cc7142"
+      "archive_sha256": "7c325aa7ebe01ca7e1e79a2944774bab24f9e7a0b5ddab0ab2d25b9f006499a8",
+      "content_sha256": "7e437dc8d2070e606098ce752867f3dea2f5ce6b24a5ffbc78e895bd2f179265"
     },
     "VMware.Sdk.Vr": {
-      "archive_sha256": "9c4289ea27b457f11ddd624cdc87ab718dbe0354f7c53399fed4274a0b330190",
-      "content_sha256": "d56d228c5d3166debe13e53fcae82ee32561f45de718ca5ccea27a7aea0af6fc"
+      "archive_sha256": "cc4f866e216a1ee74a9da55bc52e8ca11d1cec1955cfb443c65c8a5843504d56",
+      "content_sha256": "1f595ee5a6332c5c6f07edffecc83b82f8776cf8d0b0792441fda920de9e9992"
     },
     "VMware.Sdk.vSphere": {
-      "archive_sha256": "0dc67b3a3cf1771be46ac084d8e785cc29864bc21ffbcc8057541ccb75ea7372",
-      "content_sha256": "20a29c097bc2917f7cb8e8aa4dedd185761f23534c5daf7544c15cb0c8b41f91"
+      "archive_sha256": "3757ae63356bfb6ce082b1be4d150ea01da2cac85c16bc47d3818913e783de4e",
+      "content_sha256": "70abf540047d3e17a904cb812c091e9a93a0ce5646d112badf367ad8592d0f41"
     },
     "VMware.Vcf.SddcManager": {
-      "archive_sha256": "fa763aafccab29bae275c461ef2307a46ed5f82a3089af2aa72984f54ad1759e",
-      "content_sha256": "4088e2a868b25b1bd3d76006a8d366b51c7fa0ececb6a93106e0339b6205d24d"
+      "archive_sha256": "de8f28272c4fe17e866980d82c3acb3120b6ad6f848d82de352553f9b9248b65",
+      "content_sha256": "b9d0da3eb3d72f9e2c9011956fcf61c4ab7875c91a986884c4aa33bbc2d6186d"
     },
     "VMware.Vcf.Sso": {
-      "archive_sha256": "9261af41788bc26f5abe9b8515b7102c3203b857ec0da348a7029a784bbec9a5",
-      "content_sha256": "79119987dee89eb5f5ab8b3313d21bd449b9017b675428d4d72f4f63d7233c86"
+      "archive_sha256": "f23ffee54d9d5df595727d11ab43c48fda76308ff9960282483d1e63ca0cac66",
+      "content_sha256": "8dc616bc58d66476b6864f85c71af9124e0f467013c6ee68aed15e1841b1ad6e"
     },
     "VMware.Vim": {
-      "archive_sha256": "f210e9b67c159fdf365c192ad517f72e2b4644ec36e14ad60d7c256afb0484e3",
-      "content_sha256": "bab9563a33f8750ce4e35472552463706816185c724bd006172c746fdc82fb73"
+      "archive_sha256": "a93899ff08d0263395a07b3b3fba2372c203bb6501623d96f8d1ebd999ba1c2e",
+      "content_sha256": "3d04dc6272bec873885f5c617ed71efe742c4a82e6a19863a09549cdae1c2e59"
     },
     "VMware.VimAutomation.Cis.Core": {
-      "archive_sha256": "f87a4d8b9fd6e8a9e93e797c6f33770211735629b85f9317906247a4426b34e4",
-      "content_sha256": "1ae3ea6bf9205e91132fa2b6d5c83c8f881173cb0f3b2c9152ada23001a3bc97"
+      "archive_sha256": "e28a50cf5d312fc2d659b055c8e85c069aa968072e72a27aba49a85b967af8a0",
+      "content_sha256": "775c696dd01c027a7ba66937a9773589b33f8fe5ea7446fac590896feb88bac3"
     },
     "VMware.VimAutomation.Cloud": {
-      "archive_sha256": "98c2de7822d8d3eb3594cfc02b6187de0773378152b72be0d8494d49966c9ae7",
-      "content_sha256": "c1ecbed2b7f49f3249378960e3dcf9e4dcda4d666a2b7c637bf224f10833a928"
+      "archive_sha256": "3e010d656bd67de59dd4fc9e601cf8aa5ddc1929d0b9032601da2bd9e477d992",
+      "content_sha256": "b5945d1eba68aeb09946ca8ddd6fdccfa9fe970f4eef8fa3d3f8475fb1e65a7b"
     },
     "VMware.VimAutomation.Common": {
-      "archive_sha256": "1eb78b6993276f97d71d000fb114e06a05784e192816df0879472545f14ae975",
-      "content_sha256": "b14d9e6ff244ee29146c10cd50484f49f7eecdd9db2f702ebb4ef1bc81d7b79c"
+      "archive_sha256": "e6a4ad090d09ecc4be353321d4d31c7098fbe8c197c7129fea37032af3da1436",
+      "content_sha256": "40ff69d72c0941bdae98065a9a3d2eee5544cce9a06f0081ce4107b10553b067"
     },
     "VMware.VimAutomation.Core": {
-      "archive_sha256": "f7302e493f80a6a71a5cdca58be2b3557bae81f5449418964d86c2a2e39f37c4",
-      "content_sha256": "9565720df4cfe89b9d1c2a06ed9c2f4e78a20693715f52e83cf744130f6c460f"
+      "archive_sha256": "7121e2b8834f467e38f402276bc6a815ce265d884cf54a4e1a194bf58c128591",
+      "content_sha256": "7f8fc1e0d60ec2eef9269548183132bc0fc560edb6938511dacdc2fd5908c6f3"
     },
     "VMware.VimAutomation.Hcx": {
-      "archive_sha256": "29ea4f11bec6c078aeab0b7a9c2ea96aa123977c1be0eb02c6f9b8a56bba04d4",
-      "content_sha256": "bccd809608811e600ae88a8708238d4589b5ec938d14d6bc867afaced8430b61"
+      "archive_sha256": "42c522fd714e57ffde2428752da4b558d500606ea1eeab2f263a455229ef4b54",
+      "content_sha256": "ad2d079159504afccc1e749d5e9eb2f39489f61a418ef19f6baac0e0620080b3"
     },
     "VMware.VimAutomation.License": {
-      "archive_sha256": "8700f0b66f252eb1133bac26ba1c7e77f88868bf15e0b5c738897ba83251717c",
-      "content_sha256": "bdb3992032eca0f696c449cef06b3998671e41d40d275c4f536de14ebbd69c6d"
+      "archive_sha256": "d1db0fc52ca4735a8fbf451c540452ab55dbf61ca5ec6bbcf83f929443235698",
+      "content_sha256": "a0bb9db1275d191cfaebabbba5cbffca64c571458ff17c1e98a977883ed506ff"
     },
     "VMware.VimAutomation.Nsxt": {
-      "archive_sha256": "ee777dbd2577a413bc3671bcc9fdd58df09dddca70fc2ea06766eba51749850e",
-      "content_sha256": "3ab15ea7867514a84086f0b1335b9e143efad752001acefd2052f0a9b7c189c3"
+      "archive_sha256": "f333497290688364a6959a67227fd37db84ddee50d9570d63f540999c1af4792",
+      "content_sha256": "bcc58532b872bd21cd776794ceb9fe32ed0d61cee9704632ed2e5bc7463eec4a"
     },
     "VMware.VimAutomation.Sdk": {
-      "archive_sha256": "eee2abf08cca60ffdeead8a24ff17f7f8624adcdc63003ce5b7275cb9c7c0484",
-      "content_sha256": "58489dea57bcd2598218638ec86840b84e043e30785c1b1736810f58202d44e6"
+      "archive_sha256": "efab4df4bd241e2e7114b628cd2a831fb9b0db78b1c1b4caffc924eff9ca1191",
+      "content_sha256": "533075950ea777c7a5921c05520f77f72bbd48a1dd09f5ca8e36be9bb9accc32"
     },
     "VMware.VimAutomation.Security": {
-      "archive_sha256": "87de2ce1948ccf403069399506d92840e6a4c1dde4b597af004980ce10430dc8",
-      "content_sha256": "7095ff8948c77d6233b6cd4fa559051331287290269d874cbb4df5b91c9b24a7"
+      "archive_sha256": "731329fee684f1a77d34154b5af32d826e238351fe32a7da00a4c57e67441c63",
+      "content_sha256": "03a86cd63eba8e0bbf6525cf740d7878908228c8c26f7577cf96a4f30707f86c"
     },
     "VMware.VimAutomation.Srm": {
-      "archive_sha256": "61fabd93be0682a9e44743e36a3052114467d47f77a4fcacea0b08544270a47e",
-      "content_sha256": "feb0637f6ecc2a069593c9ee83a03a12713efaf25c4760d97891cdfb4214b76e"
+      "archive_sha256": "8ecc6614e6cfde427cb840006e377d5df854f496968303fe6fa1eb8d11b4fda8",
+      "content_sha256": "219191f0e0f6d1e36289c7d23d06e272b233df5897895c5b4c637016540d77b6"
     },
     "VMware.VimAutomation.Storage": {
-      "archive_sha256": "c55bedd19d2563572868742dbf5dec871a10c1357eb648936922d3e52afe2d04",
-      "content_sha256": "022eb5a039baa9e182df9b429fba49570942121c1cb9b60138e0fbfefc477b66"
+      "archive_sha256": "beba2cef6171736d8623ceaa25d0a4576f2ea829710c6d5a764e1f23f38b7e1c",
+      "content_sha256": "e0ce70fbf41f82781e12eb1548df272fd745f52a914a9dae55b18932dee2ba0b"
     },
     "VMware.VimAutomation.StorageUtility": {
       "archive_sha256": "ddf6c7165278eaef6d201719ae65731ef53f8770855b7fd090d8f95b108061c8",
       "content_sha256": "889f376404022da16070401126a37b38d200e4e939a85350fd1dae1427f341d4"
     },
     "VMware.VimAutomation.Vds": {
-      "archive_sha256": "f9f56a007ce5bc3ce078e8c9efe9ac0bb0486e75d8a727ef4a52633d871435e7",
-      "content_sha256": "cceff466657a92512dc4757129a26af6ebdcacc41e724ad47c97beb4f686f2a2"
+      "archive_sha256": "46f5399045080e8455779054f801e6bef112b01e8af9150c0194e5ed8835f26e",
+      "content_sha256": "d7ccf7219827023d9a300d7ca19f4a905fa1947cfd3e2dd43573807c09f3fc3a"
     },
     "VMware.VimAutomation.Vmc": {
-      "archive_sha256": "750791c508fd5e6866e62dea71d9e32da701c7637da6db08bf9c6dcc0470e5be",
-      "content_sha256": "da4ada504c936769f224e77d0650318cf9e0900cd4de6e801030bf622d23eea0"
+      "archive_sha256": "e78c0d1c5e23a208967eb437fa53c4131e03a85488fa0ca119d5e407e3f48a6b",
+      "content_sha256": "f696512cb909bff4440930915857a7179d7a39441e190c7672667bc617bc609b"
     },
     "VMware.VimAutomation.Vpc": {
-      "archive_sha256": "60d6e99fcb9ea3b3d148bd4c32c9668933786bcf39e3758dd5e9584b6ce21c04",
-      "content_sha256": "072aa4930b843212c386d95c54c5fa6c396d3c0935ddffbdb6e5bdc92b1304a0"
+      "archive_sha256": "7cd0d0aa5abcb8faff835629b774f2cf22e4049c42df57fd7e33cade20b77839",
+      "content_sha256": "5cf4bcac2a8aa9482ad5a8000ac900229dc42eb233eda406b1cb382600312658"
     },
     "VMware.VimAutomation.WorkloadManagement": {
-      "archive_sha256": "dc1f4ead12a42f1a605ed2499cb4b7161f228df801228fa2bac7025912446020",
-      "content_sha256": "1c649a6aaf22176bad4c4e96626ac380fa0442c36cfd6e30fea4e2cc0131f690"
+      "archive_sha256": "98a9d62595f105d82ee0f256e4cb01798e6df4adfe8a35b95abcb19f8f748dc9",
+      "content_sha256": "9972e58e6734d0c463f37b6947b3472ade682a906dc4a2ba8880b91b9e9aba66"
     },
     "VMware.VimAutomation.vROps": {
-      "archive_sha256": "dfe8511d967140bf966517d11e16c0fb81dc521734bc631d297ea8575d8e1c7e",
-      "content_sha256": "eacc6e95e2f9ce047714dec6309088c5c13fe1c83c1357592a910855fe8e7751"
+      "archive_sha256": "dd2b2ca13bfe23d56cc45629d541f2bcd2b84d7680e6daf8a1ce61bbe0eefa48",
+      "content_sha256": "ac43af9671f34e0c01a81397d6f67d5bddc4acc110ded0ec044d62572efdeeb3"
     },
     "VMware.VumAutomation": {
-      "archive_sha256": "5859f90223479cc075944846ee5e97df0e813049903776cd4896ba201797b74e",
-      "content_sha256": "dea8ecaafba95c93326c274a8a45c45c3cdaf9e5378ecbb0f7a5f6e447b92509"
+      "archive_sha256": "b1c4d39db43fffc38c382cc106d80f81978c5035a3f7142e23c6c478092a6699",
+      "content_sha256": "d20d50862cbbf52a3e870a944b150ab462ef12cb42e98821b3dfe0b16147d6ca"
     }
   }
 }
