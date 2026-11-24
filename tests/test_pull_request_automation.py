@@ -20,6 +20,22 @@ def test_ci_separates_diagnostic_checks_from_required_contexts() -> None:
         assert workflow.count(context) >= 5
 
 
+def test_photon_preflight_compares_the_candidate_with_the_exact_base() -> None:
+    """Run the preflight as a read-only advisory outside required status publication."""
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    job = workflow.split("  photon-snapshot-preflight:", maxsplit=1)[1].split(
+        "  repository-checks:", maxsplit=1
+    )[0]
+    assert "contents: read" in job
+    assert "environment:" not in job and "secrets." not in job
+    assert "inputs.head_sha || github.sha" in job
+    assert "inputs.base_sha || github.event.pull_request.base.sha" in job
+    assert "git merge-base --is-ancestor" in job
+    assert "scripts.installation.photon_preflight" in job
+    assert 'tee -a "$GITHUB_STEP_SUMMARY"' in job
+    assert "photon-snapshot-preflight" not in workflow.split("  trusted-contexts-finish:", maxsplit=1)[1]
+
+
 def test_trusted_ci_publishes_revalidated_required_statuses() -> None:
     """Verify that trusted CI bridges exact-head results into PR statuses."""
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
@@ -32,7 +48,7 @@ def test_trusted_ci_publishes_revalidated_required_statuses() -> None:
     assert "inputs.pull_number || github.ref" in workflow
     assert workflow.count("statuses: write") == 2
     assert workflow.count("pull-requests: read") == 2
-    assert workflow.count("persist-credentials: false") == 6
+    assert workflow.count("persist-credentials: false") == 8
     assert "github.event_name == 'workflow_dispatch'" in workflow
     assert "github.actor == 'github-actions[bot]'" in workflow
     assert '"$base_ref" != "main"' in workflow

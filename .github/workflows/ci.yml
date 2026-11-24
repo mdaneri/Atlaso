@@ -100,6 +100,46 @@ jobs:
         if: github.event_name == 'push'
         run: python scripts/version.py check --root .
 
+  photon-snapshot-preflight:
+    name: Photon snapshot preflight
+    if: github.event.pull_request || inputs.head_sha
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Check out PR candidate
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check out exact PR base
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.base_sha || github.event.pull_request.base.sha }}
+          path: .photon-base
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+      - name: Compare Photon snapshot requirements
+        shell: bash
+        run: |
+          base="$(git -C .photon-base rev-parse HEAD)"
+          candidate="$(git rev-parse HEAD)"
+          printf 'Base: %s\n\nCandidate: %s\n\n' "$base" "$candidate" >> "$GITHUB_STEP_SUMMARY"
+          if ! git merge-base --is-ancestor "$base" "$candidate"; then
+            echo 'Photon snapshot comparison requires a candidate that includes the exact PR base.' | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          if ! fingerprint="$(cd .photon-base && python -B -c 'from pathlib import Path; from scripts.installation.photon_snapshot import requirements_sha256; print(requirements_sha256(Path.cwd()))')"; then
+            echo 'Unable to calculate the fingerprint with the exact PR base.' | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          python -B -m scripts.installation.photon_preflight --base .photon-base --candidate . \
+            --base-fingerprint "$fingerprint" | tee -a "$GITHUB_STEP_SUMMARY"
+
   repository-checks:
     name: ${{ github.event_name == 'workflow_dispatch' && 'Trusted Repository checks validation' || github.event_name == 'pull_request' && github.actor == 'github-actions[bot]' && 'Approval-gated Repository checks' || 'Repository checks' }}
     runs-on: ubuntu-latest
