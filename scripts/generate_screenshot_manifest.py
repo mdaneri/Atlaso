@@ -222,11 +222,12 @@ CAPTURE_OVERRIDES = {
     },
     **{
         stem: {
-            "source_commit": "e3adf1e1c0eb5685a72c76dce6502d4b21d9e5aa",
+            "source_commit": "00fefe71e9fc34a7126e8fd65da0f287e58e5977",
             "atlaso_version": "0.9.530",
             "capture_method": "playwright-chromium",
         }
         for stem in (
+            "vcf-backups-storage-volume",
             "vcf-backups-storage",
             "vcf-backups-storage-data",
             "vcf-offline-depot-storage",
@@ -790,6 +791,12 @@ SPECIAL = {
         "published-content",
         "The public VCF Offline Depot browser remains contained in the narrow viewport.",
         "Atlaso public VCF Offline Depot browser showing its read-only contents grid in the narrow viewport.",
+    ),
+    "vcf-backups-storage-volume": (
+        "/ui/management/vcf-backups",
+        "backup-storage-volume",
+        "Select a different volume to continue the storage wizard.",
+        "VCF Backups storage wizard with Next disabled while the saved volume is selected.",
     ),
     "vcf-backups-storage": (
         "/ui/management/vcf-backups",

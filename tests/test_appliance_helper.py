@@ -17116,6 +17116,30 @@ def test_vcf_backups_helper_owns_a_separate_global_probe_dropin(tmp_path):
     assert "PerSourcePenaltyExemptList" not in candidates[helper.VCF_BACKUPS_CONFIG_PATH]
 
 
+def test_vcf_backups_dropin_keeps_only_persistent_storage_metadata(tmp_path):
+    """Keep receiver readiness bytes identical after a storage reassignment.
+
+    Args:
+        tmp_path: Isolated staged receiver configuration.
+    """
+    from atlaso.app.services.vcf_service_storage import (
+        storage_change,
+        storage_change_metadata,
+        storage_config_metadata,
+    )
+
+    helper = load_helper_module()
+    staged = tmp_path / "vcf.conf"
+    assignment = {"uuid": "2cecf40a-b241-4b6a-8b1a-4d84d9b0eb61", "path": "/mnt/backup/vcf-backups",
+                  "volume_path": "/mnt/backup", "device": "/dev/disk/by-id/ata-backup"}
+    rendered = vcf_backups_config_text() + storage_config_metadata(assignment)
+    migration = storage_change_metadata(storage_change("backup", {}, assignment, "move"))
+    assert migration.startswith("\n" + helper.VCF_STORAGE_CHANGE_COMMENT)
+    staged.write_text(rendered + migration, encoding="utf-8")
+    candidates = helper._vcf_backups_dropin_candidates(staged, helper._vcf_backups_config_values(staged))
+    assert candidates[helper.VCF_BACKUPS_CONFIG_PATH] == rendered
+
+
 def test_vcf_backups_helper_apply_requires_existing_os_user(monkeypatch, tmp_path, capsys):
     """Verify that vcf backups helper apply requires existing os user.
 

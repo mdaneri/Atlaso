@@ -12488,6 +12488,7 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
     from atlaso.app.services.network_boot import load_esxi_applied_runtime
     from atlaso.app.services.reverse_proxies import ServiceDnsAliasConflict
     from atlaso.app.services.vcf_service_storage import (
+        backup_storage_deferred,
         storage_assignment,
         storage_change,
         storage_config_metadata,
@@ -12542,7 +12543,7 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
         selected = storage_settings(db, role)
         backup = context["vcf_backup_settings"] if role == "backup" else None
         if backup is not None and not backup.enabled and (
-            not backup.storage_migration_policy
+            backup_storage_deferred(backup)
             or (
                 isinstance(previous, dict)
                 and (previous.get("uuid"), previous.get("path")) == (selected["volume_uuid"], selected["mount_path"])

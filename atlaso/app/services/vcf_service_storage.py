@@ -46,6 +46,7 @@ class StorageContext(TypedDict):
     selection: dict[str, str]
     applied: dict[str, str]
     default_path: str
+    awaiting_sftp_enablement: bool
 
 
 class StorageChange(TypedDict):
@@ -65,11 +66,13 @@ def storage_context(db: Session, role: Role) -> StorageContext:
         db: Active database session supplying the current storage registration.
         role: Service whose storage wizard will be rendered.
     """
+    backup = _row(db, "backup") if role == "backup" else None
     return {
         "options": storage_options(db, role),
         "selection": storage_settings(db, role),
         "applied": applied_storage_settings(db, role),
         "default_path": DEFAULT_PATHS[role],
+        "awaiting_sftp_enablement": isinstance(backup, VcfBackupSettings) and backup_storage_deferred(backup),
     }
 
 
@@ -85,6 +88,15 @@ def _row(db: Session, role: Role) -> VcfBackupSettings | VcfOfflineDepotSettings
     if role == "depot":
         return db.scalars(select(VcfOfflineDepotSettings)).one_or_none()
     return db.scalars(select(VcfPrivateRegistrySettings)).one_or_none()
+
+
+def backup_storage_deferred(settings: VcfBackupSettings) -> bool:
+    """Keep an older backup selection dormant while SFTP is disabled.
+
+    Args:
+        settings: Desired SFTP settings and the operator's staged data action.
+    """
+    return not settings.enabled and not settings.storage_migration_policy
 
 
 def _eligible_volumes(db: Session) -> list[EsxStorageVolume]:

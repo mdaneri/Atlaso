@@ -7,7 +7,10 @@
   <div class="settings-list">
     <div><span>Current storage directory</span><strong>{{ applied.path }}</strong></div>
     {% if pending %}
-      <div><span>Pending storage directory</span><strong>{{ selection.mount_path }}</strong></div>
+      <div>
+        <span>{{ "Storage after SFTP is enabled" if vcf_storage.awaiting_sftp_enablement else "Pending storage directory" }}</span>
+        <strong>{{ selection.mount_path }}</strong>
+      </div>
     {% endif %}
   </div>
   {% if storage_writable %}

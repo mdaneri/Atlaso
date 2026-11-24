@@ -723,6 +723,10 @@ Figure: VCF Backups in the verified clean-appliance responsive state.
 
 Figure: Choose what Appliance Apply will do with existing backup files.
 
+![VCF Backups storage wizard with Next disabled while the saved volume is selected.](../assets/screenshots/vcf-backups-storage-volume.webp)
+
+Figure: Select a different volume to continue the storage wizard.
+
 ![VCF Backups storage wizard Review with the current path, proposed path and choice for existing files.](../assets/screenshots/vcf-backups-storage.webp)
 
 Figure: Review the backing directory for the SFTP service before staging a storage change.

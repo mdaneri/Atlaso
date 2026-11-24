@@ -51,6 +51,7 @@ choice for Appliance Apply. Review the current and proposed directories and sele
 **Review appliance changes**. Delete requires typing the exact confirmation shown there before submitting Appliance
 Apply. An explicit storage reassignment can be staged and applied while SFTP is disabled; disabling SFTP by itself
 retains the current storage assignment. Disabling SFTP remains available even when its assigned volume is unavailable.
+An older volume selection without a staged data action takes effect when you enable SFTP and apply the service.
 The service uses the new directory only after the storage change applies successfully. After Apply, confirm the
 selected volume and directory in VCF Backups, reboot the appliance, and check that the assignment and SFTP writes
 persist. VCF clients continue to use the stable `/backups` remote directory when chroot is enabled.
@@ -251,6 +252,10 @@ These captures show responsive layouts and useful operational states referenced 
 ![Existing data step in the VCF Backups storage wizard showing Move, Leave and Delete.](../assets/screenshots/vcf-backups-storage-data.webp)
 
 *Figure: Choose what Appliance Apply will do with existing backup files.*
+
+![VCF Backups storage wizard with Next disabled while the saved volume is selected.](../assets/screenshots/vcf-backups-storage-volume.webp)
+
+*Figure: Select a different volume to continue the storage wizard.*
 
 ![VCF Backups storage wizard Review with the current path, proposed path and choice for existing files.](../assets/screenshots/vcf-backups-storage.webp)
 

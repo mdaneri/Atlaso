@@ -20339,13 +20339,17 @@ def _vcf_backups_probe_config(values: dict[str, str | bool]) -> str | None:
 
 
 def _vcf_backups_dropin_candidates(path: Path, values: dict[str, str | bool]) -> dict[Path, str | None]:
-    """Keep the optional global directive before every Match User include.
+    """Publish persistent SSH settings and keep global directives before Match User.
 
     Args:
         path: Admitted staged SFTP configuration.
         values: Validated VCF receiver metadata.
     """
-    return {VCF_BACKUPS_CONFIG_PATH: path.read_text(encoding="utf-8") if values["enabled"] else None,
+    config = None
+    if values["enabled"]:
+        text = path.read_text(encoding="utf-8")
+        config = re.sub(rf"(?m)^\n?{re.escape(VCF_STORAGE_CHANGE_COMMENT)}[^\n]*\n?", "", text)
+    return {VCF_BACKUPS_CONFIG_PATH: config,
             VCF_BACKUPS_CONFIG_PATH.with_name("00-atlaso-vcf-backup-probes.conf"): _vcf_backups_probe_config(values)}
 
 

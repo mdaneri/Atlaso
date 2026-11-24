@@ -14348,8 +14348,14 @@ function initializeVcfStorageWizard() {
   const policy = form.elements.namedItem("storage_migration_policy");
   const current = form.querySelector("[data-vcf-storage-current]");
   const migration = form.querySelector("[data-vcf-storage-migration]");
+  const next = form.querySelector("[data-atlaso-wizard-next]");
+  let initialVolume = volume.value;
   const proposedPath = () => volume.selectedOptions[0]?.dataset.storagePath || "";
+  const volumeChanged = () => volume.value !== initialVolume && Boolean(proposedPath());
   const storageChanges = () => current.dataset.volume !== volume.value || current.textContent !== proposedPath();
+  const updateNext = (stepId) => {
+    next.disabled = stepId === "volume" && !volumeChanged();
+  };
   const updatePreview = () => {
     form.querySelectorAll("[data-vcf-storage-proposed]").forEach((element) => {
       element.textContent = proposedPath() || "Choose an available volume";
@@ -14368,11 +14374,16 @@ function initializeVcfStorageWizard() {
     ],
     onOpen: () => {
       form.reset();
+      initialVolume = volume.value;
       updatePreview();
     },
+    onStepChange: ({ step }) => updateNext(step.id),
     validateStep: ({ step }) => {
       if (step.id === "volume" && !proposedPath()) {
         return { valid: false, message: "Choose an available storage volume.", field: volume };
+      }
+      if (step.id === "volume" && !volumeChanged()) {
+        return { valid: false, message: "Choose a different storage volume.", field: volume };
       }
       if (step.id === "data" && storageChanges() && !policy.value) {
         return { valid: false, message: "Choose how to handle existing files." };
@@ -14408,6 +14419,7 @@ function initializeVcfStorageWizard() {
       input.checked = false;
     });
     updatePreview();
+    updateNext(wizard.currentStepId);
   });
 }
 

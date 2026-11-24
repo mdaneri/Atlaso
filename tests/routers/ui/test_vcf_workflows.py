@@ -263,6 +263,54 @@ def test_vcf_services_render_the_same_storage_wizard(client, page_path):
         assert f'name="storage_migration_policy" value="{policy}"' in wizard
 
 
+def test_disabled_backups_show_pending_storage_only_when_staged_for_apply(client):
+    """Keep the disabled SFTP storage label in sync with Appliance Apply.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import EsxStorageVolume, VcfBackupSettings
+    from atlaso.app.ui import appliance_apply_units, update_appliance_apply_baselines
+
+    login(client)
+    page_path = "/vcf-backups"
+    page = client.get(page_path)
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    unit_id = "vcf_backups"
+    volume_uuid = "2cecf40a-b241-4b6a-8b1a-4d84d9b0eb61"
+    with SessionLocal() as db:
+        current = next(unit for unit in appliance_apply_units(db) if unit["id"] == unit_id)
+        update_appliance_apply_baselines(db, [current], {unit_id})
+        backups = db.scalars(select(VcfBackupSettings)).one()
+        assert not backups.enabled
+        backups.storage_volume_uuid = "49b6850b-a8a2-4e62-878f-b9656f74fb5b"
+        backups.storage_volume_path = "/mnt/legacy/vcf-backups"
+        db.add(EsxStorageVolume(name="Backups volume", source_type="mounted_ext4", filesystem_uuid=volume_uuid,
+                                stable_device_id="/dev/disk/by-id/ata-backups", mount_path="/mnt/backup",
+                                state="mounted", applied=True))
+        db.commit()
+        dormant = next(unit for unit in appliance_apply_units(db, reconcile=False) if unit["id"] == unit_id)
+        assert not dormant["changed"] and dormant["storage_change"] is None
+
+    deferred = client.get(page_path)
+    assert "Storage after SFTP is enabled" in deferred.text
+    assert "Pending storage directory" not in deferred.text
+    response = client.post(f"{page_path}/settings", data={
+        "csrf": csrf, "storage_assignment_only": "1", "storage_volume_uuid": volume_uuid,
+        "storage_migration_policy": "leave",
+    }, headers={"X-Atlaso-Autosave": "1"})
+    assert response.status_code == 200
+    staged = client.get(page_path)
+    assert "Pending storage directory" in staged.text
+    assert "Storage after SFTP is enabled" not in staged.text
+    reviewed = client.get("/appliance-apply/review", params={"selected_units": unit_id}).json()
+    change = next(unit["storage_change"] for unit in reviewed["units"] if unit["id"] == unit_id)
+    assert change["proposed_path"] == "/mnt/backup/vcf-backups"
+
+
 def test_registry_storage_wizard_saves_desired_state_and_reserves_volume(client):
     """Verify registry storage review and Apply independently of Harbor settings.
 
