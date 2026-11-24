@@ -4642,8 +4642,8 @@ provisioning inputs, PowerCLI modules, trust material, notices, firmware, and th
 Dependency closure is resolved during authorized ISO preparation. Installation uses only the embedded repository.
 Shared provisioning explicitly installs <code>iproute2</code>, <code>iputils</code>, and <code>traceroute</code> for the console and network
 diagnostics, as required by the final package-state verifier. The complete captured RPM closure includes their
-dependencies. The hosted media-free boot check runs Ping and Traceroute against IPv4 and IPv6 loopback and resolves
-<code>localhost</code> as the Atlaso service account.
+dependencies. Starting with <code>v0.9.523</code>, the hosted media-free boot check runs Ping and Traceroute against IPv4 and
+IPv6 loopback and resolves <code>localhost</code> as the Atlaso service account.
 The base package selection also requires Photon's signed <code>iana-etc</code> package, which supplies <code>/etc/services</code>
 and <code>/etc/protocols</code>. NTPsec's local verification uses these databases to resolve standard service and protocol
 names. A capture missing this package fails admission; regenerate it through the canonical native capture workflow.
@@ -4736,10 +4736,15 @@ retrying release publication. The signed installation artifact index records the
 The QEMU/OVMF job checks disconnected UEFI installation to a 64 GiB disk, preservation of a second 4 GiB disk, boot
 without installation media, active Atlaso services and matching application version and source commit. The runner reads
 the installed identity and service state through the appliance's authenticated native console. The disk-only boot uses
-isolated virtual DHCP with no forwarded ports. Its receipt
-binds all checkpoints to the ISO SHA-256 and the workflow attempt that ran them. A failed or incomplete run leaves
-the draft hidden. A passing run publishes the same draft as a prerelease and verifies the public assets before
-advancing <code>development</code>. To retry, dispatch <strong>Publish appliance release</strong> from <code>main</code> with the full <code>release_sha</code>.</p>
+isolated virtual DHCP with no forwarded ports. Its success receipt binds all checkpoints to the ISO SHA-256 and the
+workflow attempt that ran them. After fixture admission, a failed test retains a separate
+<code>vm-acceptance-failure-&lt;run-id&gt;-&lt;attempt&gt;</code> artifact for 14 days. It records the failed checkpoint, the last classified
+boot screen, and observed service states. When an authenticated service check times out, it also attempts to collect
+selected startup unit states, the failing unit's systemd result and main process status, and allowlisted warning
+categories from its recent boot journal. Credentials, console frames, raw OCR, and raw journal messages stay out of
+the artifact. A failed or incomplete run leaves the draft hidden. A passing run publishes the same draft as a
+prerelease and verifies the public assets before advancing <code>development</code>. To retry, dispatch
+<strong>Publish appliance release</strong> from <code>main</code> with the full <code>release_sha</code>.</p>
 <p>Before the first hosted test, configure the protected <code>installation-acceptance</code> GitHub environment for <code>main</code>.
 Set <code>OP_ENVIRONMENT_ID</code> to the dedicated <code>Atlaso Installer CI</code> 1Password Environment and save its read-only service
 account token as <code>OP_SERVICE_ACCOUNT_TOKEN</code>. Scope the service account to that Environment and leave vault access
