@@ -70,6 +70,7 @@ def test_inventory_covers_packer_systemd_and_extensionless_sudoers(tmp_path: Pat
     assert findings == []
     assert len(inventory.packer) == 1
     assert len(inventory.systemd) == len(SYSTEMD_ASSETS)
+    assert tmp_path / "image/photon-ova/systemd/atlaso-ova-build.service" in inventory.systemd
     assert [path.name for path in inventory.sudoers] == ["atlaso-helper"]
 
 
@@ -129,8 +130,8 @@ def test_inventory_rejects_nested_packer_asset(tmp_path: Path) -> None:
     )
 
 
-def test_pre_commit_selector_covers_inventory_wide_packer_assets() -> None:
-    """Verify that future and nested Packer targets enter the deployment hook."""
+def test_pre_commit_selector_covers_deployment_assets() -> None:
+    """Verify that nested Packer targets and provisioned units enter the deployment hook."""
     repository = Path(__file__).resolve().parents[1]
     config = (repository / ".pre-commit-config.yaml").read_text(encoding="utf-8")
     hook = config.split("- id: atlaso-deployment-asset-check", maxsplit=1)[1]
@@ -141,6 +142,7 @@ def test_pre_commit_selector_covers_inventory_wide_packer_assets() -> None:
     assert selector.search("image/kvm/atlaso-photon.pkr.hcl")
     assert selector.search("image/vmware-workstation/modules/example.pkr.hcl")
     assert selector.search("image/common/systemd/atlaso-worker.service")
+    assert selector.search("image/photon-ova/systemd/atlaso-ova-build.service")
     assert selector.search("image/common/sudoers.d/atlaso-helper")
     assert selector.search("image/inventory-linux/wsl-build-contract.json") is None
     assert re.search(r"^\s*always_run:\s*true\s*$", hook, flags=re.MULTILINE)
@@ -600,6 +602,23 @@ def test_systemd_validation_rejects_ignored_unit_directive(tmp_path: Path) -> No
 
     assert findings
     assert "systemd-analyze verify failed" in findings[0].message
+
+
+@pytest.mark.skipif(SYSTEMD_ANALYZE is None, reason="requires systemd-analyze")
+def test_systemd_validation_rejects_malformed_photon_ova_unit(tmp_path: Path) -> None:
+    """Verify that native validation reaches the trial provisioning unit.
+
+    Args:
+        tmp_path: Temporary repository root supplied by pytest.
+    """
+    write_systemd_fixture(tmp_path, "[Service]\nExecStart=/bin/true\n")
+    unit = tmp_path / "image/photon-ova/systemd/atlaso-ova-build.service"
+    unit.parent.mkdir(parents=True)
+    unit.write_text("[Service]\nExecStart=/bin/true\nDefinitelyNotARealSetting=yes\n", encoding="utf-8")
+
+    findings = validate_systemd(SYSTEMD_ANALYZE or "", tmp_path)
+
+    assert any(finding.path == unit.parent and unit.name in finding.message for finding in findings)
 
 
 @pytest.mark.skipif(VISUDO is None, reason="requires visudo")

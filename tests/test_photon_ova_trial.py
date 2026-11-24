@@ -207,7 +207,7 @@ def test_guest_bootstrap_uses_the_admitted_source_archive(tmp_path: Path, monkey
     builder.setup_disk(tmp_path / "root.qcow2", tmp_path / "photon.vmdk", source_archive, source_files)
 
     provisioner = "image/photon-ova/provision.sh"
-    service = "image/photon-ova/atlaso-ova-build.service"
+    service = "image/photon-ova/systemd/atlaso-ova-build.service"
     repository_helper = "image/common/scripts/configure_photon_repositories.py"
     kernel = "image/photon-ova/bootstrap-kernel.sh"
     assert uploads == [

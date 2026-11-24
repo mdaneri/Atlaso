@@ -24,6 +24,7 @@ PACKER_TEMPLATES = (
 SYSTEMD_DIRECTORIES = (
     Path("image/common/systemd"),
     Path("image/vmware-workstation/systemd"),
+    Path("image/photon-ova/systemd"),
 )
 SYSTEMD_ASSETS = (
     Path("image/common/systemd/atlaso-bootstrap-https.service"),
@@ -36,6 +37,7 @@ SYSTEMD_ASSETS = (
     Path("image/common/systemd/atlaso-worker.service"),
     Path("image/common/systemd/nginx-atlaso-data-disks.conf"),
     Path("image/common/systemd/atlaso.service"),
+    Path("image/photon-ova/systemd/atlaso-ova-build.service"),
     Path("image/vmware-workstation/systemd/atlaso-vmware-ovf-customize.service"),
     Path("image/vmware-workstation/systemd/atlaso-vmware-ovf-prepare.service"),
 )
@@ -83,6 +85,7 @@ SYSTEMD_STUB_UNITS = (
     "network-online.target",
     "network-pre.target",
     "nginx.service",
+    "poweroff.target",
     "shutdown.target",
     "systemd-networkd.service",
     "systemd-vconsole-setup.service",
@@ -550,7 +553,8 @@ def validate_systemd(systemd_analyze: str, repository: Path) -> list[Finding]:
         )
     )
     findings = validate_manager_dropins(manager_assets)
-    for platform in ("vmware-workstation",):
+    for directory in SYSTEMD_DIRECTORIES[1:]:
+        platform = directory.parent.name
         with tempfile.TemporaryDirectory(prefix=f"atlaso-systemd-{platform}-") as temporary:
             validation_root = Path(temporary)
             units = _prepare_systemd_root(validation_root, platform, repository)
@@ -564,7 +568,7 @@ def validate_systemd(systemd_analyze: str, repository: Path) -> list[Finding]:
             finding = _run(
                 command,
                 repository,
-                repository / f"image/{platform}/systemd",
+                repository / directory,
                 "systemd-analyze verify",
                 stderr_is_failure=True,
             )

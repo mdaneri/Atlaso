@@ -14,7 +14,7 @@ repos:
         language: system
         pass_filenames: true
         always_run: true
-        files: '^image/(.*\.pkr\.[^/]+|(common|hyperv|vmware-workstation)/(systemd/|sudoers\.d/))'
+        files: '^image/(.*\.pkr\.[^/]+|(common|hyperv|photon-ova|vmware-workstation)/(systemd/|sudoers\.d/))'
       - id: atlaso-python-static-analysis
         name: Atlaso Python static analysis
         entry: python scripts/check_python_static_analysis.py

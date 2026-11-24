@@ -43,8 +43,9 @@ ESP = "/dev/sda3"
 SEED = "/var/tmp/atlaso-ova-build"
 SERVICE = "atlaso-ova-build.service"
 RECEIPT = "/var/lib/atlaso-ova-build/complete"
+BUILD_UNIT = ASSETS / "systemd" / SERVICE
 REPOSITORY_HELPER = Path("image/common/scripts/configure_photon_repositories.py")
-BOOTSTRAP_INPUTS = (ASSETS / "provision.sh", ASSETS / SERVICE, ASSETS / "bootstrap-kernel.sh", REPOSITORY_HELPER)
+BOOTSTRAP_INPUTS = (ASSETS / "provision.sh", BUILD_UNIT, ASSETS / "bootstrap-kernel.sh", REPOSITORY_HELPER)
 # Include the canonical Workstation provisioning inputs and the trial bootstrap files.
 SOURCE_PATHS = (
     "atlaso", "pyproject.toml", "requirements-appliance.lock", "README.md",
@@ -221,7 +222,7 @@ def setup_disk(disk: Path, original: Path, source_archive: Path, source_files: P
                r"&& grep -q 'console=ttyS0,115200n8 ' /boot/grub2/grub.cfg"),
         ("upload", str(source_archive), f"{SEED}/source.tar"),
         ("upload", str(source_files / ASSETS / "provision.sh"), f"{SEED}/provision.sh"),
-        ("upload", str(source_files / ASSETS / SERVICE), f"/etc/systemd/system/{SERVICE}"),
+        ("upload", str(source_files / BUILD_UNIT), f"/etc/systemd/system/{SERVICE}"),
         ("mkdir-p", "/etc/systemd/system/multi-user.target.wants"),
         ("ln-s", f"/etc/systemd/system/{SERVICE}", f"/etc/systemd/system/multi-user.target.wants/{SERVICE}"),
     ).strip().lower().splitlines()
