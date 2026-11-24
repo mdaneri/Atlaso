@@ -16692,7 +16692,12 @@ def test_vcf_backups_helper_rejects_unmanaged_config(tmp_path):
 
 
 def test_vcf_backups_helper_disables_sftp_without_touching_assigned_storage(monkeypatch, tmp_path):
-    """Remove the SFTP drop-in when the assigned filesystem is unavailable."""
+    """Remove the SFTP drop-in when the assigned filesystem is unavailable.
+
+    Args:
+        monkeypatch: Replace host storage probes and OpenSSH operations.
+        tmp_path: Isolate the staged and installed SFTP configuration paths.
+    """
     helper = load_helper_module()
     config_path = tmp_path / "atlaso-vcf-backups-sshd.conf"
     assignment = {"uuid": "12345678-1234-0000-9000-123456789abc", "path": "/mnt/data/vcf-backups",

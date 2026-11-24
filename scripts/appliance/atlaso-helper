@@ -34572,8 +34572,9 @@ def _transition_route_rows(name: str, family: int, table: int) -> list[dict]:
         family: IP family, either 4 or 6.
         table: Routing table assigned to the interface.
     """
-    if not _valid_network_interface_name(name) or family not in {4, 6} or table not in {100, 200}:
+    if not _valid_network_interface_name(name) or family not in {4, 6} or table not in {100, 200, 254}:
         raise ValueError("invalid transition route observation")
+    table_names = {str(table), "main"} if table == 254 else {str(table)}
     # The table selector proves ownership even when iproute2 omits `table` in
     # the returned JSON. An as-yet empty numeric table can instead exit 2, so
     # use the all-table inventory only to establish that no explicit entry for
@@ -34596,10 +34597,10 @@ def _transition_route_rows(name: str, family: int, table: int) -> list[dict]:
     if not isinstance(rows, list) or len(rows) > 4096 or any(not isinstance(row, dict) for row in rows):
         raise ValueError("transition routing-domain routes are malformed")
     if missing_table:
-        if any(str(row.get("table", "main")) == str(table) for row in rows):
+        if any(str(row.get("table", "main")) in table_names for row in rows):
             raise ValueError("transition routing-domain table read is inconsistent")
         return []
-    if any(row.get("dev", name) != name or str(row.get("table", table)) != str(table)
+    if any(row.get("dev", name) != name or str(row.get("table", table)) not in table_names
            for row in rows):
         raise ValueError("transition routing-domain route owner is inconsistent")
     # Both fields are bound by the selector, including when JSON omits them.
@@ -34746,12 +34747,13 @@ def _restored_legacy_route_baseline(state: dict) -> bool:
             and not ROUTE_DOMAIN_CONFIG_PATH.exists() and not ROUTE_DOMAIN_CONFIG_PATH.is_symlink())
 
 
-def _transition_table_unselected(family: int, table: int) -> bool:
-    """Prove that no current native rule can select a retired legacy table.
+def _transition_table_unselected(family: int, table: int, *, legacy_route: dict | None = None) -> bool:
+    """Prove that retirement leaves no lookup depending on the seed route.
 
     Args:
         family: IP version to inspect.
         table: Route table that must have no live selector.
+        legacy_route: Original route when rolling back to a proven pre-guard baseline.
     """
     result = _network_observation_command(["ip", "-N", "-j", "-details", f"-{family}", "rule", "show"])
     if result.returncode:
@@ -34763,7 +34765,50 @@ def _transition_table_unselected(family: int, table: int) -> bool:
     if (not isinstance(rows, list) or len(rows) > 16384
             or any(not isinstance(row, dict) or type(row.get("priority")) is not int for row in rows)):
         raise ValueError("restored routing-domain rules are malformed")
-    return not any(str(row.get("table")) == str(table) for row in rows)
+    selectors = [row for row in rows if str(row.get("table")) == str(table)]
+    if not selectors:
+        return True
+    if family != 4 or table != 100 or legacy_route is None:
+        return False
+
+    # The guard's unbound lookup tries main first. Keep the guard installed
+    # until rollback finishes, and accept its table-100 fallback only once
+    # the original on-link route is again available through that earlier rule.
+    main_rule = {"priority": 4998, "src": "0.0.0.0", "iif": "lo", "table": "254", "protocol": "2"}
+    fallback_rule = {**main_rule, "priority": 4999, "table": "100", "suppress_prefixlen": 0}
+    actual_rules = []
+    for row in rows:
+        if row["priority"] not in {4998, 4999}:
+            continue
+        if row.get("srclen", 32) != 32:
+            return False
+        normalized = {key: value for key, value in row.items() if key != "srclen"}
+        if row.get("table") == "main":
+            normalized["table"] = "254"
+        else:
+            normalized["table"] = str(row.get("table"))
+        if row.get("protocol") == "kernel":
+            normalized["protocol"] = "2"
+        else:
+            normalized["protocol"] = str(row.get("protocol"))
+        actual_rules.append(normalized)
+    if len(selectors) != 1 or sorted(actual_rules, key=lambda row: row["priority"]) != [main_rule, fallback_rule]:
+        return False
+
+    source = legacy_route.get("preferred_source")
+    protocol = _transition_route_protocol(legacy_route.get("protocol"))
+    if (not source or legacy_route.get("scope") != "link" or legacy_route.get("gateway")
+            or legacy_route["destination"] == "0.0.0.0/0" or protocol not in {"kernel", "dhcp"}):
+        return False
+    return any(
+        route.get("prefsrc") == source and route.get("scope") == "link"
+        and route.get("metric", 0) == legacy_route["metric"]
+        and _transition_route_protocol(route.get("protocol")) == protocol
+        and not route.get("gateway") and not route.get("multipath") and route.get("nhid") is None
+        and route.get("from", "all") == "all"
+        and _transition_route_successor(legacy_route, route, set())
+        for route in _transition_route_rows(legacy_route["name"], family, 254)
+    )
 
 
 def _transition_old_source_absent(name: str, mac: str, cidrs: list[str], family: int) -> bool:
@@ -34986,8 +35031,11 @@ def _retire_transition_routes(
             old_source_absent = (allow_disappeared_source and _transition_old_source_absent(
                 row["name"], evidence["mac"], evidence["cidrs"], family,
             ))
-            table_unselected = ((allow_unselected_legacy or allow_unselected_after_reconcile)
-                                and _transition_table_unselected(family, row["table"]))
+            if allow_unselected_legacy and state.get("previous_source_transition_guard") is False:
+                table_unselected = _transition_table_unselected(family, row["table"], legacy_route=row)
+            else:
+                table_unselected = ((allow_unselected_legacy or allow_unselected_after_reconcile)
+                                    and _transition_table_unselected(family, row["table"]))
             if not old_source_absent and not table_unselected:
                 destination = ip_network(row["destination"])
                 matching_destination = []
