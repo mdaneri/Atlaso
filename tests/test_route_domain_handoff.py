@@ -438,6 +438,101 @@ def test_legacy_rollback_retires_seed_only_without_table_selector(
         assert state["transition_seed_routes"] == []
 
 
+@pytest.mark.parametrize("seeds_present", [True, False])
+@pytest.mark.parametrize(
+    "failure", [None, "missing_restored_route", "missing_main_rule", "foreign_selector", "changed_reserved_rule"],
+)
+def test_dhcp_legacy_rollback_accepts_only_canonical_source_discovery_pair(
+    monkeypatch, tmp_path, failure, seeds_present,
+):
+    """A DHCP rollback may retire its route seeds with the exact safe discovery pair.
+
+    Args:
+        monkeypatch: Replace native route and rule observations.
+        tmp_path: Isolated prior-intent path.
+        failure: Optional defect in the reserved rule shape or another table selector.
+        seeds_present: Whether the captured table still contains its seed routes.
+    """
+    helper = load_helper_module()
+    journal_routes = [
+        {"destination": "192.0.2.0/24", "gateway": "", "metric": 1024,
+         "scope": "link", "table": 100, "preferred_source": "192.0.2.177",
+         "protocol": "kernel", "holdover_metric": 2049},
+        {"destination": "192.0.2.1/32", "gateway": "", "metric": 1024,
+         "scope": "link", "table": 100, "preferred_source": "192.0.2.177",
+         "protocol": "dhcp", "holdover_metric": 2049},
+    ]
+    state = {
+        "previous_management_routing": {"eth0": {
+            "mac": "02:00:00:00:00:01", "table": 100,
+            "cidrs": ["192.0.2.177/24"], "routes": journal_routes,
+        }},
+        "transition_seed_routes": [
+            {"name": "eth0", **route, "seed_metric": 2050 + index}
+            for index, route in enumerate(journal_routes)
+        ],
+        "previous_source_transition_guard": False,
+    }
+    seed_rows = [
+        {"dst": route["destination"], "dev": "eth0", "table": 100,
+         "gateway": "", "metric": 2050 + index,
+         "protocol": "2", "scope": "link", "prefsrc": "192.0.2.177"}
+        for index, route in enumerate(journal_routes)
+    ]
+    main_rows = [
+        {"dst": route["destination"], "dev": "eth0", "table": 254,
+         "metric": route["metric"], "protocol": route["protocol"],
+         "scope": "link", "prefsrc": route["preferred_source"]}
+        for route in journal_routes
+    ]
+    observed_seeds = seed_rows if seeds_present else []
+    monkeypatch.setattr(
+        helper, "_transition_route_rows",
+        lambda _name, _family, table: observed_seeds if table == 100 else main_rows if table == 254 else [],
+    )
+
+    source_rule = {"priority": 4998, "src": "0.0.0.0", "iif": "lo",
+                   "table": "main", "protocol": 2}
+    successor_rule = {"priority": 4999, "src": "0.0.0.0", "iif": "lo",
+                      "table": "100", "suppress_prefixlen": 0, "protocol": 2}
+    if failure == "changed_reserved_rule":
+        successor_rule["suppress_prefixlen"] = 1
+    if failure == "missing_main_rule":
+        source_rule = None
+    if failure == "missing_restored_route":
+        main_rows = main_rows[1:]
+    rules = [
+        {"priority": 0, "table": "local"},
+        *([source_rule] if source_rule else []),
+        *([successor_rule] if successor_rule else []),
+        *([{"priority": 6004, "table": "100"}] if failure == "foreign_selector" else []),
+        {"priority": 32766, "table": "main"},
+        {"priority": 32767, "table": "default"},
+    ]
+    monkeypatch.setattr(helper, "_network_observation_command", lambda _command:
+                        subprocess.CompletedProcess([], 0, json.dumps(rules), ""))
+    commands = []
+    monkeypatch.setattr(helper, "_run", lambda command: commands.append(command)
+                        or subprocess.CompletedProcess(command, 0, "", ""))
+    monkeypatch.setattr(helper, "_durable_management_handoff_state_write", lambda *_args: None)
+
+    if failure is None:
+        helper._retire_transition_routes(
+            state, tmp_path / "state.json", require_replacement=True,
+            allow_unselected_legacy=True,
+        )
+        assert len(commands) == (2 if seeds_present else 0)
+        assert state["transition_seed_routes"] == []
+    else:
+        with pytest.raises(ValueError, match="replacement management route is not ready"):
+            helper._retire_transition_routes(
+                state, tmp_path / "state.json", require_replacement=True,
+                allow_unselected_legacy=True,
+            )
+        assert commands == []
+        assert state["transition_seed_routes"]
+
+
 @pytest.mark.parametrize("selector_present", [False, True])
 def test_same_address_domain_migration_retires_only_after_old_selector_disappears(
     monkeypatch, tmp_path, selector_present,
