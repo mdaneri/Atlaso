@@ -325,6 +325,65 @@ The OVA contains files for the two payload disks. Its two 500 GiB data disks are
 retain fileless disks when the platform creates them, create only missing data disks, and reject reordered or
 conflicting disks.
 
+## Trial OVA build on Linux
+
+The manual **Build trial Photon OVA** workflow builds a VMware appliance directly from the
+[official Photon OS 5.0 GA OVA](https://github.com/vmware/photon/wiki/Downloading-Photon-OS#downloading-photon-os-50-ga).
+It pins the x86-64 build `dde71ec57` and verifies the published SHA-512 before opening the archive. The upstream
+OVF describes one 16 GiB disk and UEFI. The disk has a GPT, an ext4 root at partition 2 and a FAT EFI system
+partition at partition 3. The build preserves both partition UUIDs and the EFI fallback bootloader. It expands
+the existing root partition and filesystem to use the 40 GiB Photon disk.
+
+Set up an isolated, disposable Ubuntu 24.04 x86-64 GitHub Actions runner with the `atlaso-photon-ova` label.
+Give the runner access to `/dev/kvm` and at least four logical CPUs, 8 GiB of RAM, and 140 GiB of free scratch
+space. Install Python 3.12 or later, Git, QEMU x86 and disk utilities, OVMF, and libguestfs tools with GPT support.
+Verify that the libguestfs supermin appliance can use KVM and acquire an address and DNS through its DHCP client.
+Restrict use of the runner to the intended repositories and workflows. Standard hosted runners and
+software emulation lack a verified capacity or runtime profile for this build.
+
+```bash
+sudo apt-get install qemu-system-x86 qemu-utils ovmf libguestfs-tools gdisk isc-dhcp-client
+libguestfs-test-tool
+```
+
+On the prepared runner, you can also build from a clean checkout before the new workflow exists on the default
+branch. Supply an existing scratch parent and a new output directory.
+
+```bash
+python3 -m scripts.virtualization.build_photon_ova \
+  --scratch /mnt/atlaso-build --output /mnt/atlaso-build/trial
+```
+
+Use `--photon-ova /path/to/photon.ova` to repeat an experiment with an existing copy of the same pinned image.
+Allow guest outbound DNS and HTTPS for Photon package updates, locked Python dependencies, and PowerCLI.
+The runner build does not receive release signing keys or deployment passwords. The builder clears the upstream
+root password and forced-change state offline. Before first boot, libguestfs installs the generic Photon kernel
+and an initramfs with drivers for the exported VMware PVSCSI controller. The bundled ESXi kernel panics on KVM
+during early timekeeping initialization. QEMU boots the updated Photon disk on SATA with OVMF. The live guest runs
+the canonical Atlaso provisioner and finalizer, including the package, PowerCLI, VCF SDK, time service, and offline guest-tools
+checks. The provisioner formats the 20 GiB Atlaso System Content disk
+and binds `/opt/atlaso` and the machine-wide PowerShell modules to that UUID-mounted filesystem.
+
+The output has two stream-optimized VMDKs and empty OVF definitions for the 500 GiB Depot and Backups disks.
+The builder removes verified zero padding after each VMDK's end-of-stream marker before writing the manifest,
+so VMware Workstation checks the same bytes as the archive validator during import.
+It passes the existing OVA validator before the local build emits the OVA, checksum, and provenance. The
+descriptor supplies `atlaso.fqdn`, `atlaso.admin_password`, `atlaso.root_password`, and the existing management
+network properties to the deployed guest through the runtime OVF environment. The existing VMware first-boot
+services own credential application and cleanup.
+
+Actions retains the checksum and provenance for seven days. Select **Upload the OVA to Actions when
+distribution is permitted** only when you can distribute the derived binary to users with access to the run.
+Review the [Photon binary distribution terms](https://ftpdocs.broadcom.com/cadocs/0/VMware_Photon_OS_SPD_2026.pdf)
+for the official base. With the default selection, the OVA is available only on the runner for the lifetime
+of the job.
+
+Treat the output as a trial image. Before considering promotion, validate this exact OVA digest on a supported
+VMware target using the existing import and smoke procedures. Verify readiness, both NIC roles, all four disk
+roles, runtime OVF credentials and their cleanup, and a reboot. Compare the software inventory with the canonical
+build and use the existing portable-target smoke procedures when evaluating parity for release. The Workstation
+build remains the production path and the existing release process still requires signed software-source provenance.
+
 ## Verify release assets
 
 Download the release into a new directory, then obtain the trusted public key from the immutable source tag. The

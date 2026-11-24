@@ -1135,6 +1135,7 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
         templates / "routes_wan.html",
         templates / "vlan_interfaces.html",
         templates / "vcf_offline_depot.html",
+        templates / "partials" / "settings_storage_volumes.html",
         templates / "partials" / "vcf_trust_modal.html",
         templates / "partials" / "vcf_sddc_deploy_modal.html",
         templates / "partials" / "vcf_target_depot_modal.html",

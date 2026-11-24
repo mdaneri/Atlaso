@@ -53,6 +53,7 @@ load_policy() {
   # Never enter virtual-disk discovery/formatting, even when the receipt is lost.
   if [ "${ATLASO_STORAGE_PROFILE:-}" = "installation" ] ||
     [ -e /etc/atlaso/installation-profile ] || [ -L /etc/atlaso/installation-profile ]; then
+    [ "${1:-}" != "inspect" ] || fail "ISO storage requires its installation verifier"
     if [ -d "$VCF_STORAGE_STATE_DIR" ]; then
       "$ATLASO_HELPER" vcf-storage verify-installation --real
     else
@@ -352,6 +353,7 @@ validate_mount_state() {
     mounted_source="$(findmnt -rn --shadowed -M "$mountpoint" -o SOURCE 2>/dev/null || true)"
     [ -n "$mounted_uuid" ] || fail "$mountpoint has lost its original filesystem mount"
   else
+    [ "${4:-}" != "require-shadowed" ] || fail "$mountpoint has no verified service bind"
     mounted_uuid="$(findmnt -rn -M "$mountpoint" -o UUID 2>/dev/null || true)"
     mounted_source="$(findmnt -rn -M "$mountpoint" -o SOURCE 2>/dev/null || true)"
   fi
@@ -707,7 +709,41 @@ revalidate_blank_format_target() {
   printf '%s\n' "$format_expected_disk"
 }
 
+verify_shadowed_mount() {
+  case "$1" in
+    backup)
+      underlay_label=ATLASO_BKUP
+      underlay_target=/mnt/atlaso-vcf-backups
+      underlay_tuple="$ATLASO_BACKUP_SCSI_TUPLE"
+      ;;
+    depot)
+      underlay_label=ATLASO_DEPOT
+      underlay_target=/mnt/atlaso-vcf-offline-depot
+      underlay_tuple="$ATLASO_DEPOT_SCSI_TUPLE"
+      ;;
+    *) fail "unknown VCF storage role" ;;
+  esac
+  underlay_os_disk="$(root_disk)"
+  [ -n "$underlay_os_disk" ] || fail "operating-system disk could not be identified"
+  underlay_disk="$(disk_for_tuple "$underlay_tuple")" || fail "$underlay_label disk is missing"
+  underlay_os_disk="$(readlink -f "$underlay_os_disk")"
+  underlay_disk="$(readlink -f "$underlay_disk")"
+  validate_identity "$underlay_label" "$underlay_tuple" "$underlay_disk" "$underlay_os_disk"
+  validate_label_or_blank "$underlay_label" "$underlay_disk"
+  [ "$(blkid -s LABEL -o value "$underlay_disk")" = "$underlay_label" ] || fail "$underlay_label is not initialized"
+  underlay_uuid="$(blkid -s UUID -o value "$underlay_disk")"
+  [ -n "$underlay_uuid" ] && fstab_uuid_mount_exists "$underlay_uuid" "$underlay_target" ||
+    fail "$underlay_label has no persistent filesystem mount"
+  validate_mount_state "$underlay_label" "$underlay_disk" "$underlay_target" require-shadowed
+}
+
 main() {
+  if [ "$#" -gt 0 ]; then
+    [ "$#" -eq 2 ] && [ "$1" = "--verify-shadowed" ] || fail "unsupported data-disk arguments"
+    load_policy inspect
+    verify_shadowed_mount "$2"
+    return
+  fi
   for command in findmnt lsblk blkid readlink mkfs.ext4 mount awk head sed stat; do
     if ! command -v "$command" >/dev/null 2>&1; then
       fail "$command is required to prepare Atlaso data disks"

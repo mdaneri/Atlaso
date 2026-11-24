@@ -37,6 +37,7 @@ ATLASO_ROOT_DISK_SIZE_BYTES="${ATLASO_ROOT_DISK_SIZE_BYTES:-}"
 ATLASO_SYSTEM_DISK_SIZE_BYTES="${ATLASO_SYSTEM_DISK_SIZE_BYTES:-}"
 BOOTSTRAP_USERNAME="${ATLASO_BOOTSTRAP_ADMIN_USERNAME:-admin}"
 BOOTSTRAP_PASSWORD="${ATLASO_BOOTSTRAP_ADMIN_PASSWORD:-}"
+ATLASO_TEMPLATE_LOCKED_ADMIN="${ATLASO_TEMPLATE_LOCKED_ADMIN:-false}"
 BOOTSTRAP_SHELL="${ATLASO_BOOTSTRAP_ADMIN_SHELL:-/usr/bin/pwsh}"
 PIP_CACHE_DIR="/var/cache/atlaso-pip"
 TDNF_PROGRESS_RUNNER="$ATLASO_SRC/scripts/run_tdnf_with_progress.py"
@@ -591,10 +592,26 @@ prepare_system_content_disk() {
   findmnt -rn -T /usr/local/share/powershell/Modules >/dev/null
 }
 
-if [ -z "$BOOTSTRAP_PASSWORD" ]; then
-  echo "ATLASO_BOOTSTRAP_ADMIN_PASSWORD is required for appliance provisioning" >&2
-  exit 2
-fi
+case "$ATLASO_TEMPLATE_LOCKED_ADMIN" in
+  true)
+    if [ "$ATLASO_GUEST_PLATFORM" != vmware ] || [ "$ATLASO_SYSTEM_CONTENT_DISK" != true ] ||
+      [ -n "$ATLASO_INSTALLATION_MEDIA" ] || [ -n "$BOOTSTRAP_PASSWORD" ]; then
+      echo "Locked admin provisioning requires a VMware template and no build password." >&2
+      exit 2
+    fi
+    BOOTSTRAP_PASSWORD=INITIALIZATION_REQUIRED
+    ;;
+  false)
+    if [ -z "$BOOTSTRAP_PASSWORD" ]; then
+      echo "ATLASO_BOOTSTRAP_ADMIN_PASSWORD is required for appliance provisioning" >&2
+      exit 2
+    fi
+    ;;
+  *)
+    echo "Invalid locked admin provisioning mode." >&2
+    exit 2
+    ;;
+esac
 if [ ! -r "$TDNF_PROGRESS_RUNNER" ] || [ ! -r "$PHOTON_REPOSITORY_CONFIGURATOR" ]; then
   echo "Photon repository preparation assets are missing from staged Atlaso sources." >&2
   exit 2
@@ -882,7 +899,11 @@ else
 fi
 touch /etc/shells
 grep -qxF "$BOOTSTRAP_SHELL" /etc/shells || printf '%s\n' "$BOOTSTRAP_SHELL" >>/etc/shells
-printf '%s:%s\n' "$BOOTSTRAP_USERNAME" "$BOOTSTRAP_PASSWORD" | chpasswd
+if [ "$ATLASO_TEMPLATE_LOCKED_ADMIN" = true ]; then
+  usermod --password '!' "$BOOTSTRAP_USERNAME"
+else
+  printf '%s:%s\n' "$BOOTSTRAP_USERNAME" "$BOOTSTRAP_PASSWORD" | chpasswd
+fi
 cat >/etc/sudoers.d/atlaso-bootstrap-admin <<EOF
 # Managed by Atlaso image provisioning. Bootstrap appliance administrator.
 $BOOTSTRAP_USERNAME ALL=(ALL) ALL

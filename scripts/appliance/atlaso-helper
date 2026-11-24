@@ -608,6 +608,7 @@ VCF_BACKUPS_DEFAULT_STORAGE_PATH = Path("/mnt/atlaso-vcf-backups")
 VCF_STORAGE_STATE_DIR = Path("/etc/atlaso/vcf-storage")
 VCF_STORAGE_COMMENT = "# Atlaso VCF storage: "
 VCF_STORAGE_INSTALLATION_LAYOUT = Path("/opt/atlaso/scripts/installation/layout.py")
+VCF_STORAGE_INSTALLATION_PROFILE = Path("/etc/atlaso/installation-profile")
 VCF_BACKUPS_DEFAULT_REMOTE_DIRECTORY = "/backups"
 VCF_BACKUPS_DEFAULT_USERNAME = "vcf-backup"
 VCF_BACKUPS_USERNAME_PATTERN = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
@@ -30946,6 +30947,30 @@ def _esx_storage_blank_disk_errors(entry: dict[str, object]) -> list[str]:
     return errors
 
 
+def _vcf_storage_verify_shadowed(role: str, target: Path) -> None:
+    """Verify the original filesystem beneath a VCF bind using its platform policy.
+
+    Args:
+        role: VCF service whose verified bind covers the original filesystem.
+        target: Exact fixed consumer mount that hides the original filesystem.
+    """
+    if os.path.lexists(VCF_STORAGE_INSTALLATION_PROFILE):
+        _vcf_storage_verify_installation(shadowed_target=target)
+        return
+    for path in (ATLASO_MOUNT_DATA_DISKS_PATH, ATLASO_DATA_DISK_POLICY_PATH):
+        _vcf_storage_root_directory(path.parent)
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+            raise ValueError("The image storage verifier or policy is unsafe.")
+    result = _run(
+        [str(ATLASO_MOUNT_DATA_DISKS_PATH), "--verify-shadowed", role],
+        timeout=30,
+        env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin"},
+    )
+    if result.returncode:
+        raise ValueError("The original VCF mount differs from the trusted image disk policy.")
+
+
 def _esx_storage_vcf_bind_matches(path: str, *, uuid: str, volume_path: str) -> bool:
     """Recognize an exact VCF service mount backed by the selected ESX volume.
 
@@ -30967,7 +30992,7 @@ def _esx_storage_vcf_bind_matches(path: str, *, uuid: str, volume_path: str) -> 
             if not _vcf_storage_is_bound(role, uuid, expected_volume_path=volume_path):
                 return False
             if len(mounts) == 2:
-                _vcf_storage_verify_installation(shadowed_target=target)
+                _vcf_storage_verify_shadowed(role, target)
             return True
         except (OSError, ValueError, subprocess.TimeoutExpired):
             return False

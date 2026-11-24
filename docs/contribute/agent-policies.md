@@ -863,6 +863,8 @@ preserved with their affected subsystem below. Keep new requirements at their to
   and fstab contract. Atlaso-formatted disks retain their `lf-<hash>` label; claimed existing ext4 disks additionally
   require an exact root-owned allowlist record. Make data-disk success a hard systemd requirement for nginx, the HTTPS
   bootstrap, control plane, and worker so a failed preflight cannot fall through to root-filesystem-backed mount paths.
+  ESX Storage Apply must verify a filesystem covered by a VCF service bind against the installation receipt on ISO
+  installs or the image's disk identity policy on image-built appliances.
 - Every successful same-repository `main` push CI run automatically publishes the 90-day Actions artifact
   `atlaso-wheel-vX.Y.Z-<full-sha>` from GitHub-hosted Linux. Bind its single versioned wheel to canonical source-CI,
   publisher-run IDs and attempts, repository, version, full-commit, UTC build-time, size, and SHA-256 identity. Manual

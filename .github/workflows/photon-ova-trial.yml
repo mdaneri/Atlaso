@@ -1,0 +1,50 @@
+name: Build trial Photon OVA
+
+on:
+  workflow_dispatch:
+    inputs:
+      upload_ova:
+        description: Upload the OVA to Actions when distribution is permitted
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atlaso-photon-ova-trial
+  cancel-in-progress: false
+
+jobs:
+  trial:
+    runs-on: [self-hosted, Linux, X64, atlaso-photon-ova]
+    timeout-minutes: 200
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Build and validate the unpublished OVA
+        env:
+          TRIAL_NAME: photon-ova-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          umask 077
+          output="$RUNNER_TEMP/$TRIAL_NAME"
+          python3 -m scripts.virtualization.build_photon_ova --scratch "$RUNNER_TEMP" --output "$output"
+      - name: Upload checksums and provenance
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: photon-ova-evidence-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/photon-ova-${{ github.run_id }}-${{ github.run_attempt }}/SHA256SUMS
+            ${{ runner.temp }}/photon-ova-${{ github.run_id }}-${{ github.run_attempt }}/atlaso-provenance.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload the validated trial OVA
+        if: inputs.upload_ova
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: photon-ova-trial-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/photon-ova-${{ github.run_id }}-${{ github.run_attempt }}/*.ova
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7

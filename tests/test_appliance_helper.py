@@ -16400,7 +16400,7 @@ def test_vcf_storage_path_syntax_matches_service_and_helper(path, valid):
 
 @pytest.mark.parametrize("role", ["backup", "depot"])
 @pytest.mark.parametrize("mismatch", [None, "uuid", "volume", "source", "target", "ambiguity", "unavailable",
-                                      "dedicated", "unrecorded", "wrong-original"])
+                                      "dedicated", "unrecorded", "wrong-original", "image", "wrong-image"])
 def test_esx_storage_admits_only_verified_vcf_service_binds(monkeypatch, tmp_path, role, mismatch):
     """Accept additional mounts only when the applied VCF assignment matches the live bind.
 
@@ -16415,7 +16415,13 @@ def test_esx_storage_admits_only_verified_vcf_service_binds(monkeypatch, tmp_pat
     target = tmp_path / role
     target.mkdir()
     verifier = tmp_path / "layout.py"
-    stacked = mismatch in {"dedicated", "unrecorded", "wrong-original"}
+    image = mismatch in {"image", "wrong-image"}
+    image_verifier = tmp_path / "atlaso-mount-data-disks"
+    image_policy = tmp_path / "data-disks.conf"
+    profile = tmp_path / "installation-profile"
+    if not image:
+        profile.touch()
+    stacked = image or mismatch in {"dedicated", "unrecorded", "wrong-original"}
     observed = target / "unknown" if mismatch == "target" else target
     assignment = {"uuid": "different" if mismatch == "uuid" else "uuid",
                   "volume_path": "/mnt/other" if mismatch == "volume" else str(volume)}
@@ -16432,7 +16438,12 @@ def test_esx_storage_admits_only_verified_vcf_service_binds(monkeypatch, tmp_pat
             command: Native inventory or shadowed filesystem query.
             **_kwargs: Bounded subprocess options.
         """
+        if command[0] == str(image_verifier):
+            assert image
+            assert command[1:] == ["--verify-shadowed", role]
+            return subprocess.CompletedProcess(command, int(mismatch == "wrong-image"), "", "")
         if command[0] == "findmnt":
+            assert not image
             assert "--shadowed" in command and str(target) in command
             original_uuid = "other-disk" if mismatch == "wrong-original" else "installed-disk"
             return subprocess.CompletedProcess(command, 0, json.dumps({
@@ -16453,7 +16464,10 @@ def test_esx_storage_admits_only_verified_vcf_service_binds(monkeypatch, tmp_pat
         return source
 
     monkeypatch.setattr(helper, "VCF_STORAGE_STATE_DIR", tmp_path)
+    monkeypatch.setattr(helper, "VCF_STORAGE_INSTALLATION_PROFILE", profile)
     monkeypatch.setattr(helper, "VCF_STORAGE_INSTALLATION_LAYOUT", verifier)
+    monkeypatch.setattr(helper, "ATLASO_MOUNT_DATA_DISKS_PATH", image_verifier)
+    monkeypatch.setattr(helper, "ATLASO_DATA_DISK_POLICY_PATH", image_policy)
     monkeypatch.setattr(helper, "_vcf_storage_target", lambda selected: tmp_path / selected)
     monkeypatch.setattr(helper.runpy, "run_path", lambda _: {
         "installation_profile": lambda: True,
@@ -16463,7 +16477,7 @@ def test_esx_storage_admits_only_verified_vcf_service_binds(monkeypatch, tmp_pat
     })
     lstat = Path.lstat
     monkeypatch.setattr(Path, "lstat", lambda path: SimpleNamespace(st_mode=stat.S_IFREG | 0o644, st_uid=0)
-                        if path == verifier else lstat(path))
+                        if path in {verifier, image_verifier, image_policy} else lstat(path))
     monkeypatch.setattr(helper, "_command_path", lambda command: command)
     monkeypatch.setattr(helper, "_run", read_mounts)
     monkeypatch.setattr(helper, "_esx_storage_by_id_map", lambda: {device: "/dev/disk/by-id/data"})
@@ -16482,7 +16496,7 @@ def test_esx_storage_admits_only_verified_vcf_service_binds(monkeypatch, tmp_pat
     entry, = helper._esx_storage_inventory()
     assert entry["mount_path"] == str(volume)
     errors = helper._esx_storage_mounted_disk_errors(entry, mount_path=volume)
-    assert errors == ([] if mismatch in {None, "dedicated"} else ["has unexpected additional mounts"])
+    assert errors == ([] if mismatch in {None, "dedicated", "image"} else ["has unexpected additional mounts"])
 
 
 def test_vcf_storage_depot_initializes_prod_as_atlaso(monkeypatch, tmp_path):
