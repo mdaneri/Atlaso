@@ -523,6 +523,7 @@ def build_router(dependencies: SettingsBackupUiDependencies) -> SettingsBackupUi
                 "appliance_apply_status": appliance_apply_status(
                     db, "appliance_settings"
                 ),
+                "additional_appliance_apply_status": appliance_apply_status(db, "ntpd"),
             },
         )
 

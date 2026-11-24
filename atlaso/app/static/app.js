@@ -8514,7 +8514,8 @@ function initializeSettingsTime() {
   const form = panel.querySelector("[data-settings-time-edit]");
   const controls = panel.querySelector("[data-settings-time-controls]");
   const upstreams = panel.querySelector("[data-settings-time-upstreams]");
-  const manual = panel.querySelector("[data-settings-time-manual]");
+  const manualButton = panel.querySelector("[data-settings-time-open]");
+  const manualDialog = panel.querySelector("#settings-time-clock-dialog");
   const owner = panel.querySelector("[data-settings-time-owner]");
   const stale = panel.querySelector("[data-settings-time-stale]");
   const manualHelp = panel.querySelector("[data-settings-time-manual-help]");
@@ -8522,13 +8523,30 @@ function initializeSettingsTime() {
   const canEdit = Boolean(panel.querySelector("#settings-time-autosave-status"));
   const labels = { ntp_client: "NTP client", ntp_server: "NTP/NTS server", vmware_tools: "VMware Tools", manual: "Manual" };
   const syncLabels = { synchronized: "Synchronized", unsynchronized: "Unsynchronized", unavailable: "Unavailable" };
+  const manualPrerequisite = "Apply Manual mode and verify automatic clock sources are off before staging a clock change.";
   const set = (field, value) => {
     panel.querySelector('[data-settings-time-' + field + ']').textContent = value;
+  };
+  let manualReady = false;
+  const updateSourceControls = () => {
+    const selected = form.elements.time_source.value;
+    const showUpstreams = selected === "ntp_client";
+    const revealUpstreams = showUpstreams && upstreams.hidden;
+    upstreams.hidden = !showUpstreams;
+    if (revealUpstreams) {
+      upstreams.querySelector("#ntp-upstreams-table")?.atlasoTabulator?.redraw(true);
+    }
+    if (!manualButton) return;
+    manualButton.hidden = selected !== "manual" || !owner.hidden;
+    manualButton.disabled = manualButton.hidden || controls.disabled || !manualReady;
+    manualHelp.hidden = manualButton.hidden || controls.disabled || manualReady;
+    if (manualButton.disabled && manualDialog.open) manualDialog.close();
   };
   let request;
   const refresh = async () => {
     // A queued POST can commit before its response advances the form revision.
     if (form.atlasoAutosavePending?.()) return;
+    const editGeneration = form.atlasoEditGeneration;
     request?.abort();
     const current = new AbortController();
     request = current;
@@ -8537,19 +8555,23 @@ function initializeSettingsTime() {
       const response = await fetch(refreshButton.dataset.statusUrl, { cache: "no-store", signal: current.signal });
       if (!response.ok) throw new Error("Appliance clock status is unavailable.");
       const status = await response.json();
-      if (request !== current || form.atlasoAutosavePending?.()) return;
+      if (request !== current || form.atlasoAutosavePending?.() || form.atlasoEditGeneration !== editGeneration) return;
       const changed = revisions[0].value !== status.revision;
       const locked = !canEdit || status.server_enabled || changed;
       controls.disabled = locked;
       upstreams.disabled = locked;
       upstreams.inert = locked;
-      manual.disabled = locked || !status.manual_ready;
       owner.hidden = !status.server_enabled;
       stale.hidden = !changed;
-      manualHelp.hidden = status.manual_ready || status.server_enabled || !canEdit;
-      manualHelp.textContent = status.effective_mode === "manual"
-        ? "Atlaso could not verify that all automatic clock sources are off. Check guest clock protection."
-        : "Apply Manual mode and verify automatic clock sources are off before staging a clock change.";
+      manualReady = status.manual_ready;
+      if (manualHelp) {
+        manualHelp.textContent = manualReady ? "" : (
+          status.effective_mode === "manual"
+            ? "Atlaso could not verify that all automatic clock sources are off. Check guest clock protection."
+            : manualPrerequisite
+        );
+      }
+      updateSourceControls();
       set("now", status.date_time);
       set("selected", labels[status.selected_source] || "Unavailable");
       set("mode", labels[status.effective_mode] || "Unavailable");
@@ -8563,9 +8585,10 @@ function initializeSettingsTime() {
         return item;
       }));
     } catch (error) {
-      if (error.name === "AbortError" || request !== current || form.atlasoAutosavePending?.()) return;
-      manual.disabled = true;
-      manualHelp.hidden = false;
+      if (error.name === "AbortError" || request !== current || form.atlasoAutosavePending?.() || form.atlasoEditGeneration !== editGeneration) return;
+      manualReady = false;
+      if (manualHelp) manualHelp.textContent = "Refresh status to verify automatic clock sources are off.";
+      updateSourceControls();
       set("mode", "Unavailable");
       set("sync", "Unavailable");
       set("pending", "Unavailable");
@@ -8574,6 +8597,18 @@ function initializeSettingsTime() {
       if (request === current) refreshButton.disabled = false;
     }
   };
+  form.addEventListener("change", (event) => {
+    if (event.target.name !== "time_source") return;
+    manualReady = false;
+    if (manualHelp) manualHelp.textContent = manualPrerequisite;
+    updateSourceControls();
+  });
+  manualButton?.addEventListener("click", () => {
+    if (manualButton.disabled || manualDialog.open) return;
+    manualDialog.querySelector('[name="target_utc"]').value = "";
+    manualDialog.showModal();
+  });
+  manualDialog?.querySelector("[data-settings-time-cancel]").addEventListener("click", () => manualDialog.close());
   form.addEventListener("atlaso:autosave-success", ({ detail }) => {
     revisions.forEach((input) => { input.value = detail.revision; });
   });
@@ -14275,15 +14310,17 @@ function updateCurrentPageApplyNotice(payload = {}) {
   if (!(mainPane instanceof HTMLElement)) {
     return;
   }
-  const unitId = mainPane.dataset.pageApplyUnit || "";
+  const unitIds = (mainPane.dataset.pageApplyUnit || "").split(" ");
   const units = Array.isArray(payload.units) ? payload.units : [];
-  const status = units.find((unit) => unit?.id === unitId);
-  if (status) {
-    updatePageApplyNotice(status);
+  const pageUnits = unitIds.map((id) => units.find((unit) => unit?.id === id)).filter(Boolean);
+  if (pageUnits.length) {
+    const pending = pageUnits.filter((unit) => unit.changed);
+    const status = pending.find((unit) => unit.validation_errors?.length) || pending[0] || pageUnits[0];
+    updatePageApplyNotice(status, pending.map((unit) => unit.label || "Appliance component"));
   }
 }
 
-function updatePageApplyNotice(status = {}) {
+function updatePageApplyNotice(status = {}, pendingLabels = [status.label || "Appliance component"]) {
   let notice = document.querySelector(".page-apply-notice");
   if (!status.changed) {
     notice?.remove();
@@ -14320,7 +14357,10 @@ function updatePageApplyNotice(status = {}) {
     pill.textContent = status.state || (hasErrors ? "needs attention" : "pending");
   }
   const title = notice.querySelector("strong");
-  if (title instanceof HTMLElement) title.textContent = `${status.label || "Appliance component"} has pending appliance changes`;
+  if (title instanceof HTMLElement) {
+    const verb = pendingLabels.length === 1 ? "has" : "have";
+    title.textContent = `${pendingLabels.join(" and ")} ${verb} pending appliance changes`;
+  }
 }
 
 async function refreshApplianceApplySidebar() {
@@ -14466,7 +14506,9 @@ function initializeAutosaveForms(root = document) {
         const { payload, request } = hasFiles
           ? await postWithUploadProgress(actionUrl, formData, files)
           : await postWithFetch(actionUrl, formData);
-        if (payload.appliance_apply_status) updatePageApplyNotice(payload.appliance_apply_status);
+        if (payload.appliance_apply_status && !form.closest('[data-page-apply-unit*=" "]')) {
+          updatePageApplyNotice(payload.appliance_apply_status);
+        }
         const successEvent = new CustomEvent("atlaso:autosave-success", { detail: payload });
         successEvent.atlasoEditGeneration = editGeneration;
         form.dispatchEvent(successEvent);

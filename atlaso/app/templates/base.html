@@ -13,7 +13,7 @@
     <link rel="icon" href="/favicon.ico" type="image/x-icon">
     <link rel="icon" href="/static/brand/atlaso-icon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="/static/vendor/tabulator/tabulator.min.css">
-    <link rel="stylesheet" href="/static/app.css?v=monitor-runtime-1176">
+    <link rel="stylesheet" href="/static/app.css?v=settings-time-1219">
     {% block extra_head %}{% endblock %}
   </head>
   <body>
@@ -150,7 +150,8 @@
       </aside>
 
       {% set page_apply_status = appliance_apply_status|default(None) %}
-      <main class="main-pane"{% if page_apply_status %} data-page-apply-unit="{{ page_apply_status.id }}"{% endif %}>
+      {% set additional_page_apply_status = additional_appliance_apply_status|default(None) %}
+      <main class="main-pane"{% if page_apply_status %} data-page-apply-unit="{{ page_apply_status.id }}{% if additional_page_apply_status %} {{ additional_page_apply_status.id }}{% endif %}"{% endif %}>
         <header class="topbar">
           <div>
             <h1>{% block page_title %}Dashboard{% endblock %}</h1>
@@ -217,12 +218,13 @@
           {% endif %}
         </header>
 
-        {% set current_page_apply_changed = page_apply_status and page_apply_status.changed %}
-        {% if identity and current_page_apply_changed %}
-          <div class="page-apply-notice {{ 'needs-attention' if page_apply_status.validation_errors else 'pending' }}">
+        {% set pending_page_units = [page_apply_status, additional_page_apply_status] | selectattr("changed") | list %}
+        {% if identity and pending_page_units %}
+          {% set notice_status = pending_page_units | selectattr("validation_errors") | first | default(pending_page_units[0]) %}
+          <div class="page-apply-notice {{ 'needs-attention' if notice_status.validation_errors else 'pending' }}">
             <div class="page-apply-notice-main">
-              <span class="status-pill {{ page_apply_status.pill }}">{{ page_apply_status.state }}</span>
-              <strong>{{ page_apply_status.label }} has pending appliance changes</strong>
+              <span class="status-pill {{ notice_status.pill }}">{{ notice_status.state }}</span>
+              <strong>{{ pending_page_units | map(attribute="label") | join(" and ") }} {{ "has" if pending_page_units | length == 1 else "have" }} pending appliance changes</strong>
               <span>Review and submit them from the global apply workflow.</span>
             </div>
             <a class="button secondary compact-button" href="{{ management_ui_path('/dashboard') }}#appliance-apply-review" data-appliance-apply-open>Review appliance changes</a>
@@ -405,7 +407,7 @@
     <script src="/static/ui-routes.js?v=issue-287-1"></script>
     <script src="/static/chunk-uploads.js?v=issue-779-7"></script>
     <script src="/static/log-viewer.js?v=full-history-822-17"></script>
-    <script src="/static/app.js?v=monitor-runtime-1176-2"></script>
+    <script src="/static/app.js?v=settings-time-1219"></script>
     <script src="/static/pwa.js?v=issue-287-2"></script>
     {% block extra_scripts %}{% endblock %}
   </body>
