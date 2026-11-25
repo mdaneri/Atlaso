@@ -4511,7 +4511,19 @@ the server-owned inactivity timestamp through the depot listener. Static artifac
 unauthenticated browsing do not extend a browser session.</p>
 <h2 id="configure-the-depot">Configure the depot<a class="headerlink" href="#configure-the-depot" title="Permanent link">&para;</a></h2>
 <ol>
-<li>Confirm the fixed depot mount is present and has sufficient working space.</li>
+<li>On <strong>VCF Offline Depot → Depot Settings</strong>, choose <strong>Change storage</strong> to open the shared storage wizard. Select a
+   registered volume. Atlaso appends <code>vcf-offline-depot</code> to its mount path and displays the resulting directory.
+   <strong>Appliance default</strong> uses the storage configured during installation at <code>/mnt/atlaso-vcf-offline-depot</code>. A volume
+   can serve one VCF storage assignment at a time, so reassign it from the other service before selecting it here.
+   Register or attach additional volumes in <a href="../../operate/appliance-settings/#register-storage-volumes">Settings → Storage Volumes</a>.
+   VCF Helper uploads and profile downloads use this same assignment.</li>
+<li>The wizard asks whether to <strong>Move</strong>, <strong>Leave</strong>, or <strong>Delete</strong> existing files when changing directories. Saving stages
+   the choice for Appliance Apply. Review the current and proposed directories and selected data action
+   under <strong>Review appliance changes</strong>. Delete requires typing the exact confirmation shown there before submitting
+   Appliance Apply. Depot storage changes apply even with the HTTPS endpoint disabled because VCF Helper uploads also
+   use this directory. Disabling HTTPS alone leaves the current assignment in place even if its volume is unavailable.
+   The service uses the new directory only after the storage change applies successfully. Once Apply succeeds, verify
+   the selected volume and directory and reboot the appliance to confirm the assignment survives restart.</li>
 <li>Configure the service listener and the HTTP user used by approved VCF targets. New configurations default to HTTPS
    port <strong>8443</strong>, for example <code>https://depot.example.test:8443/PROD/</code>. Existing saved ports, including <strong>443</strong> and custom
    values, remain unchanged. Older settings archives that omit the port retain the historical <strong>443</strong> default.
@@ -4633,6 +4645,8 @@ VCF appliance at the applied local depot.</p>
 <p><em>Figure: VCFDT Software Depot ID generation ends at Review, which immediately dispatches a dedicated identity task.</em></p>
 <p><img alt="VCF Offline Depot contextual Schedule wizard Review showing Schedule, Timing, State, and Review steps with Binaries fixed as the selected profile." src="../../assets/screenshots/vcf-offline-depot-schedule-action-desktop.webp" /></p>
 <p><em>Figure: VCF Offline Depot review binds the selected profile in the contextual schedule flow.</em></p>
+<p><img alt="VCF Offline Depot storage wizard Review showing the current and proposed directories and data action." src="../../assets/screenshots/vcf-offline-depot-storage.webp" /></p>
+<p><em>Figure: Review the destination shared by VCFDT and VCF Helper uploads before saving.</em></p>
 <h3 id="vcf-offline-depot-browser">VCF Offline Depot browser<a class="headerlink" href="#vcf-offline-depot-browser" title="Permanent link">&para;</a></h3>
 <p><img alt="Atlaso public VCF Offline Depot browser showing a directory link in the desktop read-only grid." src="../../assets/screenshots/vcf-depot-browser-clean-desktop.webp" /></p>
 <p><em>Figure: The public VCF Offline Depot directory renders exact artifact paths as safe native links in a read-only grid.</em></p>

@@ -4470,23 +4470,34 @@ boundaries.</p>
 
 <h2 id="configure-the-registry">Configure the registry<a class="headerlink" href="#configure-the-registry" title="Permanent link">&para;</a></h2>
 <ol>
-<li>Confirm the registry storage mount and intended listener interface.</li>
-<li>Configure only the access needed by approved lab clients.</li>
+<li>In <strong>VCF Private Registry</strong>, choose <strong>Change storage</strong> to open the shared storage wizard. Select a registered volume.
+   Atlaso appends <code>vcf-registry</code> to its mount path and derives the storage directory. <strong>Appliance default</strong> uses
+   the installation storage. A volume can serve one VCF storage assignment at a time. Register volumes in
+   <a href="../../operate/appliance-settings/#register-storage-volumes">Settings → Storage Volumes</a>.</li>
+<li>When changing directories, choose whether to <strong>Move</strong>, <strong>Leave</strong>, or <strong>Delete</strong> existing files. Saving stages the
+   storage change for Appliance Apply. Review the current and proposed directories and selected action
+   under <strong>Review appliance changes</strong>. Delete requires typing the exact confirmation shown there. Storage is applied
+   independently of registry endpoint and bundle configuration.</li>
+<li>Confirm the intended listener interface and access needed by approved lab clients.</li>
 <li>Resolve validation errors and inspect the rendered service preview.</li>
-<li>Submit the VCF Private Registry unit through <a href="../../operate/appliance-apply/">Appliance Apply</a>.</li>
+<li>Submit the desired changes through <a href="../../operate/appliance-apply/">Appliance Apply</a>.</li>
 </ol>
 <p>Keep credentials, authenticated image references, and private certificate material out of documentation and task
 output.</p>
 <h2 id="verify-and-roll-back">Verify and roll back<a class="headerlink" href="#verify-and-roll-back" title="Permanent link">&para;</a></h2>
-<p>After a successful task, confirm the endpoint presents the expected certificate and an approved client can perform the
-required registry operation. Restore the previous desired state and reapply if the listener or trust configuration is
-incorrect; do not edit appliance-owned service files directly.</p>
+<p>After <strong>VCF Private Registry Storage</strong> succeeds, confirm the storage section shows the new current directory. On an
+appliance serving an active registry, also verify that an approved client can still read the expected content. To switch
+back to a directory whose files you chose to leave in place, select it in the wizard and submit a new storage Apply.</p>
+<p>After applying listener or trust changes, confirm the endpoint presents the expected certificate and an approved
+client can perform the required registry operation.</p>
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 <h2 id="additional-verified-states">Additional verified states<a class="headerlink" href="#additional-verified-states" title="Permanent link">&para;</a></h2>
 <p>These captures show responsive layouts and useful operational states referenced by this page.</p>
 <h3 id="vcf-private-registry_1">VCF Private Registry<a class="headerlink" href="#vcf-private-registry_1" title="Permanent link">&para;</a></h3>
-<p><img alt="Atlaso VCF Private Registry page in the clean-appliance responsive viewport." src="../../assets/screenshots/vcf-private-registry-clean-responsive.webp" /></p>
-<p><em>Figure: VCF Private Registry in the verified clean-appliance responsive state.</em></p>
+<p><img alt="VCF Private Registry settings showing the Change storage button in a narrow viewport." src="../../assets/screenshots/vcf-private-registry-clean-responsive.webp" /></p>
+<p><em>Figure: Open the storage wizard from Harbor Settings in the narrow layout.</em></p>
+<p><img alt="VCF Private Registry storage wizard Review with the current path, proposed path and choice for existing files." src="../../assets/screenshots/vcf-private-registry-storage.webp" /></p>
+<p><em>Figure: Review and stage the storage change independently of the Harbor settings.</em></p>
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
 
 

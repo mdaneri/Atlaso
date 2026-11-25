@@ -5318,6 +5318,9 @@ property values, or the complete VM configuration. If the lab result differs, at
 issue #801 before approving the pull request. Powered-off import verification does not prove that the appliance consumed
 the environment; complete the real guest boot and readiness check as well.</p>
 <h2 id="configure-vcf-offline-depot">Configure VCF Offline Depot<a class="headerlink" href="#configure-vcf-offline-depot" title="Permanent link">&para;</a></h2>
+<p>Choose the backup volume in <a href="../vcf-backups/#choose-backup-storage">VCF Backups → SFTP Settings</a> and the depot volume in
+<a href="../vcf-offline-depot/#configure-the-depot">VCF Offline Depot → Depot Settings</a>. Both settings require Appliance Apply.</p>
+<p>The rest of this section describes configuring an external VCF target to use Atlaso's Offline Depot.</p>
 <p>The standalone helper is available only when the local depot is enabled, applied, CA-backed, has a generated software
 depot ID, and has a selected HTTP user. Its wizard follows <strong>Credential</strong>, <strong>Server</strong>, <strong>TLS fingerprint</strong>, and
 <strong>Login</strong> before collecting the one-time depot HTTP password and reading the current sanitized depot configuration.

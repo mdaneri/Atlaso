@@ -4911,9 +4911,9 @@ read-only or unavailable surface has a mutation workflow.</p>
 </tr>
 <tr>
 <td><code>/ui/management/vcf-offline-depot</code> — settings, VCFDT, profiles, tasks</td>
-<td>Wizard-backed Tabulator and non-grid settings; ESX Storage/DNS and Automation schedule references</td>
-<td>Profile fallback, settings summaries, validation, Tasks fallback, and task status</td>
-<td>Admin writes; contextual four-step schedule binds type/profile server-side; transient Start feedback; per-profile queue and exclusive identity/apply boundaries preserved</td>
+<td>Wizard-backed Tabulator, shared <code>vcf-service-storage-wizard</code>, and non-grid settings; ESX Storage/DNS and Automation schedule references</td>
+<td>Profile fallback, storage assignment summary, settings, validation, Tasks fallback, and task status</td>
+<td>Admin writes; storage volume is exclusive to one VCF service and storage has its own Apply unit; Move/Leave/Delete are reviewed before Apply; contextual four-step schedule binds type/profile server-side; transient Start feedback; per-profile queue and exclusive identity/apply boundaries preserved</td>
 <td>Pass D/N/K/F/Z/V</td>
 <td>E1–E8</td>
 </tr>
@@ -4927,25 +4927,33 @@ read-only or unavailable surface has a mutation workflow.</p>
 </tr>
 <tr>
 <td><code>/ui/management/vcf-private-registry</code> — settings and bundles</td>
-<td>Wizard-backed Tabulator and non-grid settings; ESX Storage/DNS references</td>
-<td>Bundle fallback, settings, validation, and redacted previews</td>
-<td>Admin desired-state writes; shared deletion confirmation; global registry apply only</td>
+<td>Wizard-backed Tabulator, shared <code>vcf-service-storage-wizard</code>, and non-grid settings; ESX Storage/DNS references</td>
+<td>Bundle fallback, storage assignment summary, settings, validation, and redacted previews</td>
+<td>Admin desired-state writes; exclusive VCF volume assignment; storage has its own Apply unit with reviewed Move/Leave/Delete handling; shared deletion confirmation; registry endpoint/bundle apply remains independent</td>
 <td>Pass D/N/K/F/Z/V</td>
 <td>E1–E8</td>
 </tr>
 <tr>
 <td><code>/ui/management/vcf-backups</code> — SFTP settings, validation, and backup operations</td>
-<td>Non-grid settings; read-only Tabulator using Tasks/Audit Events <code>createGrid</code> references</td>
-<td>Complete settings and redacted config preview; semantic operations-table fallback; date, local time, elapsed runtime, status, component and source columns</td>
-<td>Admin SFTP autosave with CSRF and global <code>vcf_backups</code> apply only; admin operation status and read-only reconciliation</td>
+<td>Shared <code>vcf-service-storage-wizard</code>, non-grid settings, and read-only Tabulator using Tasks/Audit Events <code>createGrid</code> references</td>
+<td>Complete settings and redacted config preview; storage assignment summary; semantic operations-table fallback; date, local time, elapsed runtime, status, component and source columns</td>
+<td>Admin SFTP autosave with CSRF; exclusive VCF volume assignment; storage has its own Apply unit with reviewed Move/Leave/Delete handling; admin operation status and read-only reconciliation</td>
 <td>Pass D/N/K/F/Z/V</td>
 <td>E1–E8</td>
 </tr>
 <tr>
-<td><code>/ui/management/esx-storage</code> — volumes and NFS datastores</td>
+<td><code>/ui/management/settings/storage-volumes</code> — disk registration</td>
+<td>Wizard-backed Tabulator; ESX Storage volume wizard reference</td>
+<td>Volume grid and fallback table</td>
+<td>Existing ESX Storage scopes; format authorization through global <code>esx_storage</code> Apply</td>
+<td>Pass D/N/K/F/Z/V</td>
+<td>E1–E8</td>
+</tr>
+<tr>
+<td><code>/ui/management/esx-storage</code> — NFS datastores</td>
 <td>Wizard-backed Tabulator; ESX Storage reference</td>
-<td>Paired volume/share fallback tables and rendered validation/instructions</td>
-<td>Admin writes; format authorization and removal confirmation; global <code>esx_storage</code> apply only</td>
+<td>Share fallback table and rendered validation/instructions</td>
+<td>Existing ESX Storage scopes; removal confirmation; global <code>esx_storage</code> Apply only</td>
 <td>Pass D/N/K/F/Z/V</td>
 <td>E1–E8</td>
 </tr>
@@ -5185,7 +5193,7 @@ are explicitly inventoried so route/template changes cannot silently escape the 
 <li>VCF workflows: <code>vcf-fqdn-modal</code>, <code>vcf-ldap-modal</code>, <code>vcf-trust-modal</code>, <code>vcf-lab-modal</code>, <code>vcf-sddc-deploy-modal</code>, <code>vcf-target-depot-modal</code>,
   <code>vcf-vault-import-modal</code>, <code>vcf-depot-profile-dialog</code>, <code>vcf-depot-tool-package-dialog</code>,
   <code>vcf-depot-configuration-dialog</code>, <code>vcf-depot-tool-reset-modal</code>, <code>vcf-depot-schedule-modal</code>,
-  <code>vcf-backup-modal</code>, <code>vcf-backup-status-modal</code>,
+  <code>vcf-backup-modal</code>, <code>vcf-backup-status-modal</code>, <code>vcf-service-storage-wizard</code>,
   <code>vcf-registry-bundle-dialog</code>, and <code>vcf-appliance-certificate-modal</code>.</li>
 <li>Vaults and Monitor: <code>vault-create-modal</code>, <code>vault-entry-modal</code>, and <code>monitor-chart-modal</code>.</li>
 </ul>
@@ -5203,7 +5211,7 @@ moving essential title/action context outside the viewport.</p>
 <code>network_diagnostics.html</code>,
 <code>network_objects.html</code>, <code>ntp.html</code>, <code>physical_interfaces.html</code>, <code>placeholder.html</code>, <code>public_service_home.html</code>, <code>public_terminal.html</code>,
 <code>remote_terminal.html</code>, <code>traffic_publishing.html</code>,
-<code>routes_wan.html</code>, <code>services.html</code>, <code>settings.html</code>, <code>tasks.html</code>, <code>terminal.html</code>, <code>users.html</code>,
+<code>routes_wan.html</code>, <code>services.html</code>, <code>settings.html</code>, <code>settings_storage_volumes.html</code>, <code>tasks.html</code>, <code>terminal.html</code>, <code>users.html</code>,
 <code>vaults.html</code>, <code>vcf_backups.html</code>, <code>vcf_helper.html</code>, <code>vcf_offline_depot.html</code>,
 <code>vcf_offline_depot_task_log.html</code>, <code>vcf_private_registry.html</code>, and <code>vlan_interfaces.html</code>.</p>
 <p>The DHCP <strong>Pool Health</strong> view uses <code>partials/dhcp_pool_health.html</code> and the read-only Tasks grid pattern for pool
@@ -5213,6 +5221,8 @@ non-grid DNS settings reference, and optional schedules reuse the Automation Sch
 <p>Shared-only templates are <code>base.html</code>, <code>public_portal_base.html</code>, <code>partials/appliance_apply_status.html</code>,
 <code>partials/brand_mark.html</code>, <code>partials/config_preview_action.html</code>, <code>partials/resource_wizard.html</code>,
 <code>partials/monitor_runtime.html</code>, <code>partials/port_forwarding.html</code>, <code>partials/settings_hardware.html</code>,
+<code>partials/settings_storage_volumes.html</code>, <code>partials/settings_tabs.html</code>,
+<code>partials/vcf_service_storage_settings.html</code>,
 <code>partials/task_grid.html</code>, <code>partials/task_modals.html</code>, <code>partials/terminal_panel.html</code>, <code>partials/vcf_ldap_modal.html</code>,
 <code>partials/vcf_backup_modal.html</code>, <code>partials/vcf_backup_operations.html</code>, <code>partials/vcf_backup_status_modal.html</code>,
 <code>partials/vcf_sddc_deploy_modal.html</code>, <code>partials/vcf_sddc_upload_modal.html</code>, <code>partials/vcf_target_depot_modal.html</code>, <code>partials/vcf_trust_modal.html</code>,

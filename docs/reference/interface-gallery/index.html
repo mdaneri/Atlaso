@@ -3149,6 +3149,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#settings-storage-volumes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Settings / Storage Volumes
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#settings-settings-time" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5149,6 +5160,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#settings-storage-volumes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Settings / Storage Volumes
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#settings-settings-time" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5678,6 +5700,12 @@ successful state is shown only where the corresponding task completed successful
 <p>Figure: Rendered Appliance Settings configuration preview.</p>
 <p><img alt="Atlaso Settings validation card explaining that the appliance FQDN is invalid." src="../../assets/screenshots/settings-validation-error-desktop.webp" /></p>
 <p>Figure: Appliance Settings validation error for an invalid FQDN.</p>
+<h2 id="settings-storage-volumes">Settings / Storage Volumes<a class="headerlink" href="#settings-storage-volumes" title="Permanent link">&para;</a></h2>
+<p>Route: <code>/ui/management/settings/storage-volumes</code></p>
+<p><img alt="Add storage volume wizard reviewing Lab Data and /mnt/atlaso-esx-storage/lab-data." src="../../assets/screenshots/settings-storage-volume-wizard-review.webp" /></p>
+<p>Figure: Review shows where Atlaso will mount the selected blank disk after Appliance Apply.</p>
+<p><img alt="Settings Storage Volumes tab with mounted volumes and the Add storage volume row." src="../../assets/screenshots/settings-storage-volumes-desktop.webp" /></p>
+<p>Figure: Settings groups registered volumes and the disk registration wizard together.</p>
 <h2 id="settings-settings-time">Settings: Settings Time<a class="headerlink" href="#settings-settings-time" title="Permanent link">&para;</a></h2>
 <p>Route: <code>/ui/management/settings#settings-time</code></p>
 <p><img alt="Settings Time tab with a synchronized NTP client and editable clock source and upstreams." src="../../assets/screenshots/settings-time-client-desktop.webp" /></p>
@@ -5742,12 +5770,20 @@ successful state is shown only where the corresponding task completed successful
 <p>Route: <code>vmware-console</code></p>
 <p><img alt="Atlaso Photon appliance console showing management networking and service status." src="../../assets/screenshots/appliance-console-applied.webp" /></p>
 <p>Figure: VMware console after a successful appliance apply.</p>
+<p><img alt="Atlaso installer Storage layout screen showing an Auto root on /dev/sda and both service roles on shared storage." src="../../assets/screenshots/installation-storage-layout.webp" /></p>
+<p>Figure: Review the root target and both service mount paths before opening the disk erasure review.</p>
 <h2 id="vcf-backups">Vcf Backups<a class="headerlink" href="#vcf-backups" title="Permanent link">&para;</a></h2>
 <p>Route: <code>/ui/management/vcf-backups</code></p>
 <p><img alt="Atlaso VCF Backups page in the clean-appliance desktop viewport." src="../../assets/screenshots/vcf-backups-clean-desktop.webp" /></p>
 <p>Figure: VCF Backups in the verified clean-appliance desktop state.</p>
 <p><img alt="Atlaso VCF Backups page in the clean-appliance responsive viewport." src="../../assets/screenshots/vcf-backups-clean-responsive.webp" /></p>
 <p>Figure: VCF Backups in the verified clean-appliance responsive state.</p>
+<p><img alt="Existing data step in the VCF Backups storage wizard showing Move, Leave and Delete." src="../../assets/screenshots/vcf-backups-storage-data.webp" /></p>
+<p>Figure: Choose what Appliance Apply will do with existing backup files.</p>
+<p><img alt="VCF Backups storage wizard with Next disabled while the saved volume is selected." src="../../assets/screenshots/vcf-backups-storage-volume.webp" /></p>
+<p>Figure: Select a different volume to continue the storage wizard.</p>
+<p><img alt="VCF Backups storage wizard Review with the current path, proposed path and choice for existing files." src="../../assets/screenshots/vcf-backups-storage.webp" /></p>
+<p>Figure: Review the backing directory for the SFTP service before staging a storage change.</p>
 <h2 id="vcf-helper">Vcf Helper<a class="headerlink" href="#vcf-helper" title="Permanent link">&para;</a></h2>
 <p>Route: <code>/ui/management/vcf-helper</code></p>
 <p><img alt="Atlaso certificate wizard selecting SDDC Manager in the desktop viewport." src="../../assets/screenshots/vcf-appliance-certificate-sddc-server-desktop.webp" /></p>
@@ -5782,12 +5818,16 @@ successful state is shown only where the corresponding task completed successful
 <p>Figure: VCFDT Software Depot ID generation ends at Review, which immediately dispatches a dedicated identity task.</p>
 <p><img alt="VCF Offline Depot contextual Schedule wizard Review showing Schedule, Timing, State, and Review steps with Binaries fixed as the selected profile." src="../../assets/screenshots/vcf-offline-depot-schedule-action-desktop.webp" /></p>
 <p>Figure: VCF Offline Depot review binds the selected profile in the contextual schedule flow.</p>
+<p><img alt="VCF Offline Depot storage wizard Review showing the current and proposed directories and data action." src="../../assets/screenshots/vcf-offline-depot-storage.webp" /></p>
+<p>Figure: Review the destination shared by VCFDT and VCF Helper uploads before saving.</p>
 <h2 id="vcf-private-registry">Vcf Private Registry<a class="headerlink" href="#vcf-private-registry" title="Permanent link">&para;</a></h2>
 <p>Route: <code>/ui/management/vcf-private-registry</code></p>
 <p><img alt="Atlaso VCF Private Registry page in the clean-appliance desktop viewport." src="../../assets/screenshots/vcf-private-registry-clean-desktop.webp" /></p>
 <p>Figure: VCF Private Registry in the verified clean-appliance desktop state.</p>
-<p><img alt="Atlaso VCF Private Registry page in the clean-appliance responsive viewport." src="../../assets/screenshots/vcf-private-registry-clean-responsive.webp" /></p>
-<p>Figure: VCF Private Registry in the verified clean-appliance responsive state.</p>
+<p><img alt="VCF Private Registry settings showing the Change storage button in a narrow viewport." src="../../assets/screenshots/vcf-private-registry-clean-responsive.webp" /></p>
+<p>Figure: Open the storage wizard from Harbor Settings in the narrow layout.</p>
+<p><img alt="VCF Private Registry storage wizard Review with the current path, proposed path and choice for existing files." src="../../assets/screenshots/vcf-private-registry-storage.webp" /></p>
+<p>Figure: Review and stage the storage change independently of the Harbor settings.</p>
 <h2 id="vlan-interfaces">Vlan Interfaces<a class="headerlink" href="#vlan-interfaces" title="Permanent link">&para;</a></h2>
 <p>Route: <code>/ui/management/vlan-interfaces</code></p>
 <p><img alt="Atlaso VLAN Interfaces add wizard Role step showing access as the default role with the Management UI switch." src="../../assets/screenshots/vlan-interfaces-clean-desktop.webp" /></p>

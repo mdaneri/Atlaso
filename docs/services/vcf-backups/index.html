@@ -2348,6 +2348,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Prepare the Atlaso SFTP receiver">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#choose-backup-storage" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Choose backup storage
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -4328,6 +4345,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Prepare the Atlaso SFTP receiver">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#choose-backup-storage" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Choose backup storage
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -4565,11 +4599,28 @@ separate Atlaso SFTP receiver settings, see <a href="#prepare-the-atlaso-sftp-re
 <p>The wizard is enabled only when the Atlaso <strong>VCF Backups</strong> SFTP service is ready. Configure the receiver at
 <code>/ui/management/vcf-backups</code>, then apply its current settings before returning to VCF Helper. The selected local SFTP
 user must be enabled, have its current Photon OS password synchronized by <strong>Local Users</strong>, and have no pending password
-change. The receiver also requires the fixed <code>/mnt/atlaso-vcf-backups</code> volume, chroot and password authentication, the
+change. The receiver also requires available installed or assigned storage, chroot and password authentication, the
 applied VCF Backups configuration, an active <code>sshd</code> listener, and the appliance's required public SSH host keys. The
-wizard checks the mount, rendered applied configuration, and live listener before each workflow action; saving intent
-alone is not enough. Apply <strong>Local Users</strong> first when the selected account or password needs synchronization, then apply
-<strong>VCF Backups</strong> through the shared <a href="../../operate/appliance-apply/">Appliance Apply</a> workflow.</p>
+wizard checks the active storage mount, rendered applied configuration, and live listener before each workflow action.
+Apply <strong>Local Users</strong> first when the selected account or password needs
+synchronization, then apply <strong>VCF Backups</strong> through the shared <a href="../../operate/appliance-apply/">Appliance Apply</a> workflow.</p>
+<h3 id="choose-backup-storage">Choose backup storage<a class="headerlink" href="#choose-backup-storage" title="Permanent link">&para;</a></h3>
+<p>On <strong>VCF Backups → SFTP Settings</strong>, choose <strong>Change storage</strong> to open the shared storage wizard. Select a registered
+volume; Atlaso appends <code>vcf-backups</code> to its mount path and displays the resulting storage directory. Register additional
+volumes in
+<a href="../../operate/appliance-settings/#register-storage-volumes">Settings → Storage Volumes</a>.
+<strong>Appliance default</strong> uses the storage configured during installation at <code>/mnt/atlaso-vcf-backups</code>. To reuse a volume
+selected by VCF Offline Depot or VCF Private Registry, reassign that service first; each volume can serve one VCF
+storage assignment at a time.</p>
+<p>The wizard asks whether to <strong>Move</strong>, <strong>Leave</strong>, or <strong>Delete</strong> existing files when changing directories. Saving stages the
+choice for Appliance Apply. Review the current and proposed directories and selected data action under
+<strong>Review appliance changes</strong>. Delete requires typing the exact confirmation shown there before submitting Appliance
+Apply. An explicit storage reassignment can be staged and applied while SFTP is disabled; disabling SFTP by itself
+retains the current storage assignment. Disabling SFTP remains available even when its assigned volume is unavailable.
+An older volume selection without a staged data action takes effect when you enable SFTP and apply the service.
+The service uses the new directory only after the storage change applies successfully. After Apply, confirm the
+selected volume and directory in VCF Backups, reboot the appliance, and check that the assignment and SFTP writes
+persist. VCF clients continue to use the stable <code>/backups</code> remote directory when chroot is enabled.</p>
 <p>The SFTP server must present the ECDSA key used for fingerprint confirmation and advertise a modern RSA-SHA2 host-key
 algorithm as well as an ECDSA host-key algorithm. These are separate requirements: an ECDSA fingerprint alone does not
 prove that SSH negotiation can complete. See Broadcom <a href="https://knowledge.broadcom.com/external/article/438943">KB 438943</a>
@@ -4741,6 +4792,12 @@ documented restore procedure before relying on it for disaster recovery.</p>
 <h3 id="vcf-backups_1">VCF backups<a class="headerlink" href="#vcf-backups_1" title="Permanent link">&para;</a></h3>
 <p><img alt="Atlaso VCF Backups page in the clean-appliance responsive viewport." src="../../assets/screenshots/vcf-backups-clean-responsive.webp" /></p>
 <p><em>Figure: VCF Backups in the verified clean-appliance responsive state.</em></p>
+<p><img alt="Existing data step in the VCF Backups storage wizard showing Move, Leave and Delete." src="../../assets/screenshots/vcf-backups-storage-data.webp" /></p>
+<p><em>Figure: Choose what Appliance Apply will do with existing backup files.</em></p>
+<p><img alt="VCF Backups storage wizard with Next disabled while the saved volume is selected." src="../../assets/screenshots/vcf-backups-storage-volume.webp" /></p>
+<p><em>Figure: Select a different volume to continue the storage wizard.</em></p>
+<p><img alt="VCF Backups storage wizard Review with the current path, proposed path and choice for existing files." src="../../assets/screenshots/vcf-backups-storage.webp" /></p>
+<p><em>Figure: Review the backing directory for the SFTP service before staging a storage change.</em></p>
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
 
 

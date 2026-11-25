@@ -4713,9 +4713,11 @@ until its exact writer/version, image checksum and native USB boot/install resul
    Keep Secure Boot disabled. Start with a directly connected USB port rather than an external hub.</li>
 <li>Let the installer authenticate its local payload. Missing, corrupt, disconnected, or ambiguous source media must
    stop installation. It must not download replacement installation packages from the network.</li>
-<li>Follow <a href="../physical-installation/#choose-disks-and-layout">Choose disks and layout</a>. Select the intended internal
-   disk or disks and review their identities and complete proposed layout. The source USB and other USB storage are
-   excluded from installation targets. Disks you do not select must remain unchanged.</li>
+<li>The first storage screen is <strong>Storage layout</strong>. Review the root target and Auto or Custom layout, SFTP backup,
+   and VCFDT depot volumes with their mount paths together. Use <strong>D</strong> to cycle root targets, <strong>Tab</strong> to focus service
+   rows, and <strong>Enter</strong> to continue. <strong>L</strong> opens the Custom partition editor. Press <strong>Esc</strong> on Storage layout to cancel setup.
+   See <a href="../physical-installation/#choose-disks-and-layout">Choose disks and layout</a>. The source USB,
+   protected devices, and conflicting assignments are unavailable. Disks you do not select must remain unchanged.</li>
 <li>At <strong>Erase selected disks?</strong>, confirm <strong>Yes</strong> only for the disks whose contents may be erased. The default is <strong>No</strong>.
    Complete the installer's concealed <strong>Account passwords</strong> screen. No appliance web UI or separate USB installer is needed.</li>
 <li>Remove the USB when installation completes, then boot from the installed internal disk.</li>

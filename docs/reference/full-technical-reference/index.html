@@ -5928,7 +5928,7 @@ generated PXE runtime files, or other runtime history. Restoring usable CA priva
 mutation to the global <code>Appliance Apply</code> workflow. Complete factory reset is a separate crash-safe transaction. It
 removes every database record—including identities, password hashes, API tokens, jobs, schedules, audit history,
 archives, and desired/applied state—and creates a private candidate containing only factory/bootstrap records. Atlaso
-copies the previous apply baselines into that candidate long enough to derive removals, preflights all 17 generated unit
+copies the previous apply baselines into that candidate long enough to derive removals, preflights all generated unit
 configurations, activates them in dependency order, writes matching clean baselines, and atomically replaces the active
 SQLite database. A new appliance-instance ID invalidates every earlier session. Core routing, firewall, authentication,
 and management state finish enabled and coherent; optional services finish disabled; no follow-up Apply is pending.</p>

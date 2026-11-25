@@ -1315,6 +1315,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#register-storage-volumes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Register storage volumes
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#before-you-begin" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1364,6 +1375,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Appliance Settings
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#settings-storage-volumes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Settings / Storage Volumes
       </span>
     </span>
   </a>
@@ -4397,6 +4419,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#register-storage-volumes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Register storage volumes
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#before-you-begin" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4446,6 +4479,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Appliance Settings
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#settings-storage-volumes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Settings / Storage Volumes
       </span>
     </span>
   </a>
@@ -4737,6 +4781,19 @@ for provider details and limitations.
 During the first upgrade that introduces the persisted token policy, Atlaso migrates a valid legacy
 <code>ATLASO_API_TOKEN_TTL_DAYS</code> value instead of silently replacing it with the 90-day default. Subsequent startups retain
 the database policy, so removing or changing that legacy environment variable does not overwrite operator state.</p>
+<h2 id="register-storage-volumes">Register storage volumes<a class="headerlink" href="#register-storage-volumes" title="Permanent link">&para;</a></h2>
+<p>Open <strong>Settings → Storage Volumes</strong> and choose <strong>Add storage volume here</strong>. A newly attached blank disk appears under
+<strong>Approved blank whole disk</strong>. Review its identity and planned mount path under <code>/mnt/atlaso-esx-storage/</code> before
+authorizing formatting in Appliance Apply. To register an <strong>Existing mounted ext4 volume</strong>, select its current mount
+point. The wizard lists only unclaimed volumes that pass the appliance's storage checks.</p>
+<p>After Apply, confirm the mount path and filesystem UUID on <strong>Storage Volumes</strong>. The applied volume becomes available in
+the VCF service storage wizards and the NFS datastore wizard. Use <strong>Change storage</strong> in VCF Backups, VCF Offline Depot,
+or VCF Private Registry to assign it to one service at a time and choose how existing files are handled. See
+<a href="../../services/esx-storage/#volumes-and-disk-initialization">ESX Storage</a> for disk eligibility and NFS configuration.</p>
+<p>For the first <strong>Move</strong> attempt, select an empty destination. If Apply fails after copying starts, correct the reported
+error and retry the same change. Atlaso checks that the copied files still match the source before resuming. Pause
+writes before <strong>Move</strong> or <strong>Delete</strong> so Apply can verify the previous directory. If a service or client is still using
+the directory, close that access before retrying.</p>
 <h2 id="before-you-begin">Before you begin<a class="headerlink" href="#before-you-begin" title="Permanent link">&para;</a></h2>
 <p>Confirm the intended management hostname and DNS records. Keep an alternate console session available before changing
 management connectivity or SSH policy. Routine field changes autosave, but they do not change the host immediately.</p>
@@ -4791,6 +4848,11 @@ the <a href="../appliance-console/">local appliance console</a> to inspect netwo
 <p><em>Figure: Rendered Appliance Settings configuration preview.</em></p>
 <p><img alt="Atlaso Settings validation card explaining that the appliance FQDN is invalid." src="../../assets/screenshots/settings-validation-error-desktop.webp" /></p>
 <p><em>Figure: Appliance Settings validation error for an invalid FQDN.</em></p>
+<h3 id="settings-storage-volumes">Settings / Storage Volumes<a class="headerlink" href="#settings-storage-volumes" title="Permanent link">&para;</a></h3>
+<p><img alt="Add storage volume wizard reviewing Lab Data and /mnt/atlaso-esx-storage/lab-data." src="../../assets/screenshots/settings-storage-volume-wizard-review.webp" /></p>
+<p><em>Figure: Review shows where Atlaso will mount the selected blank disk after Appliance Apply.</em></p>
+<p><img alt="Settings Storage Volumes tab with mounted volumes and the Add storage volume row." src="../../assets/screenshots/settings-storage-volumes-desktop.webp" /></p>
+<p><em>Figure: Settings groups registered volumes and the disk registration wizard together.</em></p>
 <h3 id="settings-time-tab">Settings Time tab<a class="headerlink" href="#settings-time-tab" title="Permanent link">&para;</a></h3>
 <p><img alt="Settings Time tab with a synchronized NTP client and editable clock source and upstreams." src="../../assets/screenshots/settings-time-client-desktop.webp" /></p>
 <p><em>Figure: The appliance synchronizes with an upstream NTP source and keeps the client settings editable.</em></p>

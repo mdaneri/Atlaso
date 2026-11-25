@@ -4600,18 +4600,16 @@ may enable IPv4, IPv6, or both, and Atlaso never treats either family as preferr
 <p><em>Figure: ESX Storage in the verified clean-appliance desktop state.</em></p>
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
-<p>The Storage Volumes and NFS Datastores grids each end with an add row. Selecting it opens a guided modal that validates
-the current step before advancing and summarizes the desired state before creation. Storage selectors show discovered
-eligible devices directly and select the first available device; when inventory has no eligible choice, they show a
-disabled unavailable state. Double-click a datastore row or choose <strong>Edit datastore</strong> from its row menu to reopen that
+<p>Register disks in <a href="../../operate/appliance-settings/#register-storage-volumes">Settings → Storage Volumes</a>. This page owns
+NFS Datastores and Connection Instructions. The NFS Datastores add row opens a wizard that validates each step and
+summarizes the proposed datastore before creation. Double-click a datastore row or choose <strong>Edit datastore</strong> from its
+row menu to reopen that
 datastore in the wizard. Its Enabled column uses the standard state icon and is directly editable; the wizard exposes
 the same switch in a dedicated State step after Clients and repeats the choice in Review. Disabling a datastore changes
 desired state only, takes effect through global appliance apply, and never deletes backing data. Server validation
 failures remain in the open wizard; successful creation closes the wizard and reloads the selected tab. Atlaso remembers
-the active Storage Volumes, NFS Datastores, or Connection Instructions tab across refreshes, and a successful global
-appliance apply refreshes this page so formatted UUID, mount, and applied state are current. Volume initialization
-remains only a desired-state operation in this wizard; blank-disk formatting still requires explicit authorization in
-the global appliance review.</p>
+the active NFS Datastores or Connection Instructions tab across refreshes. A successful global Appliance Apply
+refreshes the storage views so the formatted UUID, mount, and applied state are current.</p>
 <h2 id="architecture">Architecture<a class="headerlink" href="#architecture" title="Permanent link">&para;</a></h2>
 <p>Applied storage DNS ownership follows the saved share interface and exact rendered hostname/address. Equal addresses
 on other interfaces do not transfer ownership; ambiguous or unmatched records do not acquire an inferred source.</p>
@@ -4666,7 +4664,7 @@ datastores.</p>
 </ol>
 <p>You can prepare a volume before creating an NFS datastore:</p>
 <ol>
-<li>In <strong>ESX Storage</strong> → <strong>Storage Volumes</strong>, choose <strong>Add storage volume here</strong> and complete the wizard.</li>
+<li>In <strong>Settings → Storage Volumes</strong>, choose <strong>Add storage volume here</strong> and complete the wizard.</li>
 <li>Open <strong>Review appliance changes</strong> and select <strong>ESX Storage</strong>. For a blank disk, verify the displayed disk identity
    and enter <code>FORMAT &lt;volume-name&gt;</code> before submitting.</li>
 <li>After Apply succeeds, confirm in <strong>Storage Volumes</strong> that the volume has a filesystem UUID and mount path.
@@ -4678,6 +4676,13 @@ datastores.</p>
 model, serial, WWN, size, and stable identity and requires the exact text <code>FORMAT &lt;volume-name&gt;</code>. The resulting
 authorization belongs only to that appliance-apply job and the exact manifest hash/device identity; it is not desired
 state and is not placed in baselines or settings backups.</p>
+<p>After registering a volume, open <strong>Change storage</strong> in <strong>VCF Backups → SFTP Settings</strong>, <strong>VCF Offline Depot → Depot
+Settings</strong>, or <strong>VCF Private Registry</strong>. A registered volume can serve one VCF service at a time. Atlaso appends
+<code>vcf-backups</code>, <code>vcf-offline-depot</code>, or <code>vcf-registry</code> to the selected mount path.</p>
+<p>Review the reassignment in Appliance Apply. <strong>Move</strong> copies and verifies the files before removing the originals.
+<strong>Leave</strong> keeps the files in the previous directory. <strong>Delete</strong> removes the old files after switching and requires the
+exact confirmation shown in Apply. After Apply, verify reads and writes under the selected directory, then reboot and
+confirm the assignment remains active.</p>
 <p>When a virtual SCSI controller does not expose a serial or WWN, the appliance udev policy creates a stable
 topology-derived <code>atlaso-path-*</code> link under <code>/dev/disk/by-id</code>. The complete topology identity and fingerprint are still
 reviewed and revalidated; <code>/dev/sdX</code> is never accepted.</p>
@@ -4687,7 +4692,7 @@ the successfully created ext4 filesystem and its UUID-based managed fstab entry 
 an idempotent retry continue from it. Each formatted disk is persisted before apply advances to another failure-prone
 volume. A retained filesystem keeps ownership of its managed mount path: a later blank volume cannot reuse that path
 with a different UUID, even when it uses the same volume name. Resolve or detach the retained disk before assigning
-that name to another filesystem. V1 has no wipe, reformat, or delete-data action.</p>
+that name to another filesystem. Disk formatting is available only when initializing a blank volume.</p>
 <h2 id="share-paths-and-exports">Share paths and exports<a class="headerlink" href="#share-paths-and-exports" title="Permanent link">&para;</a></h2>
 <p>Share paths are relative to a selected volume. Atlaso rejects an empty/root path, <code>..</code> traversal, symlink escape,
 duplicate datastore names, overlapping exports, and root-plus-child exports. Multiple sibling directories on one volume
