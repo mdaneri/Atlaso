@@ -13,6 +13,9 @@ throughput, unique-device disk activity, interface state, and virtual-machine co
 policy rules, interfaces, forwarding, gateway neighbors, and a kernel route lookup. **Services & Clock** reports
 observed service state, restart counts, verified listener addresses, and the effective clock source.
 
+When you reopen **Monitor** from the sidebar, it restores your last available tab in the same browser.
+Links to a specific Monitor view open that view.
+
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
 
