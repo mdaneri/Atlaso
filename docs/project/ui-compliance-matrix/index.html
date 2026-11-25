@@ -5165,6 +5165,7 @@ are explicitly inventoried so route/template changes cannot silently escape the 
 <ul>
 <li>Shared shell: <code>about-modal</code>, <code>confirm-modal</code>, <code>preview-modal</code>, <code>ntp-source-health-modal</code>,
   <code>appliance-apply-modal</code>, <code>task-detail-modal</code>, and <code>task-log-modal</code>.</li>
+<li>Appliance Settings: <code>settings-time-clock-dialog</code>.</li>
 <li>Authentication and users: <code>oidc-client-dialog</code>, <code>oidc-client-secret-modal</code>, <code>oidc-key-dialog</code>, <code>api-token-dialog</code>,
   <code>user-account-dialog</code>, and <code>user-password-modal</code>.</li>
 <li>The OIDC one-time credential handoff reuses the Managed LDAP credential dialog within the wizard-backed client
@@ -5317,10 +5318,13 @@ boundaries remain intact. Focused browser-adapter tests cover review text and un
 narrow, keyboard and native provider acceptance remain pending for #1078 and #1080.</p>
 <h2 id="settings-time">Settings time<a class="headerlink" href="#settings-time" title="Permanent link">&para;</a></h2>
 <p><code>partials/settings_time.html</code> uses the existing Settings tabs and the DNS non-grid settings and validation pattern.
+<strong>Clock source</strong> uses the native radio row from Routing &amp; WAN. <strong>NTP client</strong> shows the upstream list, and <strong>Manual</strong>
+offers <strong>Set time</strong> beside the clock source when Settings owns the clock.
 <code>partials/ntp_upstreams.html</code> and <code>partials/ntp_source_wizard.html</code> share the established NTP upstream editor
-and wizard. Server-owned controls remain visible in a disabled state with a link to NTP and NTS. Mutations require
-administrator access and CSRF. The manual target is a separate reviewed Appliance Apply change. The status request
-reads the clock without changing its mode or restarting a service.</p>
+and wizard. Server-owned controls remain disabled with a link to NTP and NTS. Mutations require administrator
+access and CSRF. The manual clock dialog accepts a UTC target after Atlaso verifies applied Manual mode. The shared
+notice at the top of Settings links pending time and general settings changes to Appliance Apply review. The status
+request reads the clock without changing its mode or restarting a service.</p>
 
 
 

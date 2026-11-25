@@ -4677,11 +4677,13 @@ from before cleanup.</p>
 <strong>Applied mode</strong> and <strong>Synchronization</strong> show what the appliance can verify now. <strong>Pending</strong> indicates a change that
 still needs Appliance Apply or an in-progress clock transition. <strong>Unsynchronized</strong> indicates a known mode without
 current synchronization. <strong>Unavailable</strong> means Atlaso could not verify the corresponding state.</p>
-<p>For a client-only appliance, set <strong>Clock source</strong> to <strong>NTP client</strong> and keep at least one usable upstream enabled.
+<p>For a client-only appliance, select the <strong>NTP client</strong> radio button under <strong>Clock source</strong>. This displays the
+<strong>Upstream sources</strong> table. Keep at least one usable upstream enabled.
 For example, add your organization’s <code>time.example.com</code> through the upstream source wizard. Turn on <strong>Use NTS</strong> only
-if the upstream supports NTS and Atlaso trusts its certificate. Select <strong>Review appliance changes</strong>, review the
-<strong>NTP / NTS</strong> unit, and submit. After Apply succeeds, select <strong>Refresh status</strong> and confirm <strong>NTP client</strong> and
-<strong>Synchronized</strong>. Select <strong>VMware Tools</strong> when you want the verified hypervisor clock and the option is available.</p>
+if the upstream supports NTS and Atlaso trusts its certificate. In the notice at the top of Settings, select
+<strong>Review appliance changes</strong>, review the <strong>NTP / NTS</strong> unit, and submit. After Apply succeeds, select
+<strong>Refresh status</strong> and confirm <strong>NTP client</strong> and <strong>Synchronized</strong>. Select <strong>VMware Tools</strong> when you want the
+verified hypervisor clock and the option is available.</p>
 <p>To serve clients, enable NTP in <a href="../../services/ntp/">NTP and NTS</a> and review the change through Appliance Apply.
 <strong>Settings → Time</strong> continues to show clock status, and the editors explain that the NTP service owns the settings.
 Use the service page to change the upstreams while server mode is enabled. Disabling the server there restores the
@@ -4691,10 +4693,12 @@ remembered clock choice on the next Apply.</p>
 <ol>
 <li>On VMware, stop and disable the guest's VMware Tools service before applying Manual mode. Tools events can set
    time even when periodic sync is disabled. QEMU and Hyper-V require the existing guest clock protections.</li>
-<li>Select <strong>Manual</strong>, review the <strong>NTP / NTS</strong> unit, and apply the mode. Select <strong>Refresh status</strong>. Atlaso enables
-   manual date and time entry after proving automatic clock adjustments are off.</li>
-<li>Enter <strong>Date and time (UTC)</strong> and select <strong>Stage clock change</strong>. Open <strong>Review appliance changes</strong>, inspect the
-   UTC target in the NTP / NTS configuration difference, and submit.</li>
+<li>Select <strong>Manual</strong> under <strong>Clock source</strong>. In the notice at the top of Settings, select <strong>Review appliance changes</strong>,
+   review the <strong>NTP / NTS</strong> unit, and apply the mode. Select <strong>Refresh status</strong>. Atlaso enables <strong>Set time</strong> beside
+   the clock source choices after verifying that automatic clock adjustments are off.</li>
+<li>Select <strong>Set time</strong>, enter <strong>Date and time (UTC)</strong> in the dialog, and select <strong>Stage clock change</strong>. In the notice
+   at the top of Settings, select <strong>Review appliance changes</strong>, inspect the UTC target in the NTP / NTS configuration
+   difference, and submit.</li>
 <li>Verify the new time through <strong>Refresh status</strong> and review the result in <strong>Tasks</strong>. Manual mode reports
    <strong>Unsynchronized</strong> because no automatic source establishes synchronization.</li>
 </ol>
@@ -4703,6 +4707,7 @@ maintenance window, then check those services. If Apply reports an uncertain clo
 before you stage a new target. To return to automatic control, select <strong>NTP client</strong> or <strong>VMware Tools</strong> and review
 that change. Manual mode survives a reboot, and Settings archives retain the selected source and upstreams. Atlaso
 does not replay the previously staged UTC target during startup, update reconciliation, or archive restore.</p>
+<p>The Settings Time screenshots in <strong>Additional verified states</strong> show the control layout in Atlaso 0.9.507.</p>
 <h2 id="configure-authentication-lifetimes">Configure authentication lifetimes<a class="headerlink" href="#configure-authentication-lifetimes" title="Permanent link">&para;</a></h2>
 <p>On <strong>Access &amp; Security</strong>, <strong>Authentication lifetimes</strong> saves immediately and does not create a pending Appliance Apply unit:</p>
 <ul>
