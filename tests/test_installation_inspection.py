@@ -48,6 +48,8 @@ def _iso(path: Path, *, development: bool = True, helper_inventory_valid: bool =
         path: Task-owned output file.
         development: Whether to include the explicit non-production marker.
         helper_inventory_valid: Whether the helper matches its original inventory.
+        content_sources: Whether to include the source files for content admission.
+        packages: Packages selected by the ISO manifest fixture.
     """
     version = "0.9.453"
     commit = "b" * 40
@@ -259,7 +261,14 @@ def test_validate_report_returns_only_allowlisted_public_identity() -> None:
 @pytest.mark.parametrize(("packages", "expected_ping"), [([], False), (["iputils", "python3"], True)])
 def test_content_admission_binds_ping_selection_to_iso_packages(packages: list[str], expected_ping: bool,
                                                                  monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Content preparation selects ping from the original checksum-admitted ISO."""
+    """Content preparation selects ping from the original checksum-admitted ISO.
+
+    Args:
+        packages: Packages selected by the ISO manifest fixture.
+        expected_ping: Whether content admission must require a loopback ping.
+        monkeypatch: Fixture for isolating content preparation from package validation.
+        tmp_path: Task-owned directory for the test ISO.
+    """
     from scripts.installation import content_inspection
 
     image = tmp_path / "content.iso"
@@ -289,7 +298,11 @@ def test_loopback_ping_expectation_adds_a_bounded_console_check() -> None:
 
 @pytest.mark.parametrize("ping_verified", [False, 1, "true"])
 def test_validate_report_requires_positive_ping_when_iso_installs_iputils(ping_verified: object) -> None:
-    """Reject reports that do not prove the selected media-bound ping check."""
+    """Reject reports that do not prove the selected media-bound ping check.
+
+    Args:
+        ping_verified: Invalid ping proof supplied by the guest report fixture.
+    """
     expected = {**_expected(), "loopback_ping_required": True}
     report = json.loads(_report(expected))
     report["loopback_ping_verified"] = ping_verified
