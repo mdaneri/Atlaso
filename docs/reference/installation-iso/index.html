@@ -5082,7 +5082,9 @@ stability, and compare separately installed, receipt-owned VMs for identity uniq
 machine ID and Ed25519 public host key; they do not read private keys or appliance secrets. Application wheel equality
 does not establish equality of all installed RPMs, PowerShell modules, trust material, or notices. Network isolation
 remains in effect by default, so this option alone does not establish host-facing API or Appliance Update acceptance.</p>
-<p>Add <code>-InspectContent</code> alongside <code>-InspectInstalled</code> to run five additional checks against that same original ISO:</p>
+<p>Add <code>-InspectContent</code> alongside <code>-InspectInstalled</code> to run five additional checks against that same original ISO.
+For media that selects <code>iputils</code>, the installed identity check also requires a reply from <code>ping 127.0.0.1</code> after
+booting without the ISO.</p>
 <ul>
 <li><strong>Assets:</strong> compare copied source, deployed shared files, their ownership/modes, and public update trust keys.</li>
 <li><strong>Python:</strong> reuse the signed software verifier and locked wheel-environment inspector to compare installed
