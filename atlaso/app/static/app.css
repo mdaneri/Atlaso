@@ -3955,6 +3955,7 @@ a.tab-button {
 
 .native-radio-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 16px;
   align-items: center;
   min-height: 34px;
@@ -3967,6 +3968,10 @@ a.tab-button {
   cursor: pointer;
   font-size: 13px;
   font-weight: 700;
+}
+
+.native-radio-row > [hidden] {
+  display: none;
 }
 
 .native-radio-row input {

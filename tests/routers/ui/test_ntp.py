@@ -509,7 +509,15 @@ def test_settings_time_stages_manual_target_without_changing_the_host(client, mo
     page = client.get("/ui/management/settings")
     assert page.status_code == 200
     assert 'aria-controls="settings-time"' in page.text
-    assert 'name="target_utc"' in page.text
+    assert 'type="radio" name="time_source" value="ntp_client" checked' in page.text
+    assert 'type="radio" name="time_source" value="vmware_tools"' in page.text
+    assert 'type="radio" name="time_source" value="manual"' in page.text
+    assert '<fieldset data-settings-time-upstreams>' in page.text
+    assert 'aria-controls="settings-time-clock-dialog" aria-describedby="settings-time-manual-help" disabled hidden' in page.text
+    dialog = page.text.split('<dialog id="settings-time-clock-dialog"', 1)[1].split("</dialog>", 1)[0]
+    assert 'name="target_utc"' in dialog
+    assert 'data-settings-time-cancel' in dialog
+    assert "<h2>Time validation</h2>" not in page.text
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     with SessionLocal() as db:
         settings = db.scalar(select(NtpSettings))
@@ -524,6 +532,10 @@ def test_settings_time_stages_manual_target_without_changing_the_host(client, mo
     saved = client.post(path, data=form)
     assert saved.status_code == 200, saved.text
     assert client.post(path, data=form).status_code == 409
+    manual_page = client.get("/ui/management/settings").text
+    assert 'type="radio" name="time_source" value="manual" checked' in manual_page
+    assert '<fieldset data-settings-time-upstreams hidden>' in manual_page
+    assert 'aria-controls="settings-time-clock-dialog" aria-describedby="settings-time-manual-help" disabled>' in manual_page
 
     revision = saved.json()["revision"]
     target = {"csrf": csrf, "revision": revision, "target_utc": "2026-11-16T18:14"}
@@ -548,6 +560,12 @@ def test_settings_time_stages_manual_target_without_changing_the_host(client, mo
     staged = client.post(f"{path}/clock", data=target, follow_redirects=False)
     assert staged.status_code == 303, staged.text
     assert staged.headers["location"].endswith("/settings#settings-time")
+    staged_page = client.get(staged.headers["location"]).text
+    assert 'data-page-apply-unit="appliance_settings ntpd"' in staged_page
+    notice = staged_page.split('class="page-apply-notice ', 1)[1].split("Review appliance changes</a>", 1)[0]
+    assert "NTP / NTS" in notice
+    assert "pending appliance changes</strong>" in notice
+    assert "data-appliance-apply-open" in notice
     with SessionLocal() as db:
         settings = db.scalar(select(NtpSettings))
         assert settings.manual_time_utc.isoformat().startswith("2026-11-16T18:14:00")
