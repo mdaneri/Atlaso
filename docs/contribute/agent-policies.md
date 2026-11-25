@@ -272,7 +272,7 @@ preserved with their affected subsystem below. Keep new requirements at their to
   all sessions and credentials, activate coherent core defaults while disabling optional services, and preserve depot,
   backup, and managed ESX Storage payload paths. Persist a non-secret recovery marker before database replacement,
   make resume idempotent across interruption or reboot, validate all generated runtime configuration before activation,
-  scrub transient staging plus retained VCF Backup authorized keys and Web Terminal signing material, and leave all 17
+  scrub transient staging plus retained VCF Backup authorized keys and Web Terminal signing material, and leave all
   desired/applied baselines equal with no follow-up Apply workflow. Also remove retained KMIP operational state and
   Atlaso-synchronized package-source staging and registrations, fsyncing repository removal
   before the recovery marker advances. Require explicit keep-or-change choices for both
@@ -863,6 +863,8 @@ preserved with their affected subsystem below. Keep new requirements at their to
   and fstab contract. Atlaso-formatted disks retain their `lf-<hash>` label; claimed existing ext4 disks additionally
   require an exact root-owned allowlist record. Make data-disk success a hard systemd requirement for nginx, the HTTPS
   bootstrap, control plane, and worker so a failed preflight cannot fall through to root-filesystem-backed mount paths.
+  ESX Storage Apply must verify a filesystem covered by a VCF service bind against the installation receipt on ISO
+  installs or the image's disk identity policy on image-built appliances.
 - Every successful same-repository `main` push CI run automatically publishes the 90-day Actions artifact
   `atlaso-wheel-vX.Y.Z-<full-sha>` from GitHub-hosted Linux. Bind its single versioned wheel to canonical source-CI,
   publisher-run IDs and attempts, repository, version, full-commit, UTC build-time, size, and SHA-256 identity. Manual
@@ -1759,6 +1761,8 @@ preserved with their affected subsystem below. Keep new requirements at their to
 
 ## ESX Storage
 
+- Disk registration and volume discovery live in **Settings → Storage Volumes**. ESX Storage owns NFS datastore
+  configuration and connection instructions. Both surfaces submit host changes through the same global Apply unit.
 - Real ESX Storage apply stages JSON under `/var/lib/atlaso/apply/esx-storage/atlaso-esx-storage.json`. IPv4 and IPv6
   are equal v1 requirements: one share may enable either or both on one selected interface/VLAN, and each enabled family
   requires its own listener, generated A/AAAA target name, VMkernel client allowlist, ESX command, and nftables rule.
@@ -2197,8 +2201,11 @@ preserved with their affected subsystem below. Keep new requirements at their to
 - VCF Backup listen targets must include access physical interfaces with IPs and VLAN interfaces with IPs; exclude trunk
   physical interfaces.
 - The VCF-facing remote directory should be short and stable: `/backups`.
-- The appliance backup storage is a fixed appliance volume mount, currently `/mnt/atlaso-vcf-backups`; do not make this
-  a routine UI-configurable field.
+- The installed backup default is `/mnt/atlaso-vcf-backups`. VCF Backups → SFTP Settings owns volume selection.
+  Derive new assignments by appending `vcf-backups` to the mount path of an applied Storage Volumes registration.
+  Reserve a registered volume for one VCF service at a time, including saved selections and applied mounts.
+  Only Appliance Apply may attach the selected volume directory.
+  Preserve the original filesystem and the SFTP chroot, and verify the selected volume before activating it.
 - The VCF Backup config preview should make the host-side volume and VCF remote directory clear, and OpenSSH should use
   `ForceCommand internal-sftp -d /backups` when chroot is enabled.
 - VCF Backup OpenSSH enforcement should remain a user-scoped `Match User` drop-in; do not make it a broad global `sshd`
@@ -2267,8 +2274,12 @@ preserved with their affected subsystem below. Keep new requirements at their to
 
 ## VCF Offline Depot
 
-- VCF Offline Depot is a static HTTP(S) depot endpoint backed by nginx and the fixed appliance volume mount
-  `/mnt/atlaso-vcf-offline-depot`.
+- VCF Offline Depot is a static HTTP(S) depot endpoint backed by nginx. Its installed storage default is
+  `/mnt/atlaso-vcf-offline-depot`. Depot Settings derives new assignments by appending `vcf-offline-depot` to the mount
+  path of an applied Storage Volumes registration. Appliance Apply attaches the selected directory and keeps VCFDT and
+  `/PROD/` on the same storage. The shared wizard requires Move, Leave, or Delete when changing directories. Apply
+  verifies the copy before removing originals on Move, and Delete requires the exact previous path confirmation.
+  Keep volumes selected or applied by another VCF service out of each service's picker.
 - The default VCF Offline Depot HTTP user is `vcf-depot`. Keep it visible in Users, selectable by the depot service, and
   disabled while VCF Offline Depot desired state is off.
 - Apply Local Users before VCF Offline Depot when the selected HTTP user is new, renamed, disabled/enabled, has a
@@ -2314,8 +2325,8 @@ preserved with their affected subsystem below. Keep new requirements at their to
   IPs and VLAN interfaces with IPs; exclude trunk physical interfaces.
 - The factory registry hostname is `registry.<appliance-domain>`, and the default Harbor project is
   `vcf-supervisor-services`.
-- The registry storage path is a fixed appliance volume mount, currently `/mnt/atlaso-vcf-registry`; do not make this a
-  routine UI-configurable field.
+- Harbor uses the fixed `/mnt/atlaso-vcf-registry` mount. The Storage wizard can select its backing filesystem from
+  registered volumes. Keep that storage Apply unit independent of Harbor and bundle command previews.
 - The registry CA bundle should come from the local Atlaso CA when CA is enabled. When the local CA is disabled, require
   an uploaded PEM CA bundle and stage it through global appliance apply; do not expose a routine free-form CA bundle
   path editor.
@@ -2420,8 +2431,8 @@ preserved with their affected subsystem below. Keep new requirements at their to
   table with factory/bootstrap records, invalidates all previous sessions, credentials, jobs, schedules, tokens, and
   audit history, then preflights and activates every factory apply unit through the dedicated reset transaction. Core
   routing, firewall, authentication, and management reachability must finish coherent; optional services must finish
-  disabled; desired/applied baselines must match for all 17 units with no follow-up Apply. Factory reset must reseed only
-  core defaults and must not recreate demo
+  disabled; desired/applied baselines must match for all factory Apply units with no follow-up Apply. Factory reset must
+  reseed only core defaults and must not recreate demo
   VLANs, trunk-only
   parent NIC posture, routes, NAT rules, WAN policies, DHCP scopes/reservations, firewall rules, CA requests, vSphere
   providers/trusted vCenters, depot download profiles, or service listener bindings, including after service restart.

@@ -1844,6 +1844,9 @@ def test_factory_reset_preflight_uses_generated_config_validators(monkeypatch):
     adapter.apply_appliance_settings_config("/tmp/appliance.json")
     adapter.apply_vcf_backup_config("/tmp/backups.conf")
     adapter.apply_public_services_config("/tmp/public.conf")
+    registry_storage = adapter.apply_vcf_private_registry_storage("/tmp/registry-storage.conf")
+    assert registry_storage.dry_run
+    assert registry_storage.command == ["atlaso-factory-reset", "preflight", "apply_vcf_private_registry_storage"]
 
     assert calls == [
         ("appliance-settings", "preflight", ("/tmp/appliance.json",)),

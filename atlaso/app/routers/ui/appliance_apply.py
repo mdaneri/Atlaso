@@ -151,6 +151,13 @@ def build_router(dependencies: ApplianceApplyUiDependencies) -> ApplianceApplyUi
                     for volume in unit.get("context", {}).get("esx_storage_manifest", {}).get("volumes", [])
                     if volume.get("requires_format")
                 ],
+                **(
+                    {"storage_change": {
+                        key: change[key] for key in ("action", "previous_path", "proposed_path", "confirmation")
+                    }}
+                    if (change := unit.get("storage_change"))
+                    else {}
+                ),
             }
             for unit in context["review_apply_units"]
         ]
@@ -216,6 +223,7 @@ def build_router(dependencies: ApplianceApplyUiDependencies) -> ApplianceApplyUi
         background_tasks: BackgroundTasks,
         selected_units: list[str] = Form(default=[]),
         format_confirmations: list[str] = Form(default=[]),
+        vcf_storage_confirmations: list[str] = Form(default=[]),
         refresh_vcf_depot_software_depot_id: bool = Form(False),
         csrf: str = Form(...),
         reviewed_plan: str = Form(""),
@@ -230,6 +238,7 @@ def build_router(dependencies: ApplianceApplyUiDependencies) -> ApplianceApplyUi
             background_tasks: Background tasks supplied by the caller.
             selected_units: Selected units supplied by the caller.
             format_confirmations: Format confirmations supplied by the caller.
+            vcf_storage_confirmations: Exact confirmation fields for selected VCF data deletions.
             refresh_vcf_depot_software_depot_id: Whether to refresh the VCFDT software depot identifier.
             csrf: Validated CSRF token authorizing the request.
             reviewed_plan: Fingerprint binding the submitted review to current snapshots.
@@ -247,6 +256,7 @@ def build_router(dependencies: ApplianceApplyUiDependencies) -> ApplianceApplyUi
                 background_tasks=background_tasks,
                 selected_units=selected_units,
                 format_confirmations=format_confirmations,
+                vcf_storage_confirmations=vcf_storage_confirmations,
                 refresh_vcf_depot_software_depot_id=refresh_vcf_depot_software_depot_id,
                 csrf=csrf,
                 reviewed_plan=reviewed_plan,

@@ -26,12 +26,13 @@ If policy is missing, conflicting, or unclear, stop the affected operation for m
 - Protect secrets: never expose credentials, authenticated URLs, private keys, or secret-bearing data in tool output,
   logs, ordinary files, screenshots, or public reports. Before credential operations load the credentials route;
   suspected sensitive vulnerabilities require the security route before any public issue or finding.
-- Run focused local tests and applicable repository/documentation/static checks. Canonical CI owns ordinary full
-  Python-suite coverage; private remediation defines its own local-validation exception.
+- Run focused tests and applicable repository, docs, and static checks. CI owns the full Python suite except
+  as specified for private remediation.
 - Enforce [NTP startup and time-source safety](docs/services/ntp.md).
-- Follow CONTRIBUTING for issue/type, documentation, synchronized next patch, and ready-PR requirements. Read the PR
-  workflow before delivery, including default merge authority and explicit holds. Automation must never use or request
-  a ruleset or administrative bypass. Auto-merge requires explicit selection.
+- Keep [offline ISOs](docs/reference/installation-iso.md#installer-image-contract) below 2,000,000,000 bytes.
+- Follow CONTRIBUTING for issue type, docs, patch bumps, and ready PRs. Read the PR workflow before delivery for merge
+  authority and holds. Automation must never use or request a ruleset or administrative bypass.
+  Auto-merge requires explicit selection.
 - Before destructive actions, signing/publication, or external infrastructure mutation, load the exact procedure and
   prove authority and ownership. Preserve its fail-closed gates. Policy grants no authority; unavailable
   capabilities never justify substitutes.
@@ -84,5 +85,5 @@ and obtain explicit maintainer approval for `custom/other` before implementation
 
 [Logs](docs/operate/logs.md#important-event-coverage); [progressive policy](docs/contribute/progressive-policy.md).
 
-[VCF](docs/services/vcf-helper.md); [KMIP recovery](docs/services/vsphere-key-providers.md).
+[VCF and storage](docs/services/vcf-helper.md). [KMIP recovery](docs/services/vsphere-key-providers.md).
 [VCF import/rotation](docs/services/vaults.md#vcf-helper-import).

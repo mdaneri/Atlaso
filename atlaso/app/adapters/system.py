@@ -1033,6 +1033,17 @@ class SystemAdapter:
             dry_run_message="dry-run: VCF backup SSH policy observation recorded",
         )
 
+    def apply_vcf_private_registry_storage(self, config_path: str) -> AdapterResult:
+        """Switch the registered filesystem backing the fixed registry path.
+
+        Args:
+            config_path: Staged storage assignment and consented data action.
+        """
+        return self._helper_result(
+            "vcf-storage", "apply-registry", config_path,
+            dry_run_message="dry-run: VCF Private Registry storage apply recorded",
+        )
+
     def validate_vcf_private_registry_config(self, config_path: str) -> AdapterResult:
         """Validate vcf private registry config.
 

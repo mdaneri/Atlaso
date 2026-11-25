@@ -1,0 +1,22 @@
+{% set settings_tabs = [('general', 'General'), ('access', 'Access & Security'), ('hardware', 'Hardware'), ('storage-volumes', 'Storage Volumes'), ('time', 'Time'), ('logging', 'Logging')] %}
+{% if settings_storage_page %}
+  <nav class="tab-buttons tool-tabs" aria-label="Settings categories">
+    {% for key, title in settings_tabs %}
+      {% if key == 'storage-volumes' %}
+        <a class="tab-button active" href="{{ management_ui_root }}/settings/storage-volumes" aria-current="page">{{ title }}</a>
+      {% else %}
+        <a class="tab-button" href="{{ management_ui_root }}/settings#settings-{{ key }}">{{ title }}</a>
+      {% endif %}
+    {% endfor %}
+  </nav>
+{% else %}
+  <div class="tab-buttons tool-tabs" role="tablist" aria-label="Settings categories" data-tab-storage-key="atlaso:settings:active-tab">
+    {% for key, title in settings_tabs %}
+      {% if key == 'storage-volumes' %}
+        <a id="settings-storage-volumes-tab" class="tab-button" role="tab" aria-selected="false" href="{{ management_ui_root }}/settings/storage-volumes">{{ title }}</a>
+      {% else %}
+        <button id="settings-{{ key }}-tab" class="tab-button{{ ' active' if loop.first else '' }}" type="button" role="tab" data-tab-target="settings-{{ key }}" aria-controls="settings-{{ key }}" aria-selected="{{ 'true' if loop.first else 'false' }}">{{ title }}</button>
+      {% endif %}
+    {% endfor %}
+  </div>
+{% endif %}

@@ -2493,6 +2493,12 @@ textarea {
   border-right: 0;
 }
 
+a.tab-button {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
+
 .tab-button.active {
   color: white;
   background: var(--accent);

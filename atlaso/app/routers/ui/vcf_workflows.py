@@ -137,6 +137,12 @@ from atlaso.app.services.vcf_sddc_upload import (
     SddcUploadError,
     store_sddc_ova_upload,
 )
+from atlaso.app.services.vcf_service_storage import (
+    REGISTRY_STORAGE_UNIT,
+    save_storage_assignment,
+    storage_context,
+    storage_settings,
+)
 from atlaso.app.services.vcf_trust import (
     VcfTrustCredentials,
     VcfTrustError,
@@ -2350,6 +2356,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
             {
                 "identity": identity,
                 **vcf_offline_depot_context(db),
+                "vcf_storage": storage_context(db, "depot"),
                 "vcf_depot_task_rows": [_task_row(job, identity) for job in jobs],
                 "vcf_depot_task_component_options": ["VCF Depot Download"],
                 "appliance_apply_status": appliance_apply_status(
@@ -2513,6 +2520,9 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
         tool_archive_file: UploadFile | None = File(None),
         download_token_file: UploadFile | None = File(None),
         activation_code_file: UploadFile | None = File(None),
+        storage_assignment_only: str | None = Form(None),
+        storage_volume_uuid: str = Form(""),
+        storage_migration_policy: str = Form("leave"),
         csrf: str = Form(...),
         identity: Identity = Depends(require_session_identity),
         db: Session = Depends(get_db),
@@ -2536,6 +2546,9 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
             tool_archive_file: Tool archive file supplied by the caller.
             download_token_file: Download token file supplied by the caller.
             activation_code_file: Activation code file supplied by the caller.
+            storage_assignment_only: Whether this request updates only service storage.
+            storage_volume_uuid: Registered storage volume UUID.
+            storage_migration_policy: Handling requested for previous storage data.
             csrf: Validated CSRF token authorizing the request.
             identity: Authenticated identity authorizing the request.
             db: Active database session.
@@ -2554,6 +2567,41 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
         )
 
         verify_csrf(request, csrf)
+        if storage_assignment_only == "1":
+            settings = get_vcf_offline_depot_settings_row(
+                db, reconcile_default_user=False, reconcile=False
+            )
+            try:
+                save_storage_assignment(
+                    db, "depot", storage_volume_uuid, storage_migration_policy
+                )
+            except ValueError as exc:
+                db.rollback()
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            settings.updated_at = utcnow()
+            record_audit(
+                db,
+                actor=identity.username,
+                action="update_vcf_offline_depot_storage",
+                resource_type="vcf_offline_depot",
+                resource_id=str(settings.id),
+            )
+            if request.headers.get("X-Atlaso-Autosave") == "1":
+                apply_status = appliance_apply_client_status(
+                    appliance_apply_status(db, "vcf_offline_depot")
+                )
+                current_storage = storage_settings(db, "depot")
+                return JSONResponse(
+                    {
+                        "status": "saved",
+                        "updated_at": settings.updated_at.isoformat(),
+                        "storage_volume_uuid": current_storage["volume_uuid"],
+                        "storage_volume_path": current_storage["mount_path"],
+                        "appliance_apply_status": apply_status,
+                    }
+                )
+            return RedirectResponse("/vcf-offline-depot", status_code=303)
+
         acquire_network_objects_write_lock(db)
         settings = get_vcf_offline_depot_settings_row(db, reconcile_default_user=False)
         # Default-row readers may commit; reacquire before editing their result.
@@ -3849,13 +3897,15 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
         Returns:
             The endpoint response.
         """
+        storage_status = appliance_apply_status(db, REGISTRY_STORAGE_UNIT)
         return render(
             request,
             "vcf_private_registry.html",
             {
                 "identity": identity,
                 **vcf_private_registry_context(db),
-                "appliance_apply_status": appliance_apply_status(
+                "vcf_storage": storage_context(db, "registry"),
+                "appliance_apply_status": storage_status if storage_status["changed"] else appliance_apply_status(
                     db, "vcf_private_registry"
                 ),
             },
@@ -3878,6 +3928,9 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
         robot_account: str = Form("robot$vcf-supervisor-services"),
         relocation_dry_run: str | None = Form(None),
         ca_bundle_file: UploadFile | None = File(None),
+        storage_assignment_only: str = Form(""),
+        storage_volume_uuid: str = Form(""),
+        storage_migration_policy: str = Form("leave"),
         csrf: str = Form(...),
         identity: Identity = Depends(require_session_identity),
         db: Session = Depends(get_db),
@@ -3900,6 +3953,9 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
             robot_account: Robot account supplied by the caller.
             relocation_dry_run: Relocation dry run supplied by the caller.
             ca_bundle_file: Ca bundle file supplied by the caller.
+            storage_assignment_only: Whether to save just the storage wizard fields.
+            storage_volume_uuid: UUID of the requested storage volume.
+            storage_migration_policy: Handling requested for previous storage data.
             csrf: Validated CSRF token authorizing the request.
             identity: Authenticated identity authorizing the request.
             db: Active database session.
@@ -3920,6 +3976,30 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
         # Default-row readers may commit; reacquire before editing their result.
         acquire_network_objects_write_lock(db)
         db.refresh(settings)
+        if storage_assignment_only == "1":
+            try:
+                save_storage_assignment(db, "registry", storage_volume_uuid, storage_migration_policy)
+            except ValueError as exc:
+                db.rollback()
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            settings.updated_at = utcnow()
+            record_audit(
+                db,
+                actor=identity.username,
+                action="update_vcf_private_registry_storage",
+                resource_type="vcf_private_registry",
+                resource_id=str(settings.id),
+            )
+            current_storage = storage_settings(db, "registry")
+            if request.headers.get("X-Atlaso-Autosave") == "1":
+                return JSONResponse(
+                    {
+                        "status": "saved",
+                        "storage_volume_uuid": current_storage["volume_uuid"],
+                        "storage_volume_path": current_storage["mount_path"],
+                    }
+                )
+            return RedirectResponse("/vcf-private-registry", status_code=303)
         previous_hostname = settings.hostname
         selected_interfaces, selected_addresses = resolve_service_bind_targets(
             db,
@@ -4221,6 +4301,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
             {
                 "identity": identity,
                 **vcf_backup_context(db),
+                "vcf_storage": storage_context(db, "backup"),
                 "appliance_apply_status": appliance_apply_status(db, "vcf_backups"),
             },
         )
@@ -4243,6 +4324,9 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
         max_sessions: int = Form(4),
         trusted_backup_sources: list[str] = Form(default_factory=list),
         trusted_backup_sources_present: str | None = Form(None),
+        storage_assignment_only: str | None = Form(None),
+        storage_volume_uuid: str = Form(""),
+        storage_migration_policy: str = Form("leave"),
         csrf: str = Form(...),
         identity: Identity = Depends(require_session_identity),
         db: Session = Depends(get_db),
@@ -4266,6 +4350,9 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
             max_sessions: Max sessions supplied by the caller.
             trusted_backup_sources: Explicit single-host IP exemptions from SSH connection penalties.
             trusted_backup_sources_present: Whether the caller supplied the complete trusted-host selection.
+            storage_assignment_only: Whether this request updates only service storage.
+            storage_volume_uuid: Registered storage volume UUID.
+            storage_migration_policy: Handling requested for previous storage data.
             csrf: Validated CSRF token authorizing the request.
             identity: Authenticated identity authorizing the request.
             db: Active database session.
@@ -4284,6 +4371,39 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
         )
 
         verify_csrf(request, csrf)
+        if storage_assignment_only == "1":
+            settings = get_vcf_backup_settings_row(db, reconcile_default_user=False)
+            try:
+                save_storage_assignment(
+                    db, "backup", storage_volume_uuid, storage_migration_policy
+                )
+            except ValueError as exc:
+                db.rollback()
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            settings.updated_at = utcnow()
+            record_audit(
+                db,
+                actor=identity.username,
+                action="update_vcf_backup_storage",
+                resource_type="vcf_backups",
+                resource_id=str(settings.id),
+            )
+            if request.headers.get("X-Atlaso-Autosave") == "1":
+                apply_status = appliance_apply_client_status(
+                    appliance_apply_status(db, "vcf_backups")
+                )
+                current_storage = storage_settings(db, "backup")
+                return JSONResponse(
+                    {
+                        "status": "saved",
+                        "updated_at": settings.updated_at.isoformat(),
+                        "storage_volume_uuid": current_storage["volume_uuid"],
+                        "storage_volume_path": current_storage["mount_path"],
+                        "appliance_apply_status": apply_status,
+                    }
+                )
+            return RedirectResponse("/vcf-backups", status_code=303)
+
         acquire_network_objects_write_lock(db)
         settings = get_vcf_backup_settings_row(db, reconcile_default_user=False)
         # Default-row readers may commit; reacquire before editing their result.

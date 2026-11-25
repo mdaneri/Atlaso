@@ -173,6 +173,7 @@ UI_PATH_SCOPES = [
     ("/appliance-apply", "admin:all", "admin:all"),
     ("/appliance-update", "admin:all", "admin:all"),
     ("/backup-restore", "admin:all", "admin:all"),
+    ("/settings/storage-volumes", "read:esx-storage", "write:esx-storage"),
     ("/settings", "admin:all", "admin:all"),
     ("/users", "admin:all", "admin:all"),
     ("/certificate-authority", "admin:all", "admin:all"),

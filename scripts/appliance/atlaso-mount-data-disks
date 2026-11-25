@@ -12,6 +12,8 @@ BSG_DEVICE_ROOT="${ATLASO_DATA_DISK_BSG_DEVICE_ROOT:-/dev/bsg}"
 BSG_SYS_ROOT="${ATLASO_DATA_DISK_BSG_SYS_ROOT:-/sys/class/bsg}"
 RAW_DEVICE_ROOT="${ATLASO_DATA_DISK_RAW_DEVICE_ROOT:-/dev/raw}"
 GUEST_AGENT_MARKER_PATH="${ATLASO_GUEST_AGENT_MARKER_PATH:-/var/lib/atlaso-privileged/guest-agent/guest-agent.applied}"
+VCF_STORAGE_STATE_DIR=/etc/atlaso/vcf-storage
+ATLASO_HELPER=/opt/atlaso/bin/atlaso-helper
 
 log() {
   printf '%s\n' "$*"
@@ -21,6 +23,24 @@ log() {
 fail() {
   log "Atlaso data-disk safety check failed: $*" >&2
   exit 1
+}
+
+restore_vcf_storage() {
+  if [ -d "$VCF_STORAGE_STATE_DIR" ]; then
+    "$ATLASO_HELPER" vcf-storage boot --real || fail "VCF service storage could not be restored"
+  fi
+}
+
+vcf_storage_is_bound() {
+  target="$1"
+  shift
+  case "$target" in
+    /mnt/atlaso-vcf-backups) role=backup ;;
+    /mnt/atlaso-vcf-offline-depot) role=depot ;;
+    /mnt/atlaso-vcf-registry) role=registry ;;
+    *) return 1 ;;
+  esac
+  [ -d "$VCF_STORAGE_STATE_DIR" ] && "$ATLASO_HELPER" vcf-storage is-bound "$role" "$@" --real
 }
 
 load_policy() {
@@ -34,7 +54,14 @@ load_policy() {
   # Never enter virtual-disk discovery/formatting, even when the receipt is lost.
   if [ "${ATLASO_STORAGE_PROFILE:-}" = "installation" ] ||
     [ -e /etc/atlaso/installation-profile ] || [ -L /etc/atlaso/installation-profile ]; then
-    exec python3 /opt/atlaso/scripts/installation/layout.py verify
+    [ "${1:-}" != "inspect" ] || fail "ISO storage requires its installation verifier"
+    if [ -d "$VCF_STORAGE_STATE_DIR" ]; then
+      "$ATLASO_HELPER" vcf-storage verify-installation --real
+    else
+      python3 /opt/atlaso/scripts/installation/layout.py verify
+    fi
+    restore_vcf_storage
+    exit 0
   fi
   : "${ATLASO_DATA_DISK_SIZE_BYTES:?missing data-disk capacity policy}"
   if [ -z "${ATLASO_DEPOT_SCSI_TUPLE:-}" ] || [ -z "${ATLASO_BACKUP_SCSI_TUPLE:-}" ]; then
@@ -322,8 +349,15 @@ validate_mount_state() {
     done
   fi
 
-  mounted_uuid="$(findmnt -rn -M "$mountpoint" -o UUID 2>/dev/null || true)"
-  mounted_source="$(findmnt -rn -M "$mountpoint" -o SOURCE 2>/dev/null || true)"
+  if vcf_storage_is_bound "$mountpoint"; then
+    mounted_uuid="$(findmnt -rn --shadowed -M "$mountpoint" -o UUID 2>/dev/null || true)"
+    mounted_source="$(findmnt -rn --shadowed -M "$mountpoint" -o SOURCE 2>/dev/null || true)"
+    [ -n "$mounted_uuid" ] || fail "$mountpoint has lost its original filesystem mount"
+  else
+    [ "${4:-}" != "require-shadowed" ] || fail "$mountpoint has no verified service bind"
+    mounted_uuid="$(findmnt -rn -M "$mountpoint" -o UUID 2>/dev/null || true)"
+    mounted_source="$(findmnt -rn -M "$mountpoint" -o SOURCE 2>/dev/null || true)"
+  fi
   if [ -n "$mounted_uuid" ] || [ -n "$mounted_source" ]; then
     [ -n "$expected_uuid" ] || fail "$mountpoint is occupied before $label has a filesystem UUID"
     [ "$mounted_uuid" = "$expected_uuid" ] ||
@@ -446,6 +480,9 @@ validate_managed_esx_mounts() {
   [ -n "$mounted_targets" ] || return 1
   found_primary=false
   while IFS= read -r mountpoint; do
+    if vcf_storage_is_bound "$mountpoint" "$uuid"; then
+      continue
+    fi
     [ "$(findmnt -rn -M "$mountpoint" -o UUID 2>/dev/null || true)" = "$uuid" ] || return 1
     if [ "$mountpoint" = "$primary_mount" ]; then
       found_primary=true
@@ -594,6 +631,10 @@ ensure_mount() {
   mode="$5"
   disk="$6"
 
+  # An admitted service bind can cover this already-verified installed mount.
+  if vcf_storage_is_bound "$mountpoint"; then
+    return
+  fi
   observed_label="$(blkid -s LABEL -o value "$disk" 2>/dev/null || true)"
   if [ "$observed_label" != "$label" ]; then
     stable_path="$(stable_path_for_disk "$disk")"
@@ -669,7 +710,49 @@ revalidate_blank_format_target() {
   printf '%s\n' "$format_expected_disk"
 }
 
+verify_existing_vcf_mount() {
+  case "$1" in
+    backup)
+      underlay_label=ATLASO_BKUP
+      underlay_target=/mnt/atlaso-vcf-backups
+      underlay_tuple="$ATLASO_BACKUP_SCSI_TUPLE"
+      ;;
+    depot)
+      underlay_label=ATLASO_DEPOT
+      underlay_target=/mnt/atlaso-vcf-offline-depot
+      underlay_tuple="$ATLASO_DEPOT_SCSI_TUPLE"
+      ;;
+    *) fail "unknown VCF storage role" ;;
+  esac
+  underlay_os_disk="$(root_disk)"
+  [ -n "$underlay_os_disk" ] || fail "operating-system disk could not be identified"
+  underlay_disk="$(disk_for_tuple "$underlay_tuple")" || fail "$underlay_label disk is missing"
+  underlay_os_disk="$(readlink -f "$underlay_os_disk")"
+  underlay_disk="$(readlink -f "$underlay_disk")"
+  validate_identity "$underlay_label" "$underlay_tuple" "$underlay_disk" "$underlay_os_disk"
+  validate_label_or_blank "$underlay_label" "$underlay_disk"
+  [ "$(blkid -s LABEL -o value "$underlay_disk")" = "$underlay_label" ] || fail "$underlay_label is not initialized"
+  underlay_uuid="$(blkid -s UUID -o value "$underlay_disk")"
+  [ -n "$underlay_uuid" ] && fstab_uuid_mount_exists "$underlay_uuid" "$underlay_target" ||
+    fail "$underlay_label has no persistent filesystem mount"
+  if [ "$2" = "--verify-shadowed" ]; then
+    validate_mount_state "$underlay_label" "$underlay_disk" "$underlay_target" require-shadowed
+  else
+    ! vcf_storage_is_bound "$underlay_target" || fail "$underlay_target is covered by a service bind"
+    [ "$(findmnt -rn -M "$underlay_target" -o UUID)" = "$underlay_uuid" ] ||
+      fail "$underlay_target does not expose the trusted $underlay_label mount"
+    validate_mount_state "$underlay_label" "$underlay_disk" "$underlay_target"
+  fi
+}
+
 main() {
+  if [ "$#" -gt 0 ]; then
+    [ "$#" -eq 2 ] || fail "unsupported data-disk arguments"
+    case "$1" in --verify-shadowed|--verify-default) ;; *) fail "unsupported data-disk arguments" ;; esac
+    load_policy inspect
+    verify_existing_vcf_mount "$2" "$1"
+    return
+  fi
   for command in findmnt lsblk blkid readlink mkfs.ext4 mount awk head sed stat; do
     if ! command -v "$command" >/dev/null 2>&1; then
       fail "$command is required to prepare Atlaso data disks"
@@ -683,6 +766,7 @@ main() {
   ensure_mount ATLASO_DEPOT /mnt/atlaso-vcf-offline-depot atlaso atlaso 0755 "$DEPOT_DISK"
   preflight
   ensure_mount ATLASO_BKUP /mnt/atlaso-vcf-backups root root 0755 "$BACKUP_DISK"
+  restore_vcf_storage
 }
 
 main "$@"

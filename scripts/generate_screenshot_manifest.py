@@ -19,6 +19,13 @@ CANONICAL_BROWSER_ROOTS = {
 }
 
 CAPTURE_OVERRIDES = {
+    "installation-storage-layout": {
+        "source_commit": "76964855888b43b9894d9d6c02ee61914eb524c1",
+        "atlaso_version": "0.9.524",
+        "capture_method": "vmware-workstation-console",
+        "viewport": "1024x768",
+        "brand_variant": "console-light",
+    },
     **{
         f"settings-time-{state}-{layout}": {
             "source_commit": "6e59ac015f35a56833d0b91c35528feb9cdef14f",
@@ -200,6 +207,35 @@ CAPTURE_OVERRIDES = {
         "atlaso_version": "0.9.80",
         "capture_method": "codex-in-app-browser",
     },
+    **{
+        stem: {
+            "source_commit": "a7254c84d+working-tree",
+            "atlaso_version": "0.9.528",
+            "capture_method": "playwright-chromium",
+        }
+        for stem in (
+            "settings-storage-volumes-desktop",
+            "settings-storage-volume-wizard-review",
+            "esx-storage-clean-desktop",
+            "esx-storage-clean-responsive",
+        )
+    },
+    **{
+        stem: {
+            "source_commit": "a260475708a6513f91a80580d62fab122c3abfe1",
+            "atlaso_version": "0.9.531",
+            "capture_method": "playwright-chromium",
+        }
+        for stem in (
+            "vcf-backups-storage-volume",
+            "vcf-backups-storage",
+            "vcf-backups-storage-data",
+            "vcf-offline-depot-storage",
+            "vcf-private-registry-storage",
+            "vcf-private-registry-clean-desktop",
+            "vcf-private-registry-clean-responsive",
+        )
+    },
     "vcf-offline-depot-schedule-action-desktop": {
         "source_commit": "5673a8d9+working-tree",
         "atlaso_version": "0.9.127",
@@ -338,6 +374,7 @@ CAPTURE_OVERRIDES = {
 
 DOCUMENTATION_PAGES = {
     "getting-started/index.md": ("login-", "services-"),
+    "getting-started/physical-installation.md": ("installation-storage-",),
     "operate/dashboard.md": ("about-", "dashboard-"),
     "operate/navigation.md": ("primary-navigation-",),
     "operate/audit-log.md": ("audit-log-",),
@@ -515,6 +552,18 @@ SPECIAL = {
         "Hardware summary with healthy VMware Tools and a protected synchronized NTP clock in the responsive layout.",
         "Atlaso Hardware tab showing detected VMware hardware, installed and available tool versions, and healthy clock protection in the responsive layout.",
     ),
+    "settings-storage-volumes-desktop": (
+        "/ui/management/settings/storage-volumes",
+        "volume-inventory",
+        "Settings groups registered volumes and the disk registration wizard together.",
+        "Settings Storage Volumes tab with mounted volumes and the Add storage volume row.",
+    ),
+    "settings-storage-volume-wizard-review": (
+        "/ui/management/settings/storage-volumes",
+        "blank-disk-review",
+        "Review shows where Atlaso will mount the selected blank disk after Appliance Apply.",
+        "Add storage volume wizard reviewing Lab Data and /mnt/atlaso-esx-storage/lab-data.",
+    ),
     **{
         f"vcf-appliance-certificate-sddc-server-{viewport}": (
             "/ui/management/vcf-helper", "sddc-target-selection",
@@ -616,6 +665,12 @@ SPECIAL = {
         "about-modal",
         "Atlaso About dialog with the deployed version and build identity.",
         "Atlaso About dialog showing version 0.9.21, build identity, and Python version.",
+    ),
+    "installation-storage-layout": (
+        "vmware-console",
+        "storage-layout",
+        "Review the root target and both service mount paths before opening the disk erasure review.",
+        "Atlaso installer Storage layout screen showing an Auto root on /dev/sda and both service roles on shared storage.",
     ),
     "appliance-console-applied": (
         "vmware-console",
@@ -736,6 +791,42 @@ SPECIAL = {
         "published-content",
         "The public VCF Offline Depot browser remains contained in the narrow viewport.",
         "Atlaso public VCF Offline Depot browser showing its read-only contents grid in the narrow viewport.",
+    ),
+    "vcf-backups-storage-volume": (
+        "/ui/management/vcf-backups",
+        "backup-storage-volume",
+        "Select a different volume to continue the storage wizard.",
+        "VCF Backups storage wizard with Next disabled while the saved volume is selected.",
+    ),
+    "vcf-backups-storage": (
+        "/ui/management/vcf-backups",
+        "backup-storage-review",
+        "Review the backing directory for the SFTP service before staging a storage change.",
+        "VCF Backups storage wizard Review with the current path, proposed path and choice for existing files.",
+    ),
+    "vcf-backups-storage-data": (
+        "/ui/management/vcf-backups",
+        "storage-data-action",
+        "Choose what Appliance Apply will do with existing backup files.",
+        "Existing data step in the VCF Backups storage wizard showing Move, Leave and Delete.",
+    ),
+    "vcf-offline-depot-storage": (
+        "/ui/management/vcf-offline-depot",
+        "depot-storage-review",
+        "Review the destination shared by VCFDT and VCF Helper uploads before saving.",
+        "VCF Offline Depot storage wizard Review showing the current and proposed directories and data action.",
+    ),
+    "vcf-private-registry-storage": (
+        "/ui/management/vcf-private-registry",
+        "registry-storage-review",
+        "Review and stage the storage change independently of the Harbor settings.",
+        "VCF Private Registry storage wizard Review with the current path, proposed path and choice for existing files.",
+    ),
+    "vcf-private-registry-clean-responsive": (
+        "/ui/management/vcf-private-registry",
+        "registry-storage-settings",
+        "Open the storage wizard from Harbor Settings in the narrow layout.",
+        "VCF Private Registry settings showing the Change storage button in a narrow viewport.",
     ),
     "vcf-offline-depot-configuration-wizard": (
         "/vcf-offline-depot",
