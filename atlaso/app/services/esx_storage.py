@@ -20,6 +20,7 @@ ESX_STORAGE_FORMAT_CONFIRMATION_PREFIX = "FORMAT"
 ESX_STORAGE_RESERVED_MOUNT_PATHS = {
     "/mnt/atlaso-vcf-backups": "VCF Backups",
     "/mnt/atlaso-vcf-offline-depot": "VCF Offline Depot / VCFDT",
+    "/mnt/atlaso-vcf-registry": "VCF Private Registry",
 }
 ADDRESS_FAMILIES = ("ipv4", "ipv6")
 ANY_CLIENT_NETWORK = {"ipv4": "0.0.0.0/0", "ipv6": "::/0"}

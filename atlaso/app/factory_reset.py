@@ -144,6 +144,7 @@ class _ValidationOnlyAdapter(SystemAdapter):
             "apply_vcf_offline_depot_ceip",
             "apply_vcf_offline_depot_https_config",
             "apply_vcf_private_registry_config",
+            "apply_vcf_private_registry_storage",
             "apply_wan_config",
             "generate_vcf_offline_depot_software_depot_id",
             "relocate_vcf_private_registry_bundles",

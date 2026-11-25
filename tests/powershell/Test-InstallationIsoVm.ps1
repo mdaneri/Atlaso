@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
 Run source and in-process console regressions for the isolated installation ISO VM.
 .DESCRIPTION
@@ -188,10 +188,15 @@ function Get-InstallationVmFunctionText {
     Supply public Custom screens without accessing a VM.
     .PARAMETER Kind
     Expected Custom screen.
+    .PARAMETER ExpectedDisk
+    Exact fixture root disk required by destructive-review admission.
+    .PARAMETER ExpectedDataDisk
+    Exact fixture data disk required by multi-disk destructive-review admission.
     #>
     function Wait-InstallationCustomPublicState {
-        param([string]$Kind)
-        $events.Add('custom:' + $Kind)
+        param([string]$Kind, [string]$ExpectedDisk = '', [string]$ExpectedDataDisk = '')
+        $suffix = if ($ExpectedDisk) { ':' + $ExpectedDisk } else { '' }
+        $events.Add('custom:' + $Kind + $suffix)
         if ($Kind -eq 'Disk') { return [pscustomobject]@{ SizeGiB = 64; Index = 0; DiskPath = '/dev/sda' } }
     }
     <#
@@ -214,25 +219,102 @@ function Get-InstallationVmFunctionText {
         param([string]$Pattern)
         $events.Add('screen:' + $Pattern)
     }
+    <#
+    .SYNOPSIS
+    Admit a combined storage state before Custom review.
+    .PARAMETER ExpectedLayoutKind
+    Required complete combined storage mode.
+    #>
+    function Keep-InstallationServiceStorage {
+        param([string]$ExpectedLayoutKind)
+        $events.Add('keep:' + $ExpectedLayoutKind)
+    }
     Invoke-InstallationCustomLayout -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -CursorState @{} -Cancel
     $expected = @('custom:Disk', "keys:`eOA`eOA`eOD`n", 'custom:Editor', "keys:`eOC`n", 'custom:Empty',
         "keys:`n`eOD`eOD`n", 'screen:Select a disk', "keys:`eOD`eOD`n", 'screen:Installation cancelled')
     Assert-InstallationVmCondition (($events -join '|') -ceq ($expected -join '|')) `
         'Custom Back must reach disk selection before explicitly cancelling; it must never admit erasure.'
+    $events.Clear()
+    $initialRoot = [pscustomobject]@{ Kind = 'CombinedAuto'; RootDisk = '/dev/sda'; SizeGiB = 64; Mode = 'Auto' }
+    Invoke-InstallationCustomLayout -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -CursorState @{} `
+        -InitialRootAssignment $initialRoot
+    $expected = @('custom:Editor', "keys:`n", 'custom:Disk', "keys:`eOA`n", 'custom:Form',
+        "keys:`eOBext4`eOB/`n`eOC`n", 'keep:CombinedCustom', 'custom:Review:/dev/sda')
+    Assert-InstallationVmCondition (($events -join '|') -ceq ($expected -join '|')) `
+        'Combined Auto entry must skip only the legacy top-level disk selector and admit Custom rows before review.'
+    $events.Clear()
+    $legacyOptions = @(
+        [pscustomobject]@{ SizeGiB = 64; Index = 0; DiskPath = '/dev/sda' },
+        [pscustomobject]@{ SizeGiB = 4; Index = 1; DiskPath = '/dev/sdb' }
+    )
+    Invoke-InstallationCustomLayout -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -CursorState @{} `
+        -InitialDiskOptions $legacyOptions
+    $expected = @("keys:`eOA`eOA`eOD`n", 'custom:Editor', "keys:`n", 'custom:Disk', "keys:`eOA`n", 'custom:Form',
+        "keys:`eOBext4`eOB/`n`eOC`n", 'keep:Legacy', 'custom:Review:/dev/sda')
+    Assert-InstallationVmCondition (($events -join '|') -ceq ($expected -join '|')) `
+        'Published disk rows must retain their exact Custom target and per-partition choices.'
 }
 
 & {
+    . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'ConvertFrom-InstallationConsoleFrame')))
+    . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Get-InstallationStorageLayoutKind')))
+    . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Get-InstallationStorageLayoutInfo')))
+    . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Get-InstallationConsoleDiskOptions')))
+    . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Test-InstallationConsoleFixtureOptions')))
     . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Keep-InstallationServiceStorage')))
+    $combinedStorageRows = [string[]]::new(25)
+    for ($row = 0; $row -lt $combinedStorageRows.Count; $row++) { $combinedStorageRows[$row] = '' }
+    $combinedStorageRows[1] = 'Storage layout'
+    $combinedStorageRows[4] = 'Root installation target'
+    $combinedStorageRows[5] = 'Mount: /'
+    $combinedStorageRows[6] = 'Volume: /dev/sda (64 GiB) - Auto'
+    $combinedStorageRows[8] = 'SFTP backup storage'
+    $combinedStorageRows[9] = 'Mount: /mnt/atlaso-vcf-backups'
+    $combinedStorageRows[10] = 'Volume: shared storage'
+    $combinedStorageRows[12] = 'VCFDT depot storage'
+    $combinedStorageRows[13] = 'Mount: /mnt/atlaso-vcf-offline-depot'
+    $combinedStorageRows[14] = 'Volume: shared storage'
+    $combinedStorageFrame = "`e[2J`e[H" + ($combinedStorageRows -join "`r`n")
+    Assert-InstallationVmCondition ((Get-InstallationStorageLayoutKind -Text $combinedStorageFrame) -ceq 'CombinedAuto') `
+        'Auto storage must expose all three labeled volumes and fixed mount paths together.'
+    $borderedStorageFrame = $combinedStorageFrame.Replace('Storage layout', 'x Storage layout x').Replace('Root installation target', 'x Root installation target x').Replace("`r`nMount: /`r`n", "`r`nx Mount: / x`r`n").Replace('Volume:', 'x Volume:').Replace('SFTP backup storage', 'x SFTP backup storage x').Replace('VCFDT depot storage', 'x VCFDT depot storage x')
+    Assert-InstallationVmCondition ((Get-InstallationStorageLayoutKind -Text $borderedStorageFrame) -ceq 'CombinedAuto') `
+        'Storage recognition must admit the native terminal border around exact role, mount, and volume rows.'
+    $missingRootMount = $combinedStorageFrame.Replace("`r`nMount: /`r`n", "`r`nMount: /other`r`n")
+    Assert-InstallationVmCondition ((Get-InstallationStorageLayoutKind -Text $missingRootMount) -ceq 'Pending') `
+        'Service mounts must never satisfy the exact root mount requirement.'
+    $customStorageFrame = $combinedStorageFrame.Replace('- Auto', '- Custom')
+    Assert-InstallationVmCondition ((Get-InstallationStorageLayoutKind -Text $customStorageFrame) -ceq 'CombinedCustom') `
+        'Custom storage must expose all three labeled volumes and fixed mount paths together.'
+    $customStorageInfo = Get-InstallationStorageLayoutInfo -Text $customStorageFrame
+    Assert-InstallationVmCondition ($customStorageInfo.Kind -ceq 'CombinedCustom' -and
+        $customStorageInfo.RootDisk -ceq '/dev/sda' -and $customStorageInfo.SizeGiB -eq 64) `
+        'The complete Custom layout must retain the admitted root identity before review.'
+    $incompleteStorageFrame = $combinedStorageFrame.Replace('Mount: /mnt/atlaso-vcf-offline-depot', 'Mount: /mnt/other')
+    Assert-InstallationVmCondition ((Get-InstallationStorageLayoutKind -Text $incompleteStorageFrame) -ceq 'Pending') `
+        'An incomplete combined screen must never fall through as a legacy prompt.'
+    $legacyStorageFrame = "`e[2J`e[H" + "SFTP backup storage`r`nMount: /mnt/atlaso-vcf-backups"
+    Assert-InstallationVmCondition ((Get-InstallationStorageLayoutKind -Text $legacyStorageFrame) -ceq 'Legacy') `
+        'Published media must continue to recognize its standalone SFTP screen.'
     $events = [Collections.Generic.List[string]]::new()
     <#
     .SYNOPSIS
-    Admit only the two fixed public service-storage prompts.
+    Admit either the shared combined page or the first published sequential page.
     .PARAMETER Pattern
-    Expected public service label.
+    Expected public storage marker, empty for bounded layout classification.
+    .PARAMETER Deadline
+    Original whole-test deadline.
+    .PARAMETER ReadStorageLayout
+    Request the redacted native storage state.
     #>
     function Wait-InstallationConsoleState {
-        param([string]$Pattern)
-        $events.Add($Pattern)
+        param([string]$Pattern, [DateTimeOffset]$Deadline, [switch]$ReadStorageLayout)
+        if ($ReadStorageLayout) {
+            $events.Add('layout')
+            return $script:InstallationStorageLayoutKind
+        }
+        Assert-InstallationVmCondition ($Deadline -eq $script:InstallationStorageDeadline) 'Legacy storage waits must keep the original absolute deadline.'
+        $events.Add('screen:' + $Pattern)
     }
     <#
     .SYNOPSIS
@@ -242,12 +324,43 @@ function Get-InstallationVmFunctionText {
     #>
     function Send-InstallationConsoleText {
         param([string]$Text)
-        Assert-InstallationVmCondition ($Text -ceq "`n") 'Finite fixtures must never choose an extra data disk.'
-        $events.Add('keep')
+        if ($script:InstallationStorageLayoutKind -in @('CombinedAuto', 'CombinedCustom')) {
+            Assert-InstallationVmCondition ($Text -ceq "`eOC`eOC`n") 'Combined storage acceptance must advance only through the two service rows and press Enter.'
+            $events.Add('combined-keep')
+        } else {
+            Assert-InstallationVmCondition ($Text -ceq "`n") 'Finite fixtures must never choose an extra data disk.'
+            $events.Add('legacy-keep')
+        }
     }
-    Keep-InstallationServiceStorage -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -CursorState @{}
-    Assert-InstallationVmCondition (($events -join '|') -ceq 'SFTP backup storage|keep|VCFDT depot storage|keep') `
-        'Canonical native consumers must explicitly retain both service-storage defaults before erasure review.'
+    $script:InstallationStorageDeadline = [DateTimeOffset]::UtcNow.AddSeconds(5)
+    $script:InstallationStorageLayoutKind = 'Legacy'
+    Keep-InstallationServiceStorage -Deadline $script:InstallationStorageDeadline -CursorState @{} -ExpectedLayoutKind 'Legacy'
+    Assert-InstallationVmCondition (($events -join '|') -ceq 'layout|legacy-keep|screen:VCFDT depot storage|legacy-keep') `
+        'Published media must retain both sequential service-storage defaults before erasure review.'
+    $events.Clear()
+    $script:InstallationStorageLayoutKind = 'Legacy'
+    $legacyMismatchRefused = $false
+    try {
+        Keep-InstallationServiceStorage -Deadline $script:InstallationStorageDeadline -CursorState @{} `
+            -ExpectedLayoutKind 'CombinedCustom'
+    } catch { $legacyMismatchRefused = $_.Exception.Message -ceq 'The storage screen differs from the exact state required by the admitted entry path.' }
+    Assert-InstallationVmCondition ($legacyMismatchRefused -and ($events -join '|') -ceq 'layout') `
+        'A legacy entry must not satisfy a CombinedCustom storage guard.'
+    $events.Clear()
+    $script:InstallationStorageLayoutKind = 'CombinedAuto'
+    $combinedMismatchRefused = $false
+    try {
+        Keep-InstallationServiceStorage -Deadline $script:InstallationStorageDeadline -CursorState @{} `
+            -ExpectedLayoutKind 'CombinedCustom'
+    } catch { $combinedMismatchRefused = $_.Exception.Message -ceq 'The storage screen differs from the exact state required by the admitted entry path.' }
+    Assert-InstallationVmCondition ($combinedMismatchRefused -and ($events -join '|') -ceq 'layout') `
+        'The CombinedCustom guard must still refuse an Auto combined page before advancing.'
+    $events.Clear()
+    $script:InstallationStorageLayoutKind = 'CombinedCustom'
+    Keep-InstallationServiceStorage -Deadline $script:InstallationStorageDeadline -CursorState @{} `
+        -ExpectedLayoutKind 'CombinedCustom'
+    Assert-InstallationVmCondition (($events -join '|') -ceq 'layout|combined-keep') `
+        'Combined Custom storage must advance through both rows only after the mode guard passes.'
 }
 
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'ConvertTo-InstallationVmxString')))
@@ -281,6 +394,8 @@ function Get-InstallationVmFunctionText {
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Send-InstallationConsoleSecret')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Send-InstallationConsoleText')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Wait-InstallationConsoleState')))
+. ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Get-InstallationStorageLayoutKind')))
+. ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Get-InstallationStorageLayoutInfo')))
 
 $pipe = '\\.\pipe\Atlaso-Installation-0123456789abcdef0123456789abcdef'
 $lines = @(New-InstallationVmConfiguration -Name 'Atlaso-Test-installation-iso' `
@@ -1526,6 +1641,32 @@ function Close-InstallationTestPipePair {
     param([psobject]$Pair)
     if ($Pair.Client) { $Pair.Client.Dispose() }
     if ($Pair.Server) { $Pair.Server.Dispose() }
+}
+
+foreach ($storageFixture in @(
+        @{ Kind = 'CombinedAuto'; Frame = "`e[2J`e[HStorage layout`r`nRoot installation target`r`nMount: /`r`nVolume: /dev/sda (64 GiB) - Auto`r`nSFTP backup storage`r`nMount: /mnt/atlaso-vcf-backups`r`nVolume: shared`r`nVCFDT depot storage`r`nMount: /mnt/atlaso-vcf-offline-depot`r`nVolume: shared" },
+        @{ Kind = 'CombinedCapacityError'; Frame = "`e[2J`e[HStorage layout`r`nRoot installation target`r`nMount: /`r`nVolume: /dev/sdb (4 GiB) - Auto`r`nAutomatic installation requires a root disk of at least 64 GiB.`r`nSFTP backup storage`r`nMount: /mnt/atlaso-vcf-backups`r`nVolume: shared`r`nVCFDT depot storage`r`nMount: /mnt/atlaso-vcf-offline-depot`r`nVolume: shared" },
+        @{ Kind = 'Legacy'; Frame = "`e[2J`e[H SFTP backup storage`r`n Mount: /mnt/atlaso-vcf-backups" },
+        @{ Kind = 'LegacyDisk'; Frame = "`e[2J`e[HSelect a disk`r`n64 GiB @ /dev/sda`r`n4 GiB @ /dev/sdb" }
+    )) {
+    $storagePair = $null
+    try {
+        $storagePair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
+        $storageWriter = [AtlasoInstallationPipeTestWriter]::Start($storagePair.Client, [string[]]@($storageFixture.Frame))
+        $layoutKind = Wait-InstallationConsoleState -Pipe $storagePair.Server -Pattern '' `
+            -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -ReadStorageLayout
+        if ($layoutKind -is [pscustomobject]) {
+            if ($storageFixture.Kind -ceq 'CombinedCapacityError') {
+                Assert-InstallationVmCondition ($layoutKind.RootDisk -ceq '/dev/sdb' -and $layoutKind.SizeGiB -eq 4 -and
+                    $layoutKind.Mode -ceq 'Auto') 'The inline refusal must retain the exact undersized Auto root identity.'
+            }
+            $layoutKind = $layoutKind.Kind
+        }
+        Assert-InstallationVmCondition ($layoutKind -ceq $storageFixture.Kind) `
+            'Serial admission must route combined and published legacy storage pages by their complete visible frame.'
+        Assert-InstallationVmCondition $storageWriter.Wait(5000) 'The public storage serial fixture writer did not complete.'
+    }
+    finally { if ($storagePair) { Close-InstallationTestPipePair -Pair $storagePair } }
 }
 
 $knownStageFixture = @(Get-InstallationProvisioningStages -Text ([string]::Join("`n", @(

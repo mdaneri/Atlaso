@@ -838,44 +838,72 @@ Verify empty-layout refusal and cancel instead of preparing a single-root instal
 Select the fixed 64/8/4 GiB fixture and add /var/srv on the separate selected data disk.
 .PARAMETER AliasProbe
 Require the complete native /srv alias refusal without preparing an installation.
+.PARAMETER InitialRootAssignment
+Exact root target already admitted from the combined Auto storage screen.
+.PARAMETER InitialDiskOptions
+Validated legacy disk rows already admitted before the Custom helper.
+.PARAMETER FixtureProfile
+Fixed disk recipe used to admit legacy and partition-editor disk rows.
 #>
 function Invoke-InstallationCustomLayout {
-    param([IO.Pipes.NamedPipeServerStream]$Pipe, [DateTimeOffset]$Deadline, [hashtable]$CursorState, [switch]$Cancel, [switch]$MultiDisk, [switch]$AliasProbe)
+    param([IO.Pipes.NamedPipeServerStream]$Pipe, [DateTimeOffset]$Deadline, [hashtable]$CursorState,
+        [switch]$Cancel, [switch]$MultiDisk, [switch]$AliasProbe,
+        [pscustomobject]$InitialRootAssignment, [object[]]$InitialDiskOptions = @(),
+        [ValidateSet('SingleDisk', 'MultiDisk', 'OldSystemLabel')][string]$FixtureProfile = 'SingleDisk')
     $state = @{ Text = '' }
     if ($Cancel -and $MultiDisk) { throw 'The negative Custom case uses the original two-disk fixture.' }
     if ($AliasProbe -and ($Cancel -or $MultiDisk)) { throw 'The alias probe uses only the original two-disk fixture.' }
-    $fixtureName = if ($MultiDisk) { 'MultiDisk' } else { 'SingleDisk' }
+    $fixtureName = if ($FixtureProfile -eq 'OldSystemLabel') { 'OldSystemLabel' } elseif ($MultiDisk) { 'MultiDisk' } else { 'SingleDisk' }
     $common = @{ Pipe = $Pipe; State = $state; CursorState = $CursorState; Deadline = $Deadline; FixtureProfile = $fixtureName }
     try {
-        $options = @(Wait-InstallationCustomPublicState @common -Kind Disk)
-        $target = @($options | Where-Object SizeGiB -EQ 64)[0]
-        Send-InstallationConsoleText -Pipe $Pipe -Text ("`eOA`eOA" + ("`eOB" * $target.Index) + "`eOD`n")
-        Wait-InstallationCustomPublicState -Pipe $Pipe -State $state -CursorState $CursorState -Deadline $Deadline -Kind Editor
+        $options = @()
+        if ($InitialRootAssignment) {
+            if ($InitialDiskOptions.Count -gt 0 -or $InitialRootAssignment.Kind -cne 'CombinedAuto' -or
+                $InitialRootAssignment.Mode -cne 'Auto' -or [int]$InitialRootAssignment.SizeGiB -ne 64 -or
+                $InitialRootAssignment.RootDisk -cne '/dev/sda') {
+                throw 'The combined Auto root assignment does not match the exact 64 GiB fixture target.'
+            }
+            $target = [pscustomobject]@{ SizeGiB = 64; DiskPath = $InitialRootAssignment.RootDisk; Index = -1 }
+            Wait-InstallationCustomPublicState -Pipe $Pipe -State $state -CursorState $CursorState -Deadline $Deadline -Kind Editor
+        } else {
+            $options = if ($InitialDiskOptions.Count -gt 0) { @($InitialDiskOptions) } else { @(Wait-InstallationCustomPublicState @common -Kind Disk) }
+            $target = @($options | Where-Object SizeGiB -EQ 64)[0]
+            if (-not $target) { throw 'The Custom target disk is absent from the admitted fixture options.' }
+            Send-InstallationConsoleText -Pipe $Pipe -Text ("`eOA`eOA" + ("`eOB" * $target.Index) + "`eOD`n")
+            Wait-InstallationCustomPublicState -Pipe $Pipe -State $state -CursorState $CursorState -Deadline $Deadline -Kind Editor
+        }
         if ($Cancel) {
             Send-InstallationConsoleText -Pipe $Pipe -Text "`eOC`n"
             Wait-InstallationCustomPublicState -Pipe $Pipe -State $state -CursorState $CursorState -Deadline $Deadline -Kind Empty
             Send-InstallationConsoleText -Pipe $Pipe -Text "`n`eOD`eOD`n"
-            # Custom Back returns to selection. Cancel there explicitly; never
-            # mistake navigation for the terminal pre-consent cancellation.
-            Wait-InstallationConsoleState -Pipe $Pipe -Pattern 'Select a disk' -Deadline $Deadline -ReadBootProgress -CursorState $CursorState
-            Send-InstallationConsoleText -Pipe $Pipe -Text "`eOD`eOD`n"
+            if ($InitialRootAssignment) {
+                $returnedLayout = Wait-InstallationConsoleState -Pipe $Pipe -Pattern '' -Deadline $Deadline `
+                    -ReadBootProgress -CursorState $CursorState -ReadStorageLayout
+                if ($returnedLayout.Kind -cne 'CombinedAuto' -or $returnedLayout.RootDisk -cne $target.DiskPath -or
+                    [int]$returnedLayout.SizeGiB -ne 64) {
+                    throw 'Custom empty-layout Back did not return to the original Auto root assignment.'
+                }
+                Send-InstallationConsoleText -Pipe $Pipe -Text "`e"
+            } else {
+                # Published media returns to its disk selector; cancel there before review.
+                Wait-InstallationConsoleState -Pipe $Pipe -Pattern 'Select a disk' -Deadline $Deadline -ReadBootProgress -CursorState $CursorState
+                Send-InstallationConsoleText -Pipe $Pipe -Text "`eOD`eOD`n"
+            }
             Wait-InstallationConsoleState -Pipe $Pipe -Pattern 'Installation cancelled' -Deadline $Deadline -ReadBootProgress -CursorState $CursorState
             Write-Host 'Custom empty-layout refusal, Back navigation, and pre-consent cancellation passed.'
             return
         }
         $partitions = @([pscustomobject]@{ SizeGiB = 64; Path = $target.DiskPath; Mount = '/' })
         $dataDisk = ''
-        if ($MultiDisk) {
-            $dataDisk = @($options | Where-Object SizeGiB -EQ 8)[0].DiskPath
-            $partitions += [pscustomobject]@{ SizeGiB = 8; Path = $dataDisk; Mount = '/var/srv' }
-        }
+        if ($MultiDisk) { $partitions += [pscustomobject]@{ SizeGiB = 8; Path = ''; Mount = '/var/srv' } }
         Send-InstallationConsoleText -Pipe $Pipe -Text "`n"
         for ($index = 0; $index -lt $partitions.Count; $index++) {
             $definition = $partitions[$index]
             $partitionOptions = @(Wait-InstallationCustomPublicState @common -Kind Disk)
             $partitionTarget = @($partitionOptions | Where-Object SizeGiB -EQ $definition.SizeGiB)[0]
-            if ($partitionTarget.DiskPath -cne $definition.Path) { throw 'Custom partition disk differs from its original native selection.' }
-            Send-InstallationConsoleText -Pipe $Pipe -Text (("`eOA" * $options.Count) + ("`eOB" * $partitionTarget.Index) + "`n")
+            if ($definition.Path -and $partitionTarget.DiskPath -cne $definition.Path) { throw 'Custom partition disk differs from its original native selection.' }
+            if (-not $definition.Path) { $definition.Path = $partitionTarget.DiskPath; $dataDisk = $partitionTarget.DiskPath }
+            Send-InstallationConsoleText -Pipe $Pipe -Text (("`eOA" * $partitionOptions.Count) + ("`eOB" * $partitionTarget.Index) + "`n")
             Wait-InstallationCustomPublicState @common -Kind Form
             if ($AliasProbe) {
                 Send-InstallationConsoleText -Pipe $Pipe -Text "`eOBext4`eOB/srv`n"
@@ -888,13 +916,101 @@ function Invoke-InstallationCustomLayout {
             $next = if ($index + 1 -lt $partitions.Count) { "`n" } else { "`eOC`n" }
             Send-InstallationConsoleText -Pipe $Pipe -Text ("`eOBext4`eOB" + $definition.Mount + "`n" + $next)
         }
-        Keep-InstallationServiceStorage -Pipe $Pipe -Deadline $Deadline -CursorState $CursorState
+        $expectedStorageKind = if ($InitialRootAssignment) { 'CombinedCustom' } else { 'Legacy' }
+        Keep-InstallationServiceStorage -Pipe $Pipe -Deadline $Deadline -CursorState $CursorState `
+            -ExpectedLayoutKind $expectedStorageKind
         $review = if ($MultiDisk) { 'MultiReview' } else { 'Review' }
         Wait-InstallationCustomPublicState @common -Kind $review -ExpectedDisk $target.DiskPath -ExpectedDataDisk $dataDisk
         if ($MultiDisk) { Write-Host 'Custom multi-disk native destructive review admitted before consent.' }
         else { Write-Host 'Custom single-root native destructive review admitted before consent.' }
     }
     finally { $state.Text = ''; $state.Clear() }
+}
+
+<#
+.SYNOPSIS
+Classify a visible combined storage page or a published sequential service prompt.
+.PARAMETER Text
+Bounded pre-consent native console frame.
+.PARAMETER FixtureProfile
+Fixed disk recipe used to admit a published disk-selector frame.
+#>
+function Get-InstallationStorageLayoutKind {
+    [OutputType([string])]
+    param([string]$Text, [ValidateSet('SingleDisk', 'MultiDisk', 'OldSystemLabel')][string]$FixtureProfile = 'SingleDisk')
+    if ($Text.Length -gt 65536) { throw 'Storage layout console frame exceeds its bound.' }
+    $frameLines = @(ConvertFrom-InstallationConsoleFrame -Text $Text | ForEach-Object {
+        $_.Trim([char[]]' x|?+')
+    })
+    $frame = $frameLines -join "`n"
+    if ($frame.Contains('Storage layout', [StringComparison]::Ordinal)) {
+        $root = $frame.IndexOf('Root installation target', [StringComparison]::Ordinal)
+        $backup = $frame.IndexOf('SFTP backup storage', [StringComparison]::Ordinal)
+        $volumeRows = [regex]::Matches($frame, '(?im)^\s*Volume:').Count
+        if ($root -lt 0 -or $backup -le $root -or
+            -not $frame.Contains('VCFDT depot storage', [StringComparison]::Ordinal) -or
+            -not [regex]::IsMatch($frame.Substring($root, $backup - $root), '(?im)^\s*Mount:\s*/\s*$') -or
+            -not $frame.Contains('Mount: /mnt/atlaso-vcf-backups', [StringComparison]::Ordinal) -or
+            -not $frame.Contains('Mount: /mnt/atlaso-vcf-offline-depot', [StringComparison]::Ordinal) -or
+            $volumeRows -lt 3) {
+            return 'Pending'
+        }
+        $mode = [regex]::Match($frame.Substring($root, $backup - $root), '\b(Auto|Custom)\b')
+        if (-not $mode.Success) { return 'Pending' }
+        $rootVolume = $frame.Substring($root, $backup - $root)
+        $rootSize = [regex]::Match($rootVolume, 'Volume:\s+[^\s]+\s+\((?<size>[0-9]{1,3}) GiB\)\s+-\s+Auto')
+        $undersizedAuto = $rootSize.Success -and [int]$rootSize.Groups['size'].Value -lt 64
+        if ($frame.Contains('Automatic installation requires a root disk of at least 64 GiB.', [StringComparison]::Ordinal)) {
+            return 'CombinedCapacityError'
+        }
+        if ($undersizedAuto) { return 'Pending' }
+        return 'Combined' + $mode.Groups[1].Value
+    }
+    if ($frame.Contains('SFTP backup storage', [StringComparison]::Ordinal) -and
+        $frame.Contains('Mount: /mnt/atlaso-vcf-backups', [StringComparison]::Ordinal)) {
+        return 'Legacy'
+    }
+    if ($frame.Contains('Select a disk', [StringComparison]::Ordinal)) {
+        $options = @(Get-InstallationConsoleDiskOptions -Text $Text)
+        if (Test-InstallationConsoleFixtureOptions -Options $options -FixtureProfile $FixtureProfile) {
+            return 'LegacyDisk'
+        }
+    }
+    return 'Pending'
+}
+
+<#
+.SYNOPSIS
+Return a bounded storage-screen identity for fixture admission.
+.PARAMETER Text
+Bounded pre-consent native console frame.
+.PARAMETER FixtureProfile
+Fixed disk recipe used to admit a published disk-selector frame.
+#>
+function Get-InstallationStorageLayoutInfo {
+    [OutputType([pscustomobject])]
+    param([string]$Text, [ValidateSet('SingleDisk', 'MultiDisk', 'OldSystemLabel')][string]$FixtureProfile = 'SingleDisk')
+    $kind = Get-InstallationStorageLayoutKind -Text $Text -FixtureProfile $FixtureProfile
+    if ($kind -ceq 'LegacyDisk') {
+        return [pscustomobject]@{
+            Kind = $kind
+            Options = @(Get-InstallationConsoleDiskOptions -Text $Text)
+        }
+    }
+    if ($kind -notin @('CombinedAuto', 'CombinedCustom', 'CombinedCapacityError')) { return $kind }
+    $frameLines = @(ConvertFrom-InstallationConsoleFrame -Text $Text | ForEach-Object { $_.Trim([char[]]' x|?+') })
+    $frame = $frameLines -join "`n"
+    $root = $frame.IndexOf('Root installation target', [StringComparison]::Ordinal)
+    $backup = $frame.IndexOf('SFTP backup storage', [StringComparison]::Ordinal)
+    $rootSection = $frame.Substring($root, $backup - $root)
+    $volume = [regex]::Match($rootSection, 'Volume:\s+(?<disk>/dev/[a-zA-Z0-9_.-]{1,64})\s+\((?<size>[0-9]{1,3}) GiB\)\s+-\s+(?<mode>Auto|Custom)')
+    if (-not $volume.Success) { return 'Pending' }
+    return [pscustomobject]@{
+        Kind = $kind
+        RootDisk = $volume.Groups['disk'].Value
+        SizeGiB = [int]$volume.Groups['size'].Value
+        Mode = $volume.Groups['mode'].Value
+    }
 }
 
 <#
@@ -906,11 +1022,33 @@ Original receipt-bound private serial pipe.
 Unchanged whole-consumer deadline.
 .PARAMETER CursorState
 Public terminal-parser state shared with the canonical consumer.
+.PARAMETER InitialLayout
+Already-admitted current storage screen; avoids rereading a consumed first frame.
+.PARAMETER ExpectedLayoutKind
+Require the exact combined or legacy storage state selected by the admitted entry path.
 #>
 function Keep-InstallationServiceStorage {
-    param([IO.Pipes.NamedPipeServerStream]$Pipe, [DateTimeOffset]$Deadline, [hashtable]$CursorState)
+    param([IO.Pipes.NamedPipeServerStream]$Pipe, [DateTimeOffset]$Deadline, [hashtable]$CursorState,
+        [object]$InitialLayout = '', [string]$ExpectedLayoutKind = '')
+    $layout = $InitialLayout
+    if (-not $layout) {
+        $layout = Wait-InstallationConsoleState -Pipe $Pipe -Pattern '' -Deadline $Deadline `
+            -ReadBootProgress -CursorState $CursorState -ReadStorageLayout
+    }
+    if ($layout -is [pscustomobject]) { $layout = $layout.Kind }
+    if ($ExpectedLayoutKind -and $layout -cne $ExpectedLayoutKind) {
+        throw 'The storage screen differs from the exact state required by the admitted entry path.'
+    }
+    if ($layout -in @('CombinedAuto', 'CombinedCustom', 'Combined')) {
+        # Move through both service roles and retain their unchanged shared defaults.
+        Send-InstallationConsoleText -Pipe $Pipe -Text "`eOC`eOC`n"
+        return
+    }
+    if ($layout -cne 'Legacy') { throw 'The installer storage screen is neither combined nor a supported legacy prompt.' }
     foreach ($title in @('SFTP backup storage', 'VCFDT depot storage')) {
-        Wait-InstallationConsoleState -Pipe $Pipe -Pattern $title -Deadline $Deadline -ReadBootProgress -CursorState $CursorState
+        if ($title -ceq 'VCFDT depot storage') {
+            Wait-InstallationConsoleState -Pipe $Pipe -Pattern $title -Deadline $Deadline -ReadBootProgress -CursorState $CursorState
+        }
         # The default keeps the existing/shared layout. Never select an extra
         # fixture disk implicitly while admitting the unchanged native cases.
         Send-InstallationConsoleText -Pipe $Pipe -Text "`n"
@@ -962,6 +1100,8 @@ Absolute test deadline.
 Return only the recognized current or historical masked account layout.
 .PARAMETER ReadDiskSelection
 Return the complete fixed-fixture public disk rows instead of returning at its title.
+.PARAMETER ReadStorageLayout
+Return only the public combined-storage or legacy service-storage state.
 .PARAMETER KnownProvisioningStages
 Fixed public stage labels from the admitted provisioner; unknown messages are never reported.
 .PARAMETER ReadBootProgress
@@ -982,7 +1122,7 @@ Public package names derived from the original ISO, admitted before reporting ca
 Fixed disk recipe used only when admitting native disk-selection rows.
 #>
 function Wait-InstallationConsoleState {
-    param([IO.Pipes.NamedPipeServerStream]$Pipe, [string]$Pattern, [DateTimeOffset]$Deadline, [switch]$ReadAccountLayout, [switch]$ReadDiskSelection, [string[]]$KnownProvisioningStages = @(), [switch]$ReadBootProgress, [switch]$ReadLoginProgress, [ValidateSet('', 'root', 'admin')][string]$ShellAccount = '', [string]$ExpectedCapacityDisk = '', [hashtable]$CursorState, [switch]$ReadInspectionReport, [string[]]$AllowedRpmPackages = @(), [ValidateSet('SingleDisk', 'MultiDisk', 'OldSystemLabel')][string]$FixtureProfile = 'SingleDisk')
+    param([IO.Pipes.NamedPipeServerStream]$Pipe, [string]$Pattern, [DateTimeOffset]$Deadline, [switch]$ReadAccountLayout, [switch]$ReadDiskSelection, [switch]$ReadStorageLayout, [string[]]$KnownProvisioningStages = @(), [switch]$ReadBootProgress, [switch]$ReadLoginProgress, [ValidateSet('', 'root', 'admin')][string]$ShellAccount = '', [string]$ExpectedCapacityDisk = '', [hashtable]$CursorState, [switch]$ReadInspectionReport, [string[]]$AllowedRpmPackages = @(), [ValidateSet('SingleDisk', 'MultiDisk', 'OldSystemLabel')][string]$FixtureProfile = 'SingleDisk')
     if ($AllowedRpmPackages.Count -gt 1024) { throw 'Diagnostic package set exceeds its bound.' }
     $allowedPackageHashes = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($name in $AllowedRpmPackages) {
@@ -1262,6 +1402,14 @@ function Wait-InstallationConsoleState {
                     }
                     throw ('The installer reported a Python failure before the expected console state. Public location: {0}; {1}.' -f $kind.Groups[1].Value, ($frames -join ', '))
                 }
+            }
+            if ($ReadStorageLayout -and -not $failureDeadline) {
+                $layout = Get-InstallationStorageLayoutKind -Text $text -FixtureProfile $FixtureProfile
+                if ($layout -in @('CombinedAuto', 'CombinedCustom', 'CombinedCapacityError', 'Legacy', 'LegacyDisk')) {
+                    if ($layout -ceq 'Legacy') { return $layout }
+                    return Get-InstallationStorageLayoutInfo -Text $text -FixtureProfile $FixtureProfile
+                }
+                continue
             }
             if ($ReadAccountLayout -and -not $failureDeadline) {
                 if ($plain.Contains('Account passwords', [StringComparison]::Ordinal) -and
@@ -1870,37 +2018,96 @@ try {
     if ($Scenario -notin @('LoginInstalled', 'BootInstalled')) {
         $readyForInstallation = $false
         if ($Scenario -in @('CustomCancel', 'CustomAliasProbe', 'CustomReboot', 'CustomMultiReboot')) {
-            Invoke-InstallationCustomLayout -Pipe $pipe -Deadline $deadline -CursorState $cursorState -Cancel:($Scenario -eq 'CustomCancel') -MultiDisk:($Scenario -eq 'CustomMultiReboot') -AliasProbe:($Scenario -eq 'CustomAliasProbe')
+            $initialLayout = Wait-InstallationConsoleState -Pipe $pipe -Pattern '' -Deadline $deadline `
+                -ReadBootProgress -CursorState $cursorState -FixtureProfile $creationFixture.Profile -ReadStorageLayout
+            $initialKind = if ($initialLayout -is [pscustomobject]) { $initialLayout.Kind } else { $initialLayout }
+            $customArguments = @{}
+            if ($initialKind -ceq 'CombinedAuto') {
+                Send-InstallationConsoleText -Pipe $pipe -Text "l"
+                $customArguments.InitialRootAssignment = $initialLayout
+            } elseif ($initialKind -ceq 'LegacyDisk') {
+                $customArguments.InitialDiskOptions = $initialLayout.Options
+            } else {
+                throw 'The Custom scenario did not begin on a supported combined or published disk screen.'
+            }
+            Invoke-InstallationCustomLayout -Pipe $pipe -Deadline $deadline -CursorState $cursorState `
+                -Cancel:($Scenario -eq 'CustomCancel') -MultiDisk:($Scenario -eq 'CustomMultiReboot') `
+                -AliasProbe:($Scenario -eq 'CustomAliasProbe') -FixtureProfile $creationFixture.Profile @customArguments
             $readyForInstallation = $Scenario -in @('CustomReboot', 'CustomMultiReboot')
         } else {
-            Write-Host 'Public installer phase: awaiting-disk-selection'
-            $diskSelectionDeadline = $deadline
+            Write-Host 'Public installer phase: awaiting-storage-layout'
+            $layoutDeadline = $deadline
             if ($Scenario -eq 'RecoverOldLabelReboot' -and [DateTimeOffset]::UtcNow.AddSeconds(120) -lt $deadline) {
-                $diskSelectionDeadline = [DateTimeOffset]::UtcNow.AddSeconds(120)
+                $layoutDeadline = [DateTimeOffset]::UtcNow.AddSeconds(120)
             }
-            $diskOptions = @(Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Select a disk' -Deadline $diskSelectionDeadline -ReadBootProgress -CursorState $cursorState -FixtureProfile $creationFixture.Profile -ReadDiskSelection:($Scenario -in @('Probe', 'MultiProbe', 'Auto', 'AutoReboot', 'OldLabelInterrupted', 'OldLabelReboot', 'RecoverOldLabelReboot', 'CancelReview', 'Insufficient')))
-            Write-Host 'Public installer phase: disk-selection-ready'
-            Write-Host 'Installer reached the native Photon disk selection screen.'
-            if ($Scenario -eq 'Cancel') {
-                # The pinned serial getty uses TERM=screen with application cursor keys.
-                Send-InstallationConsoleText -Pipe $pipe -Text "`eOD`eOD`n"
-                Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Installation cancelled' -Deadline $deadline
-                Write-Host 'Installer cancellation returned without admitting disk writes.'
-            }
-            elseif ($Scenario -in @('Auto', 'AutoReboot', 'OldLabelInterrupted', 'OldLabelReboot', 'RecoverOldLabelReboot', 'CancelReview', 'Insufficient')) {
-                # Native visual row order can differ from VMX SCSI order.
-                $selectedGiB = if ($Scenario -eq 'Insufficient') { 4 } else { 64 }
-                $target = @($diskOptions | Where-Object SizeGiB -EQ $selectedGiB)[0]
-                Write-Host ('Selecting public native disk row {0}: {1} ({2} GiB).' -f $target.Index, $target.DiskPath, $selectedGiB)
-                Send-InstallationConsoleText -Pipe $pipe -Text ("`eOA`eOA" + ("`eOB" * $target.Index) + "`n")
-                if ($Scenario -eq 'Insufficient') {
-                    Wait-InstallationConsoleState -Pipe $pipe -Pattern 'default installation requires a disk of at least 64 GiB' `
-                        -Deadline $deadline -ExpectedCapacityDisk $target.DiskPath
-                } else {
-                    Keep-InstallationServiceStorage -Pipe $pipe -Deadline $deadline -CursorState $cursorState
+            $initialLayout = Wait-InstallationConsoleState -Pipe $pipe -Pattern '' -Deadline $layoutDeadline `
+                -ReadBootProgress -CursorState $cursorState -FixtureProfile $creationFixture.Profile -ReadStorageLayout
+            $initialKind = if ($initialLayout -is [pscustomobject]) { $initialLayout.Kind } else { $initialLayout }
+            if ($initialKind -ceq 'CombinedAuto') {
+                Write-Host 'Installer reached the combined Storage layout screen.'
+                if ($Scenario -in @('Probe', 'MultiProbe')) {
+                    $expectedSizes = @($creationFixture.Disks | ForEach-Object { [int]$_.SizeGiB } | Sort-Object -Unique)
+                    $observedSizes = [Collections.Generic.HashSet[int]]::new()
+                    $observedDevices = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+                    $candidate = $initialLayout
+                    for ($index = 0; $index -lt $expectedSizes.Count; $index++) {
+                        if ($candidate.Kind -notin @('CombinedAuto', 'CombinedCapacityError') -or $candidate.Mode -cne 'Auto') { throw 'Probe found a non-Auto root candidate.' }
+                        $null = $observedSizes.Add([int]$candidate.SizeGiB)
+                        $null = $observedDevices.Add([string]$candidate.RootDisk)
+                        if ($candidate.Kind -ceq 'CombinedCapacityError') {
+                            if ([int]$candidate.SizeGiB -ge 64) { throw 'Probe capacity refusal did not identify an undersized root candidate.' }
+                            Send-InstallationConsoleText -Pipe $pipe -Text "`n"
+                            try {
+                                Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Erase selected disks?' `
+                                    -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(1)) -ReadBootProgress -CursorState $cursorState
+                                throw 'An undersized probe target reached destructive review.'
+                            } catch {
+                                if ($_.Exception.Message -ceq 'An undersized probe target reached destructive review.') { throw }
+                                if (-not $_.Exception.Message.Contains('deadline', [StringComparison]::OrdinalIgnoreCase)) { throw }
+                            }
+                        }
+                        if ($index + 1 -lt $expectedSizes.Count) {
+                            Send-InstallationConsoleText -Pipe $pipe -Text 'd'
+                            $candidate = Wait-InstallationConsoleState -Pipe $pipe -Pattern '' -Deadline $deadline `
+                                -ReadBootProgress -CursorState $cursorState -FixtureProfile $creationFixture.Profile -ReadStorageLayout
+                        }
+                    }
+                    $observedSizeText = (@($observedSizes | Sort-Object) -join ',')
+                    $expectedSizeText = (@($expectedSizes) -join ',')
+                    if ($observedSizeText -cne $expectedSizeText -or $observedDevices.Count -ne $expectedSizes.Count) {
+                        throw 'Probe root candidates did not match every expected fixed-fixture disk.'
+                    }
+                    Write-Host ('Public root target candidates: ' + (($observedDevices | Sort-Object) -join ', '))
+                    Write-Host 'Storage-layout probe completed before any destructive review or consent.'
+                }
+                elseif ($Scenario -eq 'Cancel') {
+                    Send-InstallationConsoleText -Pipe $pipe -Text "`e"
+                    Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Installation cancelled' -Deadline $deadline
+                    Write-Host 'Installer cancellation returned without admitting disk writes.'
+                }
+                elseif ($Scenario -eq 'Insufficient') {
+                    Send-InstallationConsoleText -Pipe $pipe -Text "d"
+                    $capacityLayout = Wait-InstallationConsoleState -Pipe $pipe -Pattern '' -Deadline $deadline `
+                        -ReadBootProgress -CursorState $cursorState -FixtureProfile $creationFixture.Profile -ReadStorageLayout
+                    $capacityKind = if ($capacityLayout -is [pscustomobject]) { $capacityLayout.Kind } else { $capacityLayout }
+                    if ($capacityKind -cne 'CombinedCapacityError' -or $capacityLayout.Mode -cne 'Auto' -or [int]$capacityLayout.SizeGiB -ge 64) {
+                        throw 'The undersized Auto target did not show its inline minimum-capacity refusal.'
+                    }
+                    Send-InstallationConsoleText -Pipe $pipe -Text "`n"
+                    try {
+                        Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Erase selected disks?' `
+                            -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(1)) -ReadBootProgress -CursorState $cursorState
+                        throw 'The undersized Auto target reached destructive review.'
+                    } catch {
+                        if ($_.Exception.Message -ceq 'The undersized Auto target reached destructive review.') { throw }
+                        if (-not $_.Exception.Message.Contains('deadline', [StringComparison]::OrdinalIgnoreCase)) { throw }
+                    }
+                    Write-Host 'The undersized Auto target remained blocked before destructive review.'
+                }
+                elseif ($Scenario -in @('Auto', 'AutoReboot', 'OldLabelInterrupted', 'OldLabelReboot', 'RecoverOldLabelReboot', 'CancelReview')) {
+                    Keep-InstallationServiceStorage -Pipe $pipe -Deadline $deadline -CursorState $cursorState -InitialLayout $initialLayout
                     Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Erase selected disks?' -Deadline $deadline
                     if ($Scenario -eq 'CancelReview') {
-                        # Photon's confirmation defaults to No; Enter declines erasure.
                         Send-InstallationConsoleText -Pipe $pipe -Text "`n"
                         Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Installation cancelled' -Deadline $deadline
                         Write-Host 'Planned-layout review cancelled before erasure consent.'
@@ -1908,6 +2115,35 @@ try {
                         $readyForInstallation = $true
                     }
                 }
+            } elseif ($initialKind -ceq 'LegacyDisk') {
+                $diskOptions = $initialLayout.Options
+                $selectedGiB = if ($Scenario -eq 'Insufficient') { 4 } else { 64 }
+                $target = @($diskOptions | Where-Object SizeGiB -EQ $selectedGiB)[0]
+                if (-not $target) { throw 'The published disk selector omitted the required fixed-fixture target.' }
+                if ($Scenario -eq 'Cancel') {
+                    Send-InstallationConsoleText -Pipe $pipe -Text "`eOD`eOD`n"
+                    Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Installation cancelled' -Deadline $deadline
+                    Write-Host 'Installer cancellation returned without admitting disk writes.'
+                } elseif ($Scenario -eq 'CancelReview') {
+                    Send-InstallationConsoleText -Pipe $pipe -Text ("`eOA`eOA" + ("`eOB" * $target.Index) + "`n")
+                    Keep-InstallationServiceStorage -Pipe $pipe -Deadline $deadline -CursorState $cursorState
+                    Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Erase selected disks?' -Deadline $deadline
+                    Send-InstallationConsoleText -Pipe $pipe -Text "`n"
+                    Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Installation cancelled' -Deadline $deadline
+                    Write-Host 'Planned-layout review cancelled before erasure consent.'
+                } elseif ($Scenario -in @('Auto', 'AutoReboot', 'OldLabelInterrupted', 'OldLabelReboot', 'RecoverOldLabelReboot', 'Insufficient')) {
+                    Send-InstallationConsoleText -Pipe $pipe -Text ("`eOA`eOA" + ("`eOB" * $target.Index) + "`n")
+                    if ($Scenario -eq 'Insufficient') {
+                        Wait-InstallationConsoleState -Pipe $pipe -Pattern 'default installation requires a disk of at least 64 GiB' `
+                            -Deadline $deadline -ExpectedCapacityDisk $target.DiskPath
+                    } else {
+                        Keep-InstallationServiceStorage -Pipe $pipe -Deadline $deadline -CursorState $cursorState
+                        Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Erase selected disks?' -Deadline $deadline
+                        $readyForInstallation = $true
+                    }
+                }
+            } else {
+                throw 'The installer entry screen is neither the combined layout nor a supported published disk selector.'
             }
         }
         if ($readyForInstallation) {

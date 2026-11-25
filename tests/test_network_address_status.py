@@ -526,7 +526,9 @@ def test_postgresql_startup_adds_address_checks_under_schema_lock(monkeypatch, b
     columns = {table: [{"name": "id"}] for table in ("physical_interfaces", "vlan_interfaces", "routing_rules")}
     columns["dhcp_settings"] = [{"name": "id"}]
     columns["ntp_settings"] = [{"name": "id"}, {"name": "time_source"}]
-    columns["vcf_backup_settings"] = [{"name": "id"}]
+    storage_tables = ("vcf_backup_settings", "vcf_offline_depot_settings", "vcf_private_registry_settings")
+    columns.update({table: [{"name": "id"}] for table in storage_tables})
+    storage_columns = {"storage_volume_uuid": 120, "storage_volume_path": 240, "storage_migration_policy": 8}
     if backup_probe_column_exists:
         columns["vcf_backup_settings"].append({"name": "trusted_backup_sources"})
     columns["jobs"] = [{"name": name} for name in (
@@ -552,9 +554,13 @@ def test_postgresql_startup_adds_address_checks_under_schema_lock(monkeypatch, b
                 assert table == "physical_interfaces"
                 assert sql.endswith("JSON NOT NULL DEFAULT '[]'")
                 columns[table].append({"name": sql.split()[5]})
-            elif table == "vcf_backup_settings":
-                assert sql == "ALTER TABLE vcf_backup_settings ADD COLUMN trusted_backup_sources VARCHAR(1024) NOT NULL DEFAULT ''"
-                columns[table].append({"name": "trusted_backup_sources"})
+            elif table in storage_tables:
+                column = sql.split()[5]
+                sizes = storage_columns if table != "vcf_backup_settings" else {
+                    **storage_columns, "trusted_backup_sources": 1024,
+                }
+                assert sql == f"ALTER TABLE {table} ADD COLUMN {column} VARCHAR({sizes[column]}) NOT NULL DEFAULT ''"
+                columns[table].append({"name": column})
             elif table == "ntp_settings":
                 assert sql == "ALTER TABLE ntp_settings ADD COLUMN IF NOT EXISTS manual_time_utc TIMESTAMP WITH TIME ZONE"
                 columns[table].append({"name": "manual_time_utc"})
@@ -571,8 +577,10 @@ def test_postgresql_startup_adds_address_checks_under_schema_lock(monkeypatch, b
     monkeypatch.setattr(database, "_reconcile_default_powercli_pin", lambda _connection: None)
     database._create_database_schema(engine)
     database._create_database_schema(engine)
-    assert len([sql for sql in calls if sql.startswith("ALTER TABLE")]) == (8 if backup_probe_column_exists else 9)
-    assert {column["name"] for column in columns["vcf_backup_settings"]} == {"id", "trusted_backup_sources"}
+    assert len([sql for sql in calls if sql.startswith("ALTER TABLE")]) == (17 if backup_probe_column_exists else 18)
+    assert {column["name"] for column in columns["vcf_backup_settings"]} == {"id", "trusted_backup_sources", *storage_columns}
+    assert {column["name"] for column in columns["vcf_offline_depot_settings"]} == {"id", *storage_columns}
+    assert {column["name"] for column in columns["vcf_private_registry_settings"]} == {"id", *storage_columns}
     assert {column["name"] for column in columns["ntp_settings"]} == {"id", "time_source", "manual_time_utc"}
     assert {column["name"] for column in columns["dhcp_settings"]} == {"id", "check_ip_availability"}
     assert {column["name"] for column in columns["routing_rules"]} == {"id", "policy", "ip_family"}

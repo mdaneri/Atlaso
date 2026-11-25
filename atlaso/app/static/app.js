@@ -14377,6 +14377,91 @@ async function refreshApplianceApplySidebar() {
   updateApplianceApplySidebar(await response.json());
 }
 
+function initializeVcfStorageWizard() {
+  const dialog = document.getElementById("vcf-service-storage-wizard");
+  const form = dialog?.querySelector("[data-vcf-service-storage]");
+  const launcher = document.querySelector("[data-vcf-storage-open]");
+  if (!form || !launcher || !window.AtlasoUiPatterns) return;
+
+  const volume = form.elements.namedItem("storage_volume_uuid");
+  const policy = form.elements.namedItem("storage_migration_policy");
+  const current = form.querySelector("[data-vcf-storage-current]");
+  const migration = form.querySelector("[data-vcf-storage-migration]");
+  const next = form.querySelector("[data-atlaso-wizard-next]");
+  let initialVolume = volume.value;
+  const proposedPath = () => volume.selectedOptions[0]?.dataset.storagePath || "";
+  const volumeChanged = () => volume.value !== initialVolume && Boolean(proposedPath());
+  const storageChanges = () => current.dataset.volume !== volume.value || current.textContent !== proposedPath();
+  const updateNext = (stepId) => {
+    next.disabled = stepId === "volume" && !volumeChanged();
+  };
+  const updatePreview = () => {
+    form.querySelectorAll("[data-vcf-storage-proposed]").forEach((element) => {
+      element.textContent = proposedPath() || "Choose an available volume";
+    });
+    migration.hidden = !storageChanges();
+    form.querySelector("[data-vcf-storage-warning]").hidden = migration.hidden;
+    form.querySelector("[data-vcf-storage-unchanged]").hidden = !migration.hidden;
+  };
+  const wizard = window.AtlasoUiPatterns.createWizard({
+    form,
+    dialog,
+    steps: [
+      { id: "volume", title: "Choose storage", description: "Select a volume or use the appliance default." },
+      { id: "data", title: "Handle existing data", description: "Choose what Appliance Apply should do with the current files." },
+      { id: "review", title: "Review the storage change", description: "Check the paths and what will happen to the existing files." },
+    ],
+    onOpen: () => {
+      form.reset();
+      initialVolume = volume.value;
+      updatePreview();
+    },
+    onStepChange: ({ step }) => updateNext(step.id),
+    validateStep: ({ step }) => {
+      if (step.id === "volume" && !proposedPath()) {
+        return { valid: false, message: "Choose an available storage volume.", field: volume };
+      }
+      if (step.id === "volume" && !volumeChanged()) {
+        return { valid: false, message: "Choose a different storage volume.", field: volume };
+      }
+      if (step.id === "data" && storageChanges() && !policy.value) {
+        return { valid: false, message: "Choose how to handle existing files." };
+      }
+      return { valid: true };
+    },
+    prepareReview: () => {
+      const labels = { move: "Move to the new directory", leave: "Leave at the current location", delete: "Permanently delete after switching" };
+      form.querySelector("[data-vcf-storage-policy-review]").textContent = storageChanges()
+        ? labels[policy.value]
+        : "No change";
+    },
+    onSubmit: async () => {
+      const body = new FormData(form);
+      if (!storageChanges()) body.set("storage_migration_policy", "leave");
+      const response = await fetch(form.action, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "X-Atlaso-Autosave": "1" },
+        body,
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.status !== "saved") {
+        throw new Error(typeof payload.detail === "string" ? payload.detail : "The storage change could not be saved.");
+      }
+      window.location.reload();
+    },
+  });
+  launcher.hidden = false;
+  launcher.addEventListener("click", () => wizard.open({ launcher }));
+  volume.addEventListener("change", () => {
+    form.querySelectorAll("[name=storage_migration_policy]").forEach((input) => {
+      input.checked = false;
+    });
+    updatePreview();
+    updateNext(wizard.currentStepId);
+  });
+}
+
 function initializeAutosaveForms(root = document) {
   root.querySelectorAll("[data-autosave-form]").forEach((form) => {
     if (!(form instanceof HTMLFormElement)) {
@@ -20043,6 +20128,10 @@ function initializeServiceBindEditors(root = document) {
 }
 
 function initializeTabs() {
+  if (window.location.pathname === managementUiPath("/esx-storage") && window.location.hash === "#storage-volumes") {
+    window.location.replace(managementUiPath("/settings/storage-volumes"));
+    return;
+  }
   document.querySelectorAll("[data-tab-target]").forEach((button) => {
     if (!(button instanceof HTMLButtonElement)) {
       return;
@@ -20064,8 +20153,9 @@ function initializeTabs() {
       if (tabList.classList.contains("zone-tabs") && button.hasAttribute("data-domain")) {
         rememberDnsActiveZone(button.dataset.domain || "");
       }
-      rememberActiveTab(tabList.dataset.tabStorageKey || "", targetId);
-      if (tabList.dataset.tabStorageKey === "atlaso:esx-storage:active-tab") {
+      const storageKey = tabList.dataset.tabStorageKey || "";
+      rememberActiveTab(storageKey, targetId);
+      if (storageKey === "atlaso:esx-storage:active-tab") {
         window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#${targetId}`);
       }
       tabList.querySelectorAll(".tab-button").forEach((item) => {
@@ -20456,6 +20546,62 @@ function applianceApplyReviewRow(unit) {
   });
   row.append(head, summary);
 
+  if (unit.storage_change && typeof unit.storage_change === "object") {
+    const change = unit.storage_change;
+    const storagePanel = document.createElement("section");
+    storagePanel.className = "alert warning vcf-storage-apply-review";
+    storagePanel.dataset.vcfStorageApplyReview = "";
+    const heading = document.createElement("strong");
+    heading.textContent = "Storage change";
+    const paths = document.createElement("dl");
+    paths.className = "settings-list";
+    for (const [labelText, value] of [
+      ["Current directory", change.previous_path],
+      ["Proposed directory", change.proposed_path],
+    ]) {
+      const entry = document.createElement("div");
+      const label = document.createElement("dt");
+      label.textContent = labelText;
+      const path = document.createElement("dd");
+      path.textContent = String(value || "");
+      entry.append(label, path);
+      paths.append(entry);
+    }
+    const behavior = document.createElement("p");
+    behavior.textContent = change.action === "move"
+      ? "If files are present, Apply will copy and verify them before switching the service."
+      : change.action === "delete"
+        ? "If files are present, Apply will remove files from the current directory after switching the service."
+        : "Files stay in the current directory while the service switches to the proposed location.";
+    storagePanel.append(heading, paths, behavior);
+    if (change.action === "delete" && change.confirmation) {
+      const label = document.createElement("label");
+      label.className = "form-field";
+      const prompt = document.createElement("span");
+      prompt.className = "field-label";
+      prompt.textContent = `Type ${change.confirmation} to confirm deleting data from the current directory.`;
+      const input = document.createElement("input");
+      input.type = "text";
+      input.autocomplete = "off";
+      input.spellcheck = false;
+      input.dataset.vcfStorageConfirmation = "";
+      input.dataset.expected = String(change.confirmation);
+      input.setAttribute("aria-label", "Confirm deletion of current VCF storage data");
+      const hidden = document.createElement("input");
+      hidden.type = "hidden";
+      hidden.name = "vcf_storage_confirmations";
+      hidden.disabled = true;
+      hidden.value = JSON.stringify({ unit_id: unit.id, confirmation: change.confirmation });
+      input.addEventListener("input", () => {
+        hidden.disabled = input.value !== input.dataset.expected;
+        updateApplianceApplySelection();
+      });
+      label.append(prompt, input, hidden);
+      storagePanel.append(label);
+    }
+    row.append(storagePanel);
+  }
+
   if (Array.isArray(unit.format_volumes) && unit.format_volumes.length) {
     const formatPanel = document.createElement("div");
     formatPanel.className = "alert warning esx-storage-format-confirmations";
@@ -20571,6 +20717,12 @@ function updateApplianceApplySelection() {
       return Array.from(row.querySelectorAll("[data-esx-format-confirmation]"))
         .some((input) => input instanceof HTMLInputElement && input.value !== input.dataset.expected);
     });
+    const incompleteStorageConfirmations = selectedCheckboxes.some((checkbox) => {
+      const row = checkbox.closest("[data-apply-unit-id]");
+      if (!(row instanceof HTMLElement)) return false;
+      return Array.from(row.querySelectorAll("[data-vcf-storage-confirmation]"))
+        .some((input) => input instanceof HTMLInputElement && input.value !== input.dataset.expected);
+    });
     const planError = String(modal.dataset.planError || "");
     const pending = modal.dataset.planLoading === "true";
     if (selectionSummary instanceof HTMLElement) {
@@ -20588,9 +20740,13 @@ function updateApplianceApplySelection() {
       if (incompleteFormatConfirmations && !pending && !planError) {
         selectionSummary.textContent += " · complete disk format confirmation";
       }
+      if (incompleteStorageConfirmations && !pending && !planError) {
+        selectionSummary.textContent += " · confirm deletion of current VCF storage data";
+      }
     }
     if (submit instanceof HTMLButtonElement) {
-      submit.disabled = pending || Boolean(planError) || selected === 0 || incompleteFormatConfirmations;
+      submit.disabled = pending || Boolean(planError) || selected === 0
+        || incompleteFormatConfirmations || incompleteStorageConfirmations;
     }
     if (connectionWarning instanceof HTMLElement) {
       const messages = new Set();
@@ -20700,15 +20856,23 @@ function updateApplianceApplySelection() {
     if (!(row instanceof HTMLElement)) return false;
     return Array.from(row.querySelectorAll("[data-esx-format-confirmation]")).some((input) => input instanceof HTMLInputElement && input.value !== input.dataset.expected);
   });
+  const incompleteStorageConfirmations = selectedCheckboxes.some((checkbox) => {
+    const row = checkbox.closest("[data-apply-unit-id]");
+    if (!(row instanceof HTMLElement)) return false;
+    return Array.from(row.querySelectorAll("[data-vcf-storage-confirmation]"))
+      .some((input) => input instanceof HTMLInputElement && input.value !== input.dataset.expected);
+  });
   if (selectionSummary instanceof HTMLElement) {
     selectionSummary.textContent = invalidCombinedWan || invalidForcedNetwork || invalidNetworkDependency
       ? `${selected} components selected · review ${invalidForcedNetwork ? "Network" : invalidCombinedWan ? "Routing & WAN" : "dependent component"} validation`
       : (incompleteFormatConfirmations
         ? `${selected} component${selected === 1 ? "" : "s"} selected · complete disk format confirmation`
-        : `${selected} component${selected === 1 ? "" : "s"} selected`);
+        : (incompleteStorageConfirmations
+          ? `${selected} component${selected === 1 ? "" : "s"} selected · confirm deletion of current VCF storage data`
+          : `${selected} component${selected === 1 ? "" : "s"} selected`));
   }
   if (submit instanceof HTMLButtonElement) {
-    submit.disabled = selected === 0 || incompleteFormatConfirmations || invalidCombinedWan
+    submit.disabled = selected === 0 || incompleteFormatConfirmations || incompleteStorageConfirmations || invalidCombinedWan
       || invalidForcedNetwork || invalidNetworkDependency;
   }
   if (connectionWarning instanceof HTMLElement) {
@@ -20859,12 +21023,14 @@ function preserveApplianceApplyReviewState(modal) {
     ? {
       unitId: activeRow.dataset.applyUnitId,
       control: active.matches("[data-appliance-apply-review-checkbox]")
-        ? "checkbox" : active.matches("[data-esx-format-confirmation]") ? "format" : "",
+        ? "checkbox" : active.matches("[data-esx-format-confirmation]") ? "format"
+          : active.matches("[data-vcf-storage-confirmation]") ? "storage" : "",
       formatIndex: active.matches("[data-esx-format-confirmation]")
         ? Array.from(activeRow.querySelectorAll("[data-esx-format-confirmation]")).indexOf(active) : -1,
     }
     : null;
   const confirmations = new Map();
+  const storageConfirmations = new Map();
   modal.querySelectorAll("[data-apply-unit-id]").forEach((row) => {
     if (!(row instanceof HTMLElement)) return;
     const unitId = row.dataset.applyUnitId || "";
@@ -20873,8 +21039,13 @@ function preserveApplianceApplyReviewState(modal) {
         confirmations.set(`${unitId}:${input.dataset.formatIdentity}:${input.dataset.expected || ""}`, input.value);
       }
     });
+    Array.from(row.querySelectorAll("[data-vcf-storage-confirmation]")).forEach((input) => {
+      if (input instanceof HTMLInputElement) {
+        storageConfirmations.set(`${unitId}:${input.dataset.expected || ""}`, input.value);
+      }
+    });
   });
-  return { confirmations, focused, active };
+  return { confirmations, storageConfirmations, focused, active };
 }
 
 function restoreApplianceApplyReviewState(modal, state) {
@@ -20890,6 +21061,14 @@ function restoreApplianceApplyReviewState(modal, state) {
       const hidden = input.parentElement?.querySelector('[name="format_confirmations"]');
       if (hidden instanceof HTMLInputElement) hidden.disabled = value !== input.dataset.expected;
     });
+    Array.from(row.querySelectorAll("[data-vcf-storage-confirmation]")).forEach((input) => {
+      if (!(input instanceof HTMLInputElement)) return;
+      const value = state.storageConfirmations.get(`${unitId}:${input.dataset.expected || ""}`);
+      if (value === undefined) return;
+      input.value = value;
+      const hidden = input.parentElement?.querySelector('[name="vcf_storage_confirmations"]');
+      if (hidden instanceof HTMLInputElement) hidden.disabled = value !== input.dataset.expected;
+    });
   });
   if (!state.focused) return;
   const row = Array.from(modal.querySelectorAll("[data-apply-unit-id]"))
@@ -20899,7 +21078,9 @@ function restoreApplianceApplyReviewState(modal, state) {
     ? row.querySelector("[data-appliance-apply-review-checkbox]")
     : state.focused.control === "format"
       ? row.querySelectorAll("[data-esx-format-confirmation]")[state.focused.formatIndex]
-      : null;
+      : state.focused.control === "storage"
+        ? row.querySelector("[data-vcf-storage-confirmation]")
+        : null;
   if (target instanceof HTMLElement) target.focus();
 }
 
@@ -21109,7 +21290,9 @@ async function refreshCurrentWorkflowAfterApplianceApply(task) {
   const refreshableWorkflows = new Set([managementUiPath("/esx-storage"), managementUiPath("/vcf-offline-depot")]);
   if (task?.status !== "succeeded") return;
   if (await refreshUsersAfterApplianceApply(task)) return;
-  if (!refreshableWorkflows.has(window.location.pathname)) return;
+  const volumes = document.getElementById("esx-storage-volumes-table");
+  const volumeViewVisible = volumes && !volumes.closest("[hidden]");
+  if (!volumeViewVisible && !refreshableWorkflows.has(window.location.pathname)) return;
   window.setTimeout(() => window.location.reload(), 300);
 }
 
@@ -21137,6 +21320,14 @@ async function submitApplianceApplyForm(form) {
   }
   try {
     const body = new FormData(form);
+    body.delete("vcf_storage_confirmations");
+    Array.from(elements.modal.querySelectorAll("[data-appliance-apply-review-checkbox]:checked")).forEach((checkbox) => {
+      const row = checkbox.closest("[data-apply-unit-id]");
+      if (!(row instanceof HTMLElement)) return;
+      Array.from(row.querySelectorAll('[name="vcf_storage_confirmations"]:not(:disabled)')).forEach((confirmation) => {
+        if (confirmation instanceof HTMLInputElement) body.append(confirmation.name, confirmation.value);
+      });
+    });
     if (elements.modal.dataset.serverPlanAvailable === "true") {
       body.set("reviewed_plan", elements.modal.dataset.planToken || "");
       body.delete("requested_units");
@@ -25114,7 +25305,7 @@ function initializeEsxStorageTables() {
       placeholder: "No storage volumes are configured.",
       rowFormatter: (row) => markNewRecordRow(row, "name"),
       columns: [
-        { title: "Name", field: "name", minWidth: 130, formatter: (cell) => cell.getRow().getData().is_new ? '<button class="add-row-button" type="button" data-esx-storage-wizard-open="volume">+ Add storage volume here</button>' : escapeHtml(cell.getValue()) },
+        { title: "Name", field: "name", minWidth: 205, formatter: (cell) => cell.getRow().getData().is_new ? '<button class="add-row-button" type="button" data-esx-storage-wizard-open="volume">+ Add storage volume here</button>' : escapeHtml(cell.getValue()) },
         { title: "Source", field: "source_type", formatter: (cell) => volumeValue(cell, (value) => value === "blank_disk" ? "blank disk" : "mounted ext4") },
         { title: "Stable identity / mount", field: "stable_device_id", minWidth: 260, formatter: (cell) => cell.getRow().getData().is_new ? "" : `<code>${escapeHtml(cell.getValue() || cell.getRow().getData().mount_path || "")}</code>` },
         { title: "Capacity", field: "capacity_bytes", formatter: (cell) => volumeValue(cell, (value) => Number(value || 0).toLocaleString()) },
@@ -25252,6 +25443,7 @@ function initializeEsxStorageWizards() {
     const target = form.querySelector(`[data-esx-storage-review="${key}"]`);
     if (target instanceof HTMLElement) target.textContent = value || "not configured";
   };
+  const volumeSlug = (name) => name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 63);
 
   document.querySelectorAll("[data-esx-storage-wizard]").forEach((form) => {
     if (!(form instanceof HTMLFormElement)) return;
@@ -25266,10 +25458,13 @@ function initializeEsxStorageWizards() {
         const source = form.elements.source_type;
         const blankDisk = form.elements.stable_device_id;
         const mountedVolume = form.elements.mount_path;
-        const target = source.value === "blank_disk" ? blankDisk : mountedVolume;
+        const usesBlankDisk = source.value === "blank_disk";
+        const target = usesBlankDisk ? blankDisk : mountedVolume;
         setReviewValue(form, "volume-name", form.elements.name.value);
         setReviewValue(form, "volume-source", source.selectedOptions[0]?.textContent?.trim());
         setReviewValue(form, "volume-target", target.selectedOptions[0]?.textContent?.trim());
+        setReviewValue(form, "volume-mount-path", usesBlankDisk
+          ? `/mnt/atlaso-esx-storage/${volumeSlug(form.elements.name.value)}` : mountedVolume.value);
         return;
       }
       const families = [...form.querySelectorAll('input[name="address_families"]:checked')].map((input) => input.value === "ipv4" ? "IPv4" : "IPv6");
@@ -25284,6 +25479,10 @@ function initializeEsxStorageWizards() {
       setReviewValue(form, "share-clients", clients.join(" · "));
     };
     const validateStep = ({ step }) => {
+      if (kind === "volume" && step.id === "identity" && form.elements.source_type.value === "blank_disk"
+        && !volumeSlug(form.elements.name.value)) {
+        return { valid: false, message: "Enter a volume name containing at least one letter or number." };
+      }
       if (kind === "share" && step.id === "endpoint" && !form.querySelector('input[name="address_families"]:checked')) {
         return {
           valid: false,
@@ -25332,10 +25531,13 @@ function initializeEsxStorageWizards() {
             const payload = await response.json().catch(() => ({}));
             return { ok: false, message: payload.detail || "The ESX Storage change could not be saved." };
           }
-          const target = kind === "volume" ? managementUiPath("/esx-storage#storage-volumes") : managementUiPath("/esx-storage#nfs-datastores");
           wizard.markClean();
-          window.history.replaceState(null, "", target);
-          window.location.reload();
+          if (kind === "volume") {
+            window.location.assign(managementUiPath("/settings/storage-volumes"));
+          } else {
+            window.history.replaceState(null, "", managementUiPath("/esx-storage#nfs-datastores"));
+            window.location.reload();
+          }
           return { ok: true, close: false };
         } catch (_error) {
           return {
@@ -25385,11 +25587,19 @@ function initializeEsxStorageVolumeSource() {
   const update = () => {
     const usesBlankDisk = source.value === "blank_disk";
     blank?.toggleAttribute("hidden", !usesBlankDisk);
+    blank?.classList.toggle("hidden", !usesBlankDisk);
     mounted?.toggleAttribute("hidden", usesBlankDisk);
+    mounted?.classList.toggle("hidden", usesBlankDisk);
     const stableIdentity = blank?.querySelector('select[name="stable_device_id"]');
     const mountPath = mounted?.querySelector('select[name="mount_path"]');
-    if (stableIdentity instanceof HTMLSelectElement) stableIdentity.required = usesBlankDisk;
-    if (mountPath instanceof HTMLSelectElement) mountPath.required = !usesBlankDisk;
+    if (stableIdentity instanceof HTMLSelectElement) {
+      stableIdentity.required = usesBlankDisk;
+      stableIdentity.disabled = !usesBlankDisk;
+    }
+    if (mountPath instanceof HTMLSelectElement) {
+      mountPath.required = !usesBlankDisk;
+      mountPath.disabled = usesBlankDisk;
+    }
   };
   source.addEventListener("change", update);
   update();
@@ -27115,6 +27325,7 @@ document.addEventListener("DOMContentLoaded", initializeHelpTooltips);
 document.addEventListener("DOMContentLoaded", initializeSecretToggles);
 document.addEventListener("DOMContentLoaded", () => initializeSwitchFields());
 document.addEventListener("DOMContentLoaded", () => initializeAutosaveForms());
+document.addEventListener("DOMContentLoaded", initializeVcfStorageWizard);
 document.addEventListener("DOMContentLoaded", initializeApplianceSettings);
 document.addEventListener("DOMContentLoaded", () => initializeFirewallSettings());
 document.addEventListener("DOMContentLoaded", () => initializeDnsSettings());

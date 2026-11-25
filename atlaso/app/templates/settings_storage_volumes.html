@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block page_title %}Settings{% endblock %}
+{% block content %}
+<section class="panel wide-panel">
+  {% if identity.can("admin:all") %}
+    {% set settings_storage_page = true %}
+    {% include "partials/settings_tabs.html" %}
+  {% endif %}
+  {% include "partials/settings_storage_volumes.html" %}
+</section>
+{% endblock %}

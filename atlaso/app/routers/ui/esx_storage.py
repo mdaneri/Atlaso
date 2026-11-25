@@ -109,7 +109,7 @@ def build_router(dependencies: EsxStorageUiDependencies) -> EsxStorageUiRouter:
         Returns:
             The endpoint response.
         """
-        context = dependencies.esx_storage_context(db)
+        context = dependencies.esx_storage_context(db, include_disk_inventory=False)
         return dependencies.render(
             request,
             "esx_storage.html",
@@ -122,6 +122,27 @@ def build_router(dependencies: EsxStorageUiDependencies) -> EsxStorageUiRouter:
                 ),
             },
         )
+
+    @router.get("/settings/storage-volumes", response_class=HTMLResponse, response_model=None)
+    def storage_volumes_page(
+        request: Request,
+        identity: Identity = Depends(require_session_identity),
+        db: Session = Depends(get_db),
+    ) -> HTMLResponse:
+        """Open Storage Volumes for the operator's existing ESX Storage role.
+
+        Args:
+            request: Incoming management request.
+            identity: Authenticated operator using the volume view.
+            db: Active database session used to read the volume settings.
+        """
+        can_write = identity.can("write:esx-storage")
+        return dependencies.render(request, "settings_storage_volumes.html", {
+            "identity": identity,
+            "esx_storage_can_write": can_write,
+            **dependencies.esx_storage_context(db, reconcile=False, include_disk_inventory=can_write),
+            "appliance_apply_status": dependencies.appliance_apply_status(db, "esx_storage"),
+        })
 
     @router.post("/esx-storage/settings", response_model=None)
     def update_esx_storage_settings_from_ui(
@@ -191,7 +212,7 @@ def build_router(dependencies: EsxStorageUiDependencies) -> EsxStorageUiRouter:
             detail=f"enabled={settings.enabled} hostname={settings.hostname}",
         )
         if request.headers.get("X-Atlaso-Autosave") == "1":
-            context = dependencies.esx_storage_context(db)
+            context = dependencies.esx_storage_context(db, include_disk_inventory=False)
             return JSONResponse(
                 {
                     "status": "saved",
@@ -336,7 +357,7 @@ def build_router(dependencies: EsxStorageUiDependencies) -> EsxStorageUiRouter:
             resource_id=str(row.id),
             detail=f"name={row.name} source_type={row.source_type}",
         )
-        return RedirectResponse("/esx-storage#storage-volumes", status_code=303)
+        return RedirectResponse(f"{MANAGEMENT_UI_ROOT}/settings/storage-volumes", status_code=303)
 
     @router.post("/esx-storage/shares", response_model=None)
     def create_esx_nfs_share_from_ui(

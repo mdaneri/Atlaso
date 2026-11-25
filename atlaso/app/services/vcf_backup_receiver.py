@@ -33,10 +33,13 @@ from atlaso.app.services.vcf_backups import (
     render_vcf_backup_probe_config,
     validate_vcf_backup_state,
 )
+from atlaso.app.services.vcf_service_storage import storage_config_metadata
 
 ECDSA_PUBLIC_KEY = Path("/etc/ssh/ssh_host_ecdsa_key.pub")
 RSA_PUBLIC_KEY = Path("/etc/ssh/ssh_host_rsa_key.pub")
 MAX_ARTIFACTS = 10000
+INSTALLATION_PROFILE = Path("/etc/atlaso/installation-profile")
+INSTALLATION_LAYOUT = Path("/etc/atlaso/installation-layout.json")
 
 
 class ReceiverError(ValueError):
@@ -90,6 +93,33 @@ def _transport(receiver: dict[str, Any]) -> paramiko.Transport:
         raise ReceiverError("The applied SFTP listener is not ready or its identity changed.") from None
 
 
+def _shared_installed_backup(root: Path) -> bool:
+    """Admit a native install whose receipt keeps backups on the root filesystem.
+
+    Args:
+        root: Installed backup directory whose volume identity is being verified.
+    """
+    if not INSTALLATION_PROFILE.exists() or not INSTALLATION_LAYOUT.exists() or root.is_symlink():
+        return False
+    for receipt in (INSTALLATION_PROFILE, INSTALLATION_LAYOUT):
+        info = receipt.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022 or info.st_size > 65536:
+            return False
+    if INSTALLATION_PROFILE.read_text(encoding="ascii") != "atlaso-installation-v1\n":
+        return False
+    layout = json.loads(INSTALLATION_LAYOUT.read_bytes())
+    mounts = layout.get("mounts") if isinstance(layout, dict) else None
+    if not isinstance(mounts, list) or not all(isinstance(row, dict) and "target" in row for row in mounts):
+        return False
+    targets = {row["target"] for row in mounts if isinstance(row["target"], str)}
+    enclosing = Path("/mnt") if "/mnt" in targets else Path("/")
+    return (
+        layout.get("schema") == 1 and "/" in targets and str(root) not in targets
+        and (enclosing == Path("/") or os.path.ismount(enclosing))
+        and root.is_dir() and root.stat().st_dev == enclosing.stat().st_dev
+    )
+
+
 def _runtime(receiver: dict[str, Any], expected_config: str, expected_probe_config: str = "") -> None:
     """Prove mount, effective configuration, daemon, and live listener identity.
 
@@ -98,8 +128,15 @@ def _runtime(receiver: dict[str, Any], expected_config: str, expected_probe_conf
         expected_config: Exact public configuration admitted by Appliance Apply.
         expected_probe_config: Optional reviewed global SSH exemption configuration.
     """
-    if os.name != "posix" or not os.path.ismount(VCF_BACKUP_DEFAULT_VOLUME_MOUNT):
-        raise ReceiverError("The dedicated VCF backup volume must be mounted.")
+    root = Path(VCF_BACKUP_DEFAULT_VOLUME_MOUNT)
+    applied_storage = receiver.get("storage_assignment")
+    if os.name != "posix":
+        raise ReceiverError("The VCF backup storage is unavailable.")
+    if applied_storage:
+        if not (os.path.ismount(applied_storage["volume_path"]) and root.samefile(applied_storage["path"])):
+            raise ReceiverError("The VCF backup mount differs from the applied storage assignment.")
+    elif not os.path.ismount(root) and not _shared_installed_backup(root):
+        raise ReceiverError("The VCF backup storage is unavailable.")
     path = Path(VCF_BACKUP_EFFECTIVE_CONFIG_PATH)
     if path.is_symlink() or path.read_text(encoding="utf-8") != expected_config:
         raise ReceiverError("Apply the current VCF Backup SFTP configuration first.")
@@ -156,6 +193,10 @@ def receiver_state(db: Session) -> dict[str, Any]:
             raise ReceiverError("Correct the VCF Backup SFTP validation errors before continuing.")
         preview = render_vcf_backup_config(settings)
         baseline = load_appliance_apply_baselines(db, refresh=True).get("vcf_backups", {})
+        assignment = baseline.get("snapshot_marker") or {}
+        if not isinstance(assignment, dict) or assignment and not {"uuid", "path", "volume_path", "device"} <= assignment.keys():
+            raise ReceiverError("The applied VCF backup storage assignment is invalid.")
+        preview += storage_config_metadata(assignment)
         if baseline.get("config_preview") != redact_operational_text(preview):
             raise ReceiverError("Apply pending VCF Backup SFTP changes before continuing.")
         addresses = split_addresses(settings.listen_address)
@@ -164,7 +205,8 @@ def receiver_state(db: Session) -> dict[str, Any]:
             "host": addresses[0], "addresses": addresses, "port": settings.port,
             "username": user.username, "directory": "/backups", "host_key": host_key,
             "ecdsa_fingerprint": fingerprint, "interfaces": split_interfaces(settings.listen_interface),
-            "volume": settings.storage_path, "rsa_host_key": _rsa_public_key(),
+            "volume": assignment.get("path", settings.storage_path), "rsa_host_key": _rsa_public_key(),
+            "storage_assignment": assignment,
         }
         _runtime(receiver, preview, render_vcf_backup_probe_config(settings))
         result.update(receiver, ready=True, reason="VCF Backup SFTP is applied and its listener is ready.")

@@ -354,7 +354,7 @@ observed addresses. Unapplied access-management flags do not publish a new admin
 or address edits do not demote the old listener to `/ui/public`. Cancelling, reverting, or rolling back the candidate
 therefore leaves the previous management browser path authoritative and the pending desired state recoverable.
 
-A fresh first Apply submits all 17 initialized components, but an unchanged Network snapshot does not invoke this
+A fresh first Apply submits all initialized components, but an unchanged Network snapshot does not invoke this
 protected handoff. Its ordinary Appliance Settings step proves the existing Atlaso loopback upstream, reloads nginx
 without restarting Atlaso, and proves the guest-local front door before Network begins. A failed proof restores the
 prior nginx and systemd configuration and stops the sequential task; it is not treated as a reconnect delay. The

@@ -582,7 +582,9 @@ def validate_screenshots() -> list[Finding]:
             findings.append(Finding(manifest_path, f"screenshot file is missing: {relative}"))
         elif image.stat().st_size > 1_500_000:
             findings.append(Finding(image, "screenshot exceeds 1.5 MB"))
-        elif entry["viewport"] not in {"1600x1000", "900x1200"}:
+        elif entry["viewport"] not in {"1600x1000", "900x1200"} and not (
+            entry["capture_method"] == "vmware-workstation-console" and entry["viewport"] == "1024x768"
+        ):
             findings.append(Finding(manifest_path, f"unsupported screenshot viewport: {entry['viewport']}"))
         else:
             try:

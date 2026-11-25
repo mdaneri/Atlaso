@@ -40,6 +40,9 @@ opens automatically. The `/ui/management/appliance-apply` POST, `/ui/management/
 transport ownership lives in `atlaso/app/routers/ui/appliance_apply.py`; the stable `atlaso/app/ui.py` facade retains
 the unit, projection, submission, execution, recovery, logging, and audit helpers injected into that router.
 
+The review response includes `storage_change` only for units with a staged storage change. The object contains the
+data action, previous and proposed paths, and the exact confirmation required for Delete.
+
 The status route is deliberately a lightweight desired-state projection: it compares current snapshots with stored
 baselines without running apply-time reconciliation or privileged observation helpers. Full review, validation, and
 submission still reconcile current host observations and therefore retain fail-closed DHCP DNS fallback behavior.
@@ -978,15 +981,16 @@ dedicated complete factory-reset transaction, nginx serves public HTTP/80 as a p
 not expose a management HTTPS listener.
 
 Complete factory reset is the sole exception to the ordinary Apply submission boundary. It reuses the same render,
-validation, execution ordering, and baseline code for all 17 units inside a root-owned, resumable transaction. It does
-not create an Apply job or modal: success means the replacement database and runtime are already at the same clean
-baseline. The transaction scrubs retained VCF Backup authorized keys, the Web Terminal CA key pair, and pending terminal
+validation, execution ordering, and baseline code for every factory Apply unit inside a root-owned, resumable
+transaction. Success means the replacement database and runtime share the same clean baseline. The transaction scrubs
+retained VCF Backup authorized keys, the Web Terminal CA key pair, and pending terminal
 signing requests in addition to Apply staging. Its delay timer and runner share the transaction lock, and the durable
 marker remains `awaiting_readiness` until an independent finalizer observes Atlaso, worker, tty1 console, nginx, and two
 consecutive management OpenAPI successes. A restart/readiness failure retains the marker for boot-time resume before
 `atlaso.service` starts. Preflight renders prospective management and public nginx sites, root and VCF Backup sshd
 drop-ins, the management resolver file, and the Atlaso service loopback drop-in into isolated temporary trees and runs
-the native validators there without changing the active host configuration. Before candidate activation, reset stops
+the native validators there without changing the active host configuration. Registry storage changes at candidate
+activation. Before that step, reset stops
 the tty1 console with Atlaso and its worker, then repeatedly inventories, stops, and verifies exact UUID-shaped
 `atlaso-helper-action-*` services until none remain. Only then does it inventory and cancel the timestamp-shaped
 `atlaso-update-restart-*` timers and services created by update Apply. Reset runtime cleanup and root-password actions

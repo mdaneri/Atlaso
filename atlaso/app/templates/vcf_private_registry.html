@@ -194,13 +194,13 @@
           <span class="field-label"><span>Robot account</span><button class="help-icon" type="button" data-help="Harbor robot account name used by appliance tasks. Tokens and passwords are provisioned by helpers and are never shown in Atlaso previews.">i</button></span>
           <input name="robot_account" value="{{ vcf_registry_settings.robot_account }}">
         </label>
-        <div class="derived-field fixed-value-field">
-          <span class="field-label"><span>Registry storage path</span><button class="help-icon" type="button" data-help="Fixed appliance volume mount for Harbor registry content. This is not a routine UI-configurable host path in the MVP.">i</button></span>
-          <strong data-vcf-registry-storage>{{ vcf_registry_settings.storage_path }}</strong>
-        </div>
         <label class="switch-field"><span class="field-label"><span>Relocation dry-run</span><button class="help-icon" type="button" data-help="Keeps bundle relocation commands in preview/record mode. Development applies record command intent instead of pushing images.">i</button></span><input class="switch-input" type="checkbox" name="relocation_dry_run" {{ "checked" if vcf_registry_settings.relocation_dry_run else "" }}><span class="switch-track" aria-hidden="true"></span></label>
         <p id="vcf-registry-settings-status" class="autosave-status" data-state="idle">Changes save automatically.</p>
       </form>
+      {% set storage_heading = "Registry Storage" %}
+      {% set storage_action = "vcf-private-registry/settings" %}
+      {% set storage_writable = identity.can("write:vcf-registry") %}
+      {% include "partials/vcf_service_storage_settings.html" %}
     </div>
     {% include "partials/appliance_apply_status.html" %}
 

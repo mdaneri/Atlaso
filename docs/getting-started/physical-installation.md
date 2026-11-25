@@ -16,6 +16,17 @@ verification, and media-free boot. The immutable
 [PR #1083](https://github.com/mdaneri/Atlaso/pull/1083) record the completed run; the earlier installation evidence and
 corrected service/protocol database defect are retained in [issue #1087](https://github.com/mdaneri/Atlaso/issues/1087).
 
+<!-- BEGIN GENERATED INTERFACE OVERVIEW -->
+## Interface overview
+
+This verified appliance view provides visual orientation before you begin.
+
+![Atlaso installer Storage layout screen showing an Auto root on /dev/sda and both service roles on shared storage.](../assets/screenshots/installation-storage-layout.webp)
+
+*Figure: Review the root target and both service mount paths before opening the disk erasure review.*
+
+<!-- END GENERATED INTERFACE OVERVIEW -->
+
 This virtual CD/DVD evidence does not establish USB-source acceptance, tracked separately in
 [issue #1069](https://github.com/mdaneri/Atlaso/issues/1069). Physical SATA/NVMe and wired-Ethernet acceptance, a production
 installation ISO release, and the remaining parent #542 acceptance are still pending. This guide does not establish
@@ -41,11 +52,14 @@ then continue with disk selection below. Use only an installation release with r
 
 ## Choose disks and layout
 
-The installer requires you to select installation disks, even when it finds only one eligible disk. Review the disk
-identity and proposed layout for every selected disk before confirming.
+The first storage screen is **Storage layout**. Review the root target and both service-storage assignments together,
+even when only one eligible disk is available. The root begins in Auto on an eligible disk. Press **D** to cycle root
+targets, **Tab** to focus the SFTP and VCFDT rows, and **Enter** to continue. Press **L** on the root row to open the
+Custom partition editor. On **Storage layout**, **Esc** cancels setup and discards tentative assignments. In the Custom
+editor, **Esc** returns to the combined screen.
 
-- **Auto** installs the system to one selected disk using Photon’s default UEFI layout. The following service-storage
-  screens let you keep shared storage or explicitly select separate disks for SFTP backups and the VCFDT depot.
+- **Auto** installs the system to one selected disk using Photon’s default UEFI layout. Assign its root target and
+  service storage on the shared **Storage layout** screen.
 - **Custom** uses Photon’s native partition editor for ext4, xfs, btrfs, and swap partitions. It lets you define a
   layout across multiple disks and place Atlaso paths on separate filesystems when desired. Only the disks you
   explicitly select for the layout are replaced. The boot filesystem must be ext4: use ext4 for `/`, or create a
@@ -58,11 +72,12 @@ identity and proposed layout for every selected disk before confirming.
   The installed layout supports 32 mounted filesystems, including Photon’s generated EFI partition. Custom therefore
   permits at most 31 operator-selected mounts and reports **31 mounts + EFI** at the limit. Swap does not consume a mount.
 
-Both flows finish with **SFTP backup storage** and **VCFDT depot storage** choices. The default preserves an existing
-service partition or keeps shared storage. You can assign a compatible Custom partition currently mounted under
-`/mnt/`, or select an unused disk to create a full-disk ext4 data partition. The fixed service paths are
-`/mnt/atlaso-vcf-backups` and `/mnt/atlaso-vcf-offline-depot`. A disk already used by the layout is never offered as a
-whole-disk replacement. **Go Back** returns through the storage choices without committing tentative assignments.
+The **Storage layout** screen shows all three assignments together: the root installation target and Auto or Custom
+layout, **SFTP backup storage** at `/mnt/atlaso-vcf-backups`, and **VCFDT depot storage** at
+`/mnt/atlaso-vcf-offline-depot`. Each row shows its current volume and mount path. Keep an existing compatible partition
+or shared storage, assign another compatible Custom partition mounted under `/mnt/`, or choose an unused disk for a
+full-disk ext4 data partition. Source media, protected devices, and disks or partitions already assigned elsewhere are
+not available for conflicting assignments. If a selection conflicts, correct it on the same screen.
 
 For example, select the 64 GiB OS disk with Auto, the intended 500 GiB Backups disk for SFTP, and the other 500 GiB
 disk for VCFDT. Review the actual disk identities; equal sizes do not identify their roles. A fourth 20 GiB disk stays
@@ -86,8 +101,11 @@ into ordered parts, the verifier checks each part and the reconstructed image.
 ## Install and configure
 
 1. Boot the removable media in UEFI mode with Secure Boot disabled.
-   If no Ethernet adapter is detected, power off and add one before continuing; the installer stops before disk selection.
-2. Select Auto or Custom, choose the disk or disks, assign service storage, and review the complete proposed layout.
+   If no Ethernet adapter is detected, the installer stops before Storage layout. Power off and add an adapter
+   before restarting.
+2. On the first storage screen, **Storage layout**, review and adjust the root target and Auto or Custom layout,
+   SFTP backup, and VCFDT depot assignments together before destructive review. Use **D** to cycle root targets,
+   **Tab** to focus service rows, and **Enter** to continue. Use **Esc** to cancel setup.
 3. Check the displayed disk identities and proposed partitions, then select **Yes** at **Erase selected disks?**
    only when all data on those disks may be erased. The confirmation defaults to **No**; decline if anything is unexpected.
 4. Enter and confirm the admin and root passwords on **Account passwords**. All four fields are concealed.

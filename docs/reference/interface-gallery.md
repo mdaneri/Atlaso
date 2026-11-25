@@ -563,6 +563,18 @@ Figure: Rendered Appliance Settings configuration preview.
 
 Figure: Appliance Settings validation error for an invalid FQDN.
 
+## Settings / Storage Volumes
+
+Route: `/ui/management/settings/storage-volumes`
+
+![Add storage volume wizard reviewing Lab Data and /mnt/atlaso-esx-storage/lab-data.](../assets/screenshots/settings-storage-volume-wizard-review.webp)
+
+Figure: Review shows where Atlaso will mount the selected blank disk after Appliance Apply.
+
+![Settings Storage Volumes tab with mounted volumes and the Add storage volume row.](../assets/screenshots/settings-storage-volumes-desktop.webp)
+
+Figure: Settings groups registered volumes and the disk registration wizard together.
+
 ## Settings: Settings Time
 
 Route: `/ui/management/settings#settings-time`
@@ -691,6 +703,10 @@ Route: `vmware-console`
 
 Figure: VMware console after a successful appliance apply.
 
+![Atlaso installer Storage layout screen showing an Auto root on /dev/sda and both service roles on shared storage.](../assets/screenshots/installation-storage-layout.webp)
+
+Figure: Review the root target and both service mount paths before opening the disk erasure review.
+
 ## Vcf Backups
 
 Route: `/ui/management/vcf-backups`
@@ -702,6 +718,18 @@ Figure: VCF Backups in the verified clean-appliance desktop state.
 ![Atlaso VCF Backups page in the clean-appliance responsive viewport.](../assets/screenshots/vcf-backups-clean-responsive.webp)
 
 Figure: VCF Backups in the verified clean-appliance responsive state.
+
+![Existing data step in the VCF Backups storage wizard showing Move, Leave and Delete.](../assets/screenshots/vcf-backups-storage-data.webp)
+
+Figure: Choose what Appliance Apply will do with existing backup files.
+
+![VCF Backups storage wizard with Next disabled while the saved volume is selected.](../assets/screenshots/vcf-backups-storage-volume.webp)
+
+Figure: Select a different volume to continue the storage wizard.
+
+![VCF Backups storage wizard Review with the current path, proposed path and choice for existing files.](../assets/screenshots/vcf-backups-storage.webp)
+
+Figure: Review the backing directory for the SFTP service before staging a storage change.
 
 ## Vcf Helper
 
@@ -771,6 +799,10 @@ Figure: VCFDT Software Depot ID generation ends at Review, which immediately dis
 
 Figure: VCF Offline Depot review binds the selected profile in the contextual schedule flow.
 
+![VCF Offline Depot storage wizard Review showing the current and proposed directories and data action.](../assets/screenshots/vcf-offline-depot-storage.webp)
+
+Figure: Review the destination shared by VCFDT and VCF Helper uploads before saving.
+
 ## Vcf Private Registry
 
 Route: `/ui/management/vcf-private-registry`
@@ -779,9 +811,13 @@ Route: `/ui/management/vcf-private-registry`
 
 Figure: VCF Private Registry in the verified clean-appliance desktop state.
 
-![Atlaso VCF Private Registry page in the clean-appliance responsive viewport.](../assets/screenshots/vcf-private-registry-clean-responsive.webp)
+![VCF Private Registry settings showing the Change storage button in a narrow viewport.](../assets/screenshots/vcf-private-registry-clean-responsive.webp)
 
-Figure: VCF Private Registry in the verified clean-appliance responsive state.
+Figure: Open the storage wizard from Harbor Settings in the narrow layout.
+
+![VCF Private Registry storage wizard Review with the current path, proposed path and choice for existing files.](../assets/screenshots/vcf-private-registry-storage.webp)
+
+Figure: Review and stage the storage change independently of the Harbor settings.
 
 ## Vlan Interfaces
 

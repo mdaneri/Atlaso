@@ -13,6 +13,7 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tarfile
 from contextlib import nullcontext
 from ipaddress import ip_network
@@ -16368,6 +16369,648 @@ def vcf_backups_config_text(*, enabled: bool = True) -> str:
     )
 
 
+@pytest.mark.parametrize(
+    ("path", "valid"),
+    [
+        ("/mnt/atlaso-esx-storage/vcf/backups_2026-11.23", True),
+        ("/mnt/atlaso-esx-storage/vcf/_archive", True),
+        ("/", False),
+        ("mnt/data/backup", False),
+        ("/mnt/data//backup", False),
+        ("/mnt/data/../backup", False),
+        ("/mnt/data/-backup", False),
+        ("/mnt/data/backup/", False),
+        ("/mnt/data/backup files", False),
+        ("/mnt/data/b\u00e9ckup", False),
+    ],
+)
+def test_vcf_storage_path_syntax_matches_service_and_helper(path, valid):
+    """Preserve the same absolute path syntax at both validation boundaries.
+
+    Args:
+        path: Candidate service storage directory.
+        valid: Whether the existing path syntax allows the candidate.
+    """
+    from atlaso.app.services.vcf_service_storage import _storage_path_syntax
+
+    helper = load_helper_module()
+    assert helper._vcf_storage_valid_path(path) is valid
+    assert _storage_path_syntax(path) is valid
+
+
+def test_vcf_storage_change_metadata_requires_exact_previous_and_delete_confirmation():
+    """Bind a staged Move/Leave/Delete choice to the precise prior assignment.
+
+    Args:
+        None.
+    """
+    helper = load_helper_module()
+    old = {"uuid": "12345678-1234-0000-9000-123456789abc", "path": "/mnt/data/vcf-backups",
+           "volume_path": "/mnt/data", "device": "/dev/disk/by-id/data"}
+    marker = helper.VCF_STORAGE_CHANGE_COMMENT
+    move = {"action": "move", "previous": old, "confirmation": ""}
+    assert helper._vcf_storage_change_from_config(marker + json.dumps(move), "backup") == move
+    delete = {"action": "delete", "previous": old, "confirmation": "DELETE /mnt/data/vcf-backups"}
+    assert helper._vcf_storage_change_from_config(marker + json.dumps(delete), "backup") == delete
+    default_delete = {"action": "delete", "previous": {},
+                      "confirmation": f"DELETE {helper.VCF_BACKUPS_DEFAULT_STORAGE_PATH}"}
+    assert helper._vcf_storage_change_from_config(marker + json.dumps(default_delete), "backup") == default_delete
+    invalid_action = {"action": [], "previous": old, "confirmation": ""}
+    with pytest.raises(ValueError, match="Invalid VCF storage change metadata"):
+        helper._vcf_storage_change_from_config(marker + json.dumps(invalid_action), "backup")
+    delete["confirmation"] = "DELETE /mnt/data/elsewhere"
+    with pytest.raises(ValueError, match="Delete confirmation"):
+        helper._vcf_storage_change_from_config(marker + json.dumps(delete), "backup")
+
+
+def test_vcf_registry_storage_handler_accepts_only_exact_staged_file(monkeypatch, tmp_path):
+    """Validate the root helper admission path and apply of registry-only storage.
+
+    Args:
+        monkeypatch: Replace staged path and account identity.
+        tmp_path: Isolated registry apply directory.
+    """
+    helper = load_helper_module()
+    staged = tmp_path / "atlaso-storage.conf"
+    monkeypatch.setenv("ATLASO_HELPER_USE_SYSTEMD_RUN", "1")
+    monkeypatch.delenv("ATLASO_HELPER_SYSTEMD_RUN_CHILD", raising=False)
+    monkeypatch.setattr(helper.shutil, "which", lambda _name: "/usr/bin/systemd-run")
+    monkeypatch.setattr(helper, "_validate_path", lambda value: value)
+    delegated = []
+    monkeypatch.setattr(helper, "_run_real_action_with_systemd",
+                        lambda *args: delegated.append(args) or 0)
+    assert helper.main(["atlaso-helper", "vcf-storage", "apply-registry", "--real", str(staged)]) == 0
+    assert delegated == [("vcf-storage", "apply-registry", [str(staged)])]
+    staged.write_text("# VCF Private Registry storage\n", encoding="utf-8")
+    staged.chmod(0o600)
+    monkeypatch.setattr(helper, "VCF_REGISTRY_APPLY_CONFIG", staged)
+    monkeypatch.setattr(helper.pwd, "getpwnam", lambda _: SimpleNamespace(pw_uid=staged.stat().st_uid))
+    monkeypatch.setattr(helper.os, "O_NOFOLLOW", getattr(os, "O_NOFOLLOW", 0), raising=False)
+    monkeypatch.setattr(helper.os, "O_NONBLOCK", getattr(os, "O_NONBLOCK", 0), raising=False)
+    monkeypatch.setattr(helper.os, "fstat", lambda _fd: SimpleNamespace(
+        st_uid=staged.stat().st_uid, st_mode=stat.S_IFREG | 0o600, st_nlink=1, st_size=staged.stat().st_size,
+    ))
+    applied = []
+    monkeypatch.setattr(helper, "_apply_with_vcf_storage",
+                        lambda role, assignment, callback, **kwargs: applied.append((role, assignment, kwargs)) or 0)
+    assert helper._handle_vcf_registry_storage([str(staged)]) == 0
+    assert applied == [("registry", {}, {"migration": None})]
+    assert helper._handle_vcf_registry_storage([str(tmp_path / "other.conf")]) == 2
+
+
+@pytest.mark.parametrize("role", ["backup", "depot"])
+@pytest.mark.parametrize("mismatch", [None, "uuid", "volume", "source", "target", "ambiguity", "unavailable",
+                                      "dedicated", "unrecorded", "wrong-original", "image", "wrong-image"])
+def test_esx_storage_admits_only_verified_vcf_service_binds(monkeypatch, tmp_path, role, mismatch):
+    """Accept additional mounts only when the applied VCF assignment matches the live bind.
+
+    Args:
+        monkeypatch: Isolated disk and mount observations.
+        tmp_path: Existing fixture state directory.
+        role: VCF service using the ESX volume.
+        mismatch: Live mount arrangement and any condition that makes it invalid.
+    """
+    helper = load_helper_module()
+    volume = Path("/mnt/data")
+    target = tmp_path / role
+    target.mkdir()
+    verifier = tmp_path / "layout.py"
+    image = mismatch in {"image", "wrong-image"}
+    image_verifier = tmp_path / "atlaso-mount-data-disks"
+    image_policy = tmp_path / "data-disks.conf"
+    profile = tmp_path / "installation-profile"
+    if not image:
+        profile.touch()
+    stacked = image or mismatch in {"dedicated", "unrecorded", "wrong-original"}
+    observed = target / "unknown" if mismatch == "target" else target
+    assignment = {"uuid": "different" if mismatch == "uuid" else "uuid",
+                  "volume_path": "/mnt/other" if mismatch == "volume" else str(volume)}
+    device = "/dev/sdz"
+    mountpoints = [str(volume), str(observed)] if mismatch == "target" else [str(observed), str(volume)]
+    inventory = {"blockdevices": [{"type": "disk", "path": device, "kname": "atlaso-test", "fstype": "ext4",
+                                   "uuid": "uuid", "mountpoints": mountpoints}]}
+    source = volume / role
+
+    def read_mounts(command, **_kwargs):
+        """Read either the disk inventory or the original filesystem hidden under the service bind.
+
+        Args:
+            command: Native inventory or shadowed filesystem query.
+            **_kwargs: Bounded subprocess options.
+        """
+        if command[0] == str(image_verifier):
+            assert image
+            assert command[1:] == ["--verify-shadowed", role]
+            return subprocess.CompletedProcess(command, int(mismatch == "wrong-image"), "", "")
+        if command[0] == "findmnt":
+            assert not image
+            assert "--shadowed" in command and str(target) in command
+            original_uuid = "other-disk" if mismatch == "wrong-original" else "installed-disk"
+            return subprocess.CompletedProcess(command, 0, json.dumps({
+                "filesystems": [{"uuid": original_uuid, "fstype": "ext4"}],
+            }), "")
+        return subprocess.CompletedProcess(command, 0, json.dumps(inventory), "")
+
+    def live_source(requested_role, requested_assignment):
+        """Return the verified source or model an unavailable registered volume.
+
+        Args:
+            requested_role: Service role to verify against the applied assignment.
+            requested_assignment: Applied assignment under verification.
+        """
+        assert (requested_role, requested_assignment) == (role, assignment)
+        if mismatch == "unavailable":
+            raise ValueError("VCF storage volume mount is unavailable.")
+        return source
+
+    monkeypatch.setattr(helper, "VCF_STORAGE_STATE_DIR", tmp_path)
+    monkeypatch.setattr(helper, "VCF_STORAGE_INSTALLATION_PROFILE", profile)
+    monkeypatch.setattr(helper, "VCF_STORAGE_INSTALLATION_LAYOUT", verifier)
+    monkeypatch.setattr(helper, "ATLASO_MOUNT_DATA_DISKS_PATH", image_verifier)
+    monkeypatch.setattr(helper, "ATLASO_DATA_DISK_POLICY_PATH", image_policy)
+    monkeypatch.setattr(helper, "_vcf_storage_target", lambda selected: tmp_path / selected)
+    monkeypatch.setattr(helper.runpy, "run_path", lambda _: {
+        "installation_profile": lambda: True,
+        "load_layout": lambda: {"mounts": [] if mismatch == "unrecorded" else [
+            {"target": str(target), "uuid": "installed-disk", "filesystem": "ext4"},
+        ]},
+    })
+    lstat = Path.lstat
+    monkeypatch.setattr(Path, "lstat", lambda path: SimpleNamespace(st_mode=stat.S_IFREG | 0o644, st_uid=0)
+                        if path in {verifier, image_verifier, image_policy} else lstat(path))
+    monkeypatch.setattr(helper, "_command_path", lambda command: command)
+    monkeypatch.setattr(helper, "_run", read_mounts)
+    monkeypatch.setattr(helper, "_esx_storage_by_id_map", lambda: {device: "/dev/disk/by-id/data"})
+    monkeypatch.setattr(helper, "_esx_storage_os_devices", set)
+    monkeypatch.setattr(helper, "_esx_storage_mount_is_writable", lambda path: path == str(volume))
+    monkeypatch.setattr(helper, "_esx_storage_uuid_fstab_entry_exists", lambda uuid, path: (uuid, path) == ("uuid", str(volume)))
+    monkeypatch.setattr(helper, "_esx_storage_managed_bind_fstab_entry_exists", lambda _: False)
+    monkeypatch.setattr(helper, "_vcf_storage_root_directory", lambda _: None)
+    monkeypatch.setattr(helper, "_vcf_storage_read", lambda _: assignment)
+    monkeypatch.setattr(helper, "_vcf_storage_live_source", live_source)
+    monkeypatch.setattr(helper, "_vcf_storage_find_mount",
+                        lambda path, _: [str(path)] * (3 if mismatch == "ambiguity" else 1 + stacked))
+    monkeypatch.setattr(helper, "_vcf_storage_mounted",
+                        lambda src, dest: (src, dest) == (source, target) and mismatch != "source")
+
+    entry, = helper._esx_storage_inventory()
+    assert entry["mount_path"] == str(volume)
+    errors = helper._esx_storage_mounted_disk_errors(entry, mount_path=volume)
+    assert errors == ([] if mismatch in {None, "dedicated", "image"} else ["has unexpected additional mounts"])
+
+
+@pytest.mark.parametrize(
+    ("capabilities", "attributes", "expected"),
+    [("ACLs, xattrs", [], "-aHAX"), ("no ACLs, xattrs", ["user.fixture"], "-aHX"),
+     ("no ACLs, xattrs", ["system.posix_acl_access"], None)],
+)
+def test_vcf_storage_copy_preserves_acl_support(monkeypatch, tmp_path, capabilities, attributes, expected):
+    """Keep POSIX ACLs when selecting the storage copy flags.
+
+    Args:
+        monkeypatch: Replace rsync capabilities and filesystem attribute observations.
+        tmp_path: Temporary source directory for the mocked copy.
+        capabilities: Capabilities reported by rsync.
+        attributes: Extended attributes on the fixture file.
+        expected: Copy flags, or None when Move must stop.
+    """
+    helper = load_helper_module()
+    fixture = tmp_path / "fixture"
+    fixture.touch()
+    monkeypatch.setattr(helper, "_run", lambda *_, **__: subprocess.CompletedProcess([], 0, capabilities, ""))
+    monkeypatch.setattr(helper.os, "listxattr", lambda path: attributes if path == fixture else [], raising=False)
+
+    if expected is None:
+        with pytest.raises(ValueError, match="ACL-capable rsync"):
+            helper._vcf_storage_rsync_options(tmp_path)
+    else:
+        assert helper._vcf_storage_rsync_options(tmp_path) == expected
+
+
+@pytest.mark.parametrize("installed", [False, True])
+def test_vcf_storage_move_retries_only_its_recorded_destination(monkeypatch, tmp_path, installed):
+    """Keep failed copy evidence and resume only against the same destination.
+
+    Args:
+        monkeypatch: Replace root ownership and real storage copy observations.
+        tmp_path: Isolated source, destination, and durable state.
+        installed: Whether the destination is the covered appliance default.
+    """
+    helper = load_helper_module()
+    state = tmp_path / "state"
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    for path in (state, source, target):
+        path.mkdir()
+    monkeypatch.setattr(helper, "VCF_STORAGE_STATE_DIR", state)
+    monkeypatch.setattr(helper, "_vcf_storage_tree_ready", lambda _: None)
+    monkeypatch.setattr(helper, "_vcf_storage_rsync_options", lambda _: "-aHX")
+    real_lstat = Path.lstat
+
+    def lstat(path):
+        """Report the owner and permissions of the simulated root-owned record.
+
+        Args:
+            path: Record or fixture path being inspected.
+        """
+        info = real_lstat(path)
+        if path.parent == state and path.suffix == ".json":
+            return SimpleNamespace(st_mode=stat.S_IFREG | 0o600, st_uid=0, st_nlink=1, st_size=info.st_size)
+        return info
+
+    monkeypatch.setattr(Path, "lstat", lstat)
+    outcomes = {"occupied": "no", "identity": "92:3", "returncode": 42}
+    attempts = []
+
+    def move_command(_target, _source, _role, _options, *, installed, exclude_recovery, identity="", resume=False,
+                     destination_mode=None):
+        """Return bounded destination observations and injected copy errors.
+
+        Args:
+            _target: Destination of the simulated copy command.
+            _source: Fenced source for the simulated copy command.
+            _role: Service using the destination.
+            _options: Copy options admitted on the host.
+            installed: Whether to expose the installed directory privately.
+            exclude_recovery: Whether to omit the intrinsic recovery directory.
+            identity: Expected destination identity for writes, empty during inspection.
+            resume: Whether a durable record permits retrying an occupied destination.
+            destination_mode: Expected registered destination permissions after Move.
+        """
+        if not identity:
+            return subprocess.CompletedProcess([], 0, f"{outcomes['identity']} {outcomes['occupied']}\n", "")
+        attempts.append((identity, resume, installed, exclude_recovery, destination_mode))
+        return subprocess.CompletedProcess([], outcomes["returncode"], "", "")
+
+    monkeypatch.setattr(helper, "_vcf_storage_move_command", move_command)
+    def move():
+        """Retry the same reviewed storage assignment."""
+        return helper._vcf_storage_copy_previous(
+            "registry", source, None if installed else target, target, source_mode=0o755,
+            preserve_lost_found=False, previous={"uuid": "old"}, assignment={"uuid": "new"},
+        )
+
+    outcomes["occupied"] = "yes"
+    with pytest.raises(ValueError, match="not empty"):
+        move()
+    assert not attempts and not list(state.iterdir())
+
+    outcomes["occupied"] = "no"
+    with pytest.raises(ValueError, match="copy verification failed"):
+        move()
+    mode = None if installed else 0o755
+    assert attempts == [("92:3", False, installed, False, mode)]
+    (record,) = state.glob("registry.move-*.json")
+
+    outcomes.update(occupied="yes", identity="92:4", returncode=0)
+    with pytest.raises(ValueError, match="no longer matches"):
+        move()
+    assert len(attempts) == 1
+
+    outcomes.update(identity="92:3", returncode=44)
+    with pytest.raises(ValueError, match="files on the destination differ"):
+        move()
+    outcomes["returncode"] = 45
+    with pytest.raises(ValueError, match="Could not flush"):
+        move()
+    outcomes["returncode"] = 0
+    assert move() == record
+    assert attempts[1:] == [("92:3", True, installed, False, mode)] * 3
+
+
+@pytest.mark.parametrize("role", ["backup", "depot", "registry"])
+@pytest.mark.parametrize("registered", [False, True])
+@pytest.mark.parametrize("observed", ["committed", "missing_record", "wrong_mount"])
+def test_vcf_storage_reconciles_completed_cutover(monkeypatch, tmp_path, role, registered, observed):
+    """Reconcile a stale application baseline only from verified native state.
+
+    Args:
+        monkeypatch: Replace filesystem and lock operations with fixture observations.
+        tmp_path: Isolated storage state and paths.
+        role: Storage service being recovered.
+        registered: Whether the committed destination is a registered volume.
+        observed: Whether native state proves the completed cutover.
+    """
+    helper = load_helper_module()
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    target = tmp_path / "service"
+    target.mkdir()
+    volume = tmp_path / "volume"
+    assignment = {"uuid": "new", "path": str(volume)} if registered else {}
+    if observed != "missing_record":
+        (state_dir / f"{role}.json").write_text(json.dumps(assignment), encoding="utf-8")
+
+    monkeypatch.setitem(sys.modules, "fcntl", SimpleNamespace(
+        flock=lambda handle, flags: None, LOCK_EX=1, LOCK_NB=2,
+    ))
+    monkeypatch.setattr(helper.os, "O_NOFOLLOW", 0, raising=False)
+    monkeypatch.setattr(helper, "VCF_STORAGE_STATE_DIR", state_dir)
+    monkeypatch.setattr(helper, "VCF_STORAGE_INSTALLATION_PROFILE", tmp_path / "no-installation-profile")
+    monkeypatch.setattr(helper, "ATLASO_DATA_DISK_POLICY_PATH", tmp_path / "no-image-policy")
+    monkeypatch.setattr(helper, "_vcf_storage_root_directory", lambda _: None)
+    monkeypatch.setattr(helper, "_vcf_storage_read", lambda _: assignment)
+    monkeypatch.setattr(helper, "_vcf_storage_target", lambda _: target)
+    mount_layers = [str(target)] if registered else []
+    if observed == "wrong_mount" and not registered:
+        mount_layers = [str(target), str(target)]
+    monkeypatch.setattr(helper, "_vcf_storage_find_mount", lambda *_: mount_layers)
+    monkeypatch.setattr(helper, "_vcf_storage_live_source", lambda _role, _assignment: volume)
+    monkeypatch.setattr(helper, "_vcf_storage_mounted", lambda *_: observed == "committed")
+    for operation in ("_vcf_storage_bind", "_vcf_storage_unbind", "_vcf_storage_begin_fence",
+                      "_vcf_storage_copy_previous", "_vcf_storage_remove_previous", "_durable_management_handoff_state_write"):
+        monkeypatch.setattr(helper, operation, lambda *_, **__: pytest.fail("Recovery attempted another cutover."))
+
+    called = []
+    result = helper._apply_with_vcf_storage(
+        role, assignment, lambda: called.append(role) or 0, disabled=role != "registry",
+        migration={"previous": {"uuid": "old", "path": "/mnt/old"}, "action": "delete", "confirmation": "DELETE /mnt/old"},
+    )
+    assert result == (0 if observed == "committed" else 2)
+    assert called == ([role] if observed == "committed" else [])
+
+
+@pytest.mark.parametrize("committed", [False, True])
+@pytest.mark.parametrize("original_verified", [False, True])
+def test_vcf_storage_recovers_fence_beneath_verified_overlay(monkeypatch, tmp_path, committed, original_verified):
+    """Restore the original mode and drop only a transaction's uncommitted bind.
+
+    Args:
+        monkeypatch: Replace native mount and descriptor observations.
+        tmp_path: Isolated storage path and durable fence record.
+        committed: Whether the registered assignment is already durable.
+        original_verified: Whether the hidden directory matches the fence record.
+    """
+    helper = load_helper_module()
+    path = tmp_path / "registry"
+    path.mkdir()
+    original = path.stat()
+    overlay = {"uuid": "registered", "path": str(tmp_path / "volume" / "vcf-registry")}
+    fence = tmp_path / "registry.fence.json"
+    fence.write_text(json.dumps({"path": str(path), "device": original.st_dev, "inode": original.st_ino,
+                                 "mode": 0o755, "overlay": overlay}), encoding="utf-8")
+    fence_size = fence.stat().st_size
+    real_stat = Path.stat
+
+    def fixture_stat(target, **kwargs):
+        """Read the fence record as one protected regular file.
+
+        Args:
+            target: Path whose metadata is being read.
+            **kwargs: Pass-through filesystem observation options.
+        """
+        if target == fence:
+            return SimpleNamespace(st_uid=0, st_nlink=1, st_mode=stat.S_IFREG | 0o600, st_size=fence_size)
+        return real_stat(target, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", fixture_stat)
+    descriptor = SimpleNamespace(st_dev=original.st_dev, st_ino=original.st_ino + 1)
+    monkeypatch.setattr(helper, "os", SimpleNamespace(path=os.path, O_RDONLY=0, O_DIRECTORY=0, O_NOFOLLOW=0,
+                                                      open=lambda *_: 42, fstat=lambda _: descriptor, close=lambda _: None))
+    monkeypatch.setattr(helper, "VCF_STORAGE_STATE_DIR", tmp_path)
+    monkeypatch.setattr(helper, "_vcf_storage_target", lambda _: path)
+    monkeypatch.setattr(helper, "_vcf_storage_read", lambda _: overlay if committed else {})
+    monkeypatch.setattr(helper, "_vcf_storage_metadata", lambda candidate: candidate)
+    monkeypatch.setattr(helper, "_vcf_storage_live_source", lambda _role, candidate: Path(candidate["path"]))
+    monkeypatch.setattr(helper, "_vcf_storage_find_mount", lambda *_: [str(path)])
+    monkeypatch.setattr(helper, "_vcf_storage_mounted", lambda *_: True)
+    monkeypatch.setattr(helper, "_fsync_directory", lambda _: None)
+    commands, unbound = [], []
+    monkeypatch.setattr(helper, "_vcf_storage_unbind", unbound.append)
+
+    def run(command, *, timeout):
+        """Record the private mount namespace restoration command.
+
+        Args:
+            command: Exact original directory restoration command.
+            timeout: Bound for the child process.
+        """
+        commands.append((command, timeout))
+        return subprocess.CompletedProcess(command, 0 if original_verified else 1, "", "")
+
+    monkeypatch.setattr(helper, "_run", run)
+    if original_verified:
+        helper._vcf_storage_recover_fence("registry")
+        assert fence not in list(tmp_path.iterdir())
+    else:
+        with pytest.raises(ValueError, match="could not be restored"):
+            helper._vcf_storage_recover_fence("registry")
+        assert fence in list(tmp_path.iterdir())
+    assert len(commands) == 1
+    command, timeout = commands[0]
+    assert command[:4] == ["/usr/bin/unshare", "--mount", "--propagation", "private"]
+    assert command[-3:] == [str(path), f"{original.st_dev}:{original.st_ino}", "755"]
+    assert timeout == 30
+    assert unbound == ([path] if original_verified and not committed else [])
+
+
+def test_vcf_storage_depot_initializes_prod_as_atlaso(monkeypatch, tmp_path):
+    """Create the upload root with the service identity before exposing the selected volume.
+
+    Args:
+        monkeypatch: Replace host account, mount and command observations.
+        tmp_path: Isolated volume, registration, and depot paths.
+    """
+    helper = load_helper_module()
+    volume = tmp_path / "volume"
+    source = volume / "depot"
+    source.mkdir(parents=True)
+    prod = source / "PROD"
+    device = tmp_path / "device"
+    device.touch()
+    allowlist = tmp_path / "allowlist"
+    allowlist.write_text(f"uuid\t{device}\t{volume}\n", encoding="utf-8")
+    real_stat = Path.stat
+    calls = []
+
+    def source_stat(path, **kwargs):
+        """Report the simulated service user's ownership for the depot directory.
+
+        Args:
+            path: Fixture path being inspected.
+            **kwargs: Pass-through filesystem stat options.
+        """
+        info = real_stat(path, **kwargs)
+        if path != source:
+            return info
+        return SimpleNamespace(st_uid=123, st_dev=info.st_dev, st_mode=stat.S_IFDIR | 0o755)
+
+    def run(command, *, user, group, extra_groups, check, capture_output, timeout):
+        """Record how the helper creates PROD and simulate the resulting directory.
+
+        Args:
+            command: External command including its effective user.
+            user: The Atlaso user's numeric UID.
+            group: The Atlaso user's primary GID.
+            extra_groups: Supplementary groups retained by the creator.
+            check: Whether the subprocess raises on a nonzero exit.
+            capture_output: Whether subprocess diagnostics are captured.
+            timeout: Bound for the command.
+        """
+        calls.append(command)
+        assert (user, group, extra_groups) == (123, 456, ())
+        assert not check and capture_output
+        assert timeout == 10
+        prod.mkdir()
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(Path, "stat", source_stat)
+    monkeypatch.setattr(helper.pwd, "getpwnam", lambda _: SimpleNamespace(pw_uid=123, pw_gid=456))
+    monkeypatch.setattr(helper, "ESX_STORAGE_DISK_ALLOWLIST_PATH", allowlist)
+    monkeypatch.setattr(helper, "ESX_STORAGE_EXPORT_ROOT", tmp_path / "exports")
+    monkeypatch.setattr(helper, "_vcf_storage_root_directory", lambda _: None)
+    monkeypatch.setattr(helper, "_vcf_storage_read", lambda _: {})
+    mount_rows = [f"uuid ext4 / rw {device}"]
+    monkeypatch.setattr(helper, "_vcf_storage_find_mount", lambda path, _: mount_rows if path == volume else [])
+    monkeypatch.setattr(helper.subprocess, "run", run)
+    assignment = {"uuid": "uuid", "path": str(source), "volume_path": str(volume), "device": str(device)}
+
+    assert helper._vcf_storage_live_source("depot", assignment) == source
+    assert not prod.exists()
+    mount_rows.append(mount_rows[0])
+    assert helper._vcf_storage_live_source("depot", assignment, create=True) == source
+    assert prod.is_dir()
+    assert helper._vcf_storage_live_source("depot", assignment, create=True) == source
+    assert calls == [["/usr/bin/mkdir", "-m", "0755", "--", str(prod)]]
+    mount_rows.append(f"uuid ext4 / ro {device}")
+    with pytest.raises(ValueError, match="mount is unavailable or ambiguous"):
+        helper._vcf_storage_live_source("depot", assignment)
+
+
+@pytest.mark.parametrize(("role", "disabled"), [("backup", False), ("depot", False), ("depot", True),
+                                                  ("registry", False)])
+@pytest.mark.parametrize("failure", ["reserved", "prepare", "bind", "service", None])
+def test_vcf_storage_switch_preserves_previous_assignment(monkeypatch, tmp_path, role, disabled, failure):
+    """Exercise the previous mount, candidate verification, service step, and boot record.
+
+    Args:
+        monkeypatch: Replace host mounts and locks with fixture state.
+        tmp_path: Isolated service and ownership state.
+        role: Service whose mount changes.
+        disabled: Whether the depot HTTPS endpoint is disabled.
+        failure: Stage that rejects activation, or None for success.
+    """
+    helper = load_helper_module()
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    old = {"path": str(tmp_path / "old"), "uuid": "old"}
+    child = {"backup": "vcf-backups", "depot": "vcf-offline-depot", "registry": "vcf-registry"}[role]
+    desired = {"path": str(tmp_path / child), "uuid": "next"}
+    target = tmp_path / "service"
+    target.mkdir()
+    state = {"source": Path(old["path"])}
+    writes = []
+    configured = []
+
+    def bind(source, destination):
+        """Record a mount attempt without changing host storage.
+
+        Args:
+            source: Candidate directory to expose.
+            destination: Stable service mountpoint.
+        """
+        assert destination == target
+        if source == Path(desired["path"]) and failure == "bind":
+            raise ValueError("candidate bind failed")
+        state["source"] = source
+
+    def apply_service():
+        configured.append(state["source"])
+        return int(failure == "service")
+
+    monkeypatch.setitem(sys.modules, "fcntl", SimpleNamespace(
+        flock=lambda handle, flags: None, LOCK_EX=1, LOCK_NB=2,
+    ))
+    monkeypatch.setattr(helper.os, "O_NOFOLLOW", 0, raising=False)
+    monkeypatch.setattr(helper, "VCF_STORAGE_STATE_DIR", state_dir)
+    monkeypatch.setattr(helper, "_vcf_storage_root_directory", lambda path: None)
+    other = {"uuid": desired["uuid"], "path": str(tmp_path / "other")} if failure == "reserved" else {}
+    monkeypatch.setattr(helper, "_vcf_storage_read", lambda selected: old if selected == role else other)
+    monkeypatch.setattr(helper, "_vcf_storage_target", lambda _: target)
+    def prepare(_role, assignment, **options):
+        """Simulate a filesystem refusal before committing an Apply plan.
+
+        Args:
+            _role: Storage service selected by the Apply step.
+            assignment: Storage assignment being prepared.
+            **options: Optional flags such as whether to prepare missing directories.
+        """
+        if options.get("create") and failure == "prepare":
+            raise ValueError("candidate initialization failed")
+        return Path(assignment["path"])
+
+    monkeypatch.setattr(helper, "_vcf_storage_live_source", prepare)
+    monkeypatch.setattr(helper, "_vcf_storage_mounted", lambda source, _: source == state["source"])
+    monkeypatch.setattr(helper, "_vcf_storage_bind", bind)
+    monkeypatch.setattr(helper, "_vcf_storage_unbind", lambda _: state.update(source=None))
+    monkeypatch.setattr(helper, "_durable_management_handoff_state_write", lambda assignment, _: writes.append(assignment))
+
+    result = helper._apply_with_vcf_storage(role, desired, apply_service, disabled=disabled)
+    if failure:
+        assert result != 0
+        assert state["source"] == Path(old["path"])
+        assert writes == []
+        assert configured == ([Path(desired["path"])] if failure == "service" else [])
+    else:
+        assert result == 0
+        assert state["source"] == Path(desired["path"])
+        assert writes == [desired]
+        monkeypatch.setattr(helper, "_vcf_storage_read", lambda selected: desired if selected == role else {})
+        state["source"] = None
+        Path(desired["path"]).mkdir()
+        assert helper._restore_vcf_storage_at_boot() == 0
+        assert state["source"] == Path(desired["path"])
+
+
+@pytest.mark.parametrize("approved_bind", [False, True])
+def test_vcf_storage_rechecks_the_original_installation_mount(monkeypatch, tmp_path, approved_bind):
+    """Use the installed receipt with or without an independently verified overlay.
+
+    Args:
+        monkeypatch: Supply the installed layout and mount observations.
+        tmp_path: Isolated fixture path.
+        approved_bind: Whether the service overlay has been verified.
+    """
+    helper = load_helper_module()
+    verifier = tmp_path / "layout.py"
+    mount = {"target": str(tmp_path), "uuid": "original-uuid", "filesystem": "ext4"}
+    monkeypatch.setattr(helper, "VCF_STORAGE_INSTALLATION_LAYOUT", verifier)
+    monkeypatch.setattr(helper, "_vcf_storage_root_directory", lambda _: None)
+    monkeypatch.setattr(helper, "_vcf_storage_target", lambda role: tmp_path if role == "backup" else verifier)
+    monkeypatch.setattr(helper, "_vcf_storage_is_bound", lambda _: approved_bind)
+    monkeypatch.setattr(helper.runpy, "run_path", lambda _: {
+        "installation_profile": lambda: True,
+        "load_layout": lambda: {"mounts": [mount]},
+    })
+    original_lstat = Path.lstat
+
+    def lstat(path):
+        """Return trusted verifier metadata without modifying the test filesystem.
+
+        Args:
+            path: Path whose metadata is requested.
+        """
+        if path == verifier:
+            return SimpleNamespace(st_mode=stat.S_IFREG | 0o644, st_uid=0)
+        return original_lstat(path)
+
+    def findmnt(command, **kwargs):
+        """Return the original filesystem from the expected mount query.
+
+        Args:
+            command: Native mount observation under test.
+            **kwargs: Subprocess options supplied by the helper.
+        """
+        assert ("--shadowed" in command) == approved_bind
+        return subprocess.CompletedProcess(command, 0, json.dumps({
+            "filesystems": [{"uuid": "original-uuid", "fstype": "ext4"}],
+        }))
+
+    monkeypatch.setattr(Path, "lstat", lstat)
+    monkeypatch.setattr(helper, "_run", findmnt)
+    helper._vcf_storage_verify_installation()
+
+
 def test_vcf_backups_helper_validates_staged_config(monkeypatch, tmp_path, capsys):
     """Verify that vcf backups helper validates staged config.
 
@@ -16403,6 +17046,39 @@ def test_vcf_backups_helper_rejects_unmanaged_config(tmp_path):
     errors = helper._vcf_backups_config_errors(config_path)
 
     assert "VCF backups config must be rendered by Atlaso." in errors
+
+
+def test_vcf_backups_helper_disables_sftp_without_touching_assigned_storage(monkeypatch, tmp_path):
+    """Remove the SFTP drop-in when the assigned filesystem is unavailable.
+
+    Args:
+        monkeypatch: Replace host storage probes and OpenSSH operations.
+        tmp_path: Isolate the staged and installed SFTP configuration paths.
+    """
+    helper = load_helper_module()
+    config_path = tmp_path / "atlaso-vcf-backups-sshd.conf"
+    assignment = {"uuid": "12345678-1234-0000-9000-123456789abc", "path": "/mnt/data/vcf-backups",
+                  "volume_path": "/mnt/data", "device": "/dev/disk/by-id/data"}
+    config_path.write_text(
+        vcf_backups_config_text(enabled=False) + f"{helper.VCF_STORAGE_COMMENT}{json.dumps(assignment)}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "VCF_BACKUPS_APPLY_DIR", tmp_path)
+    monkeypatch.setattr(helper, "VCF_BACKUPS_CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(helper, "VCF_BACKUPS_CONFIG_PATH", tmp_path / "receiver.conf")
+    monkeypatch.setattr(helper, "_vcf_storage_live_source",
+                        lambda *_args, **_kwargs: pytest.fail("Disabling SFTP probed storage"))
+    monkeypatch.setattr(helper, "_apply_with_vcf_storage",
+                        lambda *_args, **_kwargs: pytest.fail("Disabling SFTP entered the mount transaction"))
+    monkeypatch.setattr(helper, "_validate_sshd_dropin_candidates",
+                        lambda _candidates: subprocess.CompletedProcess(["sshd", "-t"], 0, "", ""))
+    applied = []
+    monkeypatch.setattr(helper, "_apply_vcf_backups_dropins", lambda candidates: applied.append(candidates) or 0)
+
+    for action in ("validate", "preflight", "apply"):
+        assert helper._handle_vcf_backups(action, [str(config_path)]) == 0
+    assert len(applied) == 1
+    assert applied[0][helper.VCF_BACKUPS_CONFIG_PATH] is None
 
 
 def test_vcf_backups_helper_apply_installs_sshd_dropin_and_storage(monkeypatch, tmp_path):
@@ -16570,6 +17246,30 @@ def test_vcf_backups_helper_owns_a_separate_global_probe_dropin(tmp_path):
     global_path = helper.VCF_BACKUPS_CONFIG_PATH.with_name("00-atlaso-vcf-backup-probes.conf")
     assert candidates[global_path] == "# Managed by Atlaso VCF Backups.\nPerSourcePenaltyExemptList 192.0.2.41/32\n"
     assert "PerSourcePenaltyExemptList" not in candidates[helper.VCF_BACKUPS_CONFIG_PATH]
+
+
+def test_vcf_backups_dropin_keeps_only_persistent_storage_metadata(tmp_path):
+    """Keep receiver readiness bytes identical after a storage reassignment.
+
+    Args:
+        tmp_path: Isolated staged receiver configuration.
+    """
+    from atlaso.app.services.vcf_service_storage import (
+        storage_change,
+        storage_change_metadata,
+        storage_config_metadata,
+    )
+
+    helper = load_helper_module()
+    staged = tmp_path / "vcf.conf"
+    assignment = {"uuid": "2cecf40a-b241-4b6a-8b1a-4d84d9b0eb61", "path": "/mnt/backup/vcf-backups",
+                  "volume_path": "/mnt/backup", "device": "/dev/disk/by-id/ata-backup"}
+    rendered = vcf_backups_config_text() + storage_config_metadata(assignment)
+    migration = storage_change_metadata(storage_change("backup", {}, assignment, "move"))
+    assert migration.startswith("\n" + helper.VCF_STORAGE_CHANGE_COMMENT)
+    staged.write_text(rendered + migration, encoding="utf-8")
+    candidates = helper._vcf_backups_dropin_candidates(staged, helper._vcf_backups_config_values(staged))
+    assert candidates[helper.VCF_BACKUPS_CONFIG_PATH] == rendered
 
 
 def test_vcf_backups_helper_apply_requires_existing_os_user(monkeypatch, tmp_path, capsys):
@@ -17459,12 +18159,14 @@ def test_vcf_offline_depot_helper_applies_vcfdt_application_properties(monkeypat
     assert helper._handle_vcf_offline_depot("apply-properties", [str(outside_path)]) == 2
 
 
-def test_vcf_offline_depot_helper_removes_disabled_nginx_site(monkeypatch, tmp_path):
+@pytest.mark.parametrize("assigned", [False, True])
+def test_vcf_offline_depot_helper_removes_disabled_nginx_site(monkeypatch, tmp_path, assigned):
     """Verify that vcf offline depot helper removes disabled nginx site.
 
     Args:
         monkeypatch: Pytest fixture used to replace dependencies for the test.
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        assigned: Keep a registered storage assignment whose volume is unavailable.
     """
     helper = load_helper_module()
     monkeypatch.setattr(helper, "_vcf_depot_endpoint_ready", lambda _text: True)
@@ -17475,7 +18177,16 @@ def test_vcf_offline_depot_helper_removes_disabled_nginx_site(monkeypatch, tmp_p
     monkeypatch.setattr(helper, "VCF_DEPOT_HTPASSWD_PATH", tmp_path / "depot.htpasswd")
     apply_dir.mkdir(parents=True)
     site_dir.mkdir(parents=True)
-    config_path.write_text("# VCF Offline Depot HTTPS endpoint is disabled.\n", encoding="utf-8")
+    config_text = "# VCF Offline Depot HTTPS endpoint is disabled.\n"
+    state_dir = tmp_path / "applied-storage"
+    record = state_dir / "depot.json"
+    if assigned:
+        assignment = json.dumps({"uuid": "12345678-1234-0000-9000-123456789abc", "path": "/mnt/data/depot",
+                                 "volume_path": "/mnt/data", "device": "/dev/disk/by-id/data"})
+        config_text += f"{helper.VCF_STORAGE_COMMENT}{assignment}\n"
+        state_dir.mkdir()
+        record.write_text(assignment, encoding="utf-8")
+    config_path.write_text(config_text, encoding="utf-8")
     site_path.write_text("server { listen 443 ssl; }\n", encoding="utf-8")
     commands: list[list[str]] = []
 
@@ -17494,12 +18205,24 @@ def test_vcf_offline_depot_helper_removes_disabled_nginx_site(monkeypatch, tmp_p
     monkeypatch.setattr(helper, "NGINX_MAIN_CONFIG_PATH", tmp_path / "nginx" / "nginx.conf")
     monkeypatch.setattr(helper, "NGINX_SITES_DIR", site_dir)
     monkeypatch.setattr(helper, "VCF_DEPOT_SITE_PATH", site_path)
+    monkeypatch.setattr(helper, "VCF_STORAGE_STATE_DIR", state_dir)
+    monkeypatch.setattr(helper, "_vcf_storage_root_directory", lambda _: None)
+    monkeypatch.setattr(helper, "_vcf_storage_read", lambda _: json.loads(record.read_bytes()) if assigned else {})
+    monkeypatch.setitem(sys.modules, "fcntl", SimpleNamespace(
+        flock=lambda handle, flags: None, LOCK_EX=1, LOCK_NB=2,
+    ))
+    monkeypatch.setattr(helper.os, "O_NOFOLLOW", 0, raising=False)
     monkeypatch.setattr(helper, "_run", fake_run)
     monkeypatch.setattr(helper.shutil, "which", lambda command: "/usr/sbin/nginx" if command == "nginx" else None)
+    monkeypatch.setattr(helper, "_vcf_storage_live_source",
+                        lambda *_args, **_kwargs: pytest.fail("Disabling the depot probed its storage volume"))
 
+    assert helper._handle_vcf_offline_depot("validate", [str(config_path)]) == 0
     assert helper._handle_vcf_offline_depot("apply-https", [str(config_path)]) == 0
 
     assert not site_path.exists()
+    if assigned:
+        assert record.read_text(encoding="utf-8") == assignment
     assert ["/usr/sbin/nginx", "-t"] in commands
 
 
