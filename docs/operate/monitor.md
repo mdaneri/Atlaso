@@ -13,9 +13,6 @@ throughput, unique-device disk activity, interface state, and virtual-machine co
 policy rules, interfaces, forwarding, gateway neighbors, and a kernel route lookup. **Services & Clock** reports
 observed service state, restart counts, verified listener addresses, and the effective clock source.
 
-When you reopen **Monitor** from the sidebar, it restores your last available tab in the same browser.
-Links to a specific Monitor view open that view.
-
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
 
@@ -26,6 +23,9 @@ This verified appliance view provides visual orientation before you begin.
 *Figure: Monitor summary and live charts in the verified desktop state.*
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
+
+When you reopen **Monitor** from the sidebar, it restores your last available tab in the same browser.
+Links to a specific Monitor view open that view.
 
 Select **Network Diagnostics** beside **Route lookup** when you need to send a probe from the appliance. Administrators
 and Network Administrators can also open [Network Diagnostics](network-diagnostics.md) from **Operations**.
