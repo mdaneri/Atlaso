@@ -175,6 +175,7 @@ are explicitly inventoried so route/template changes cannot silently escape the 
 
 - Shared shell: `about-modal`, `confirm-modal`, `preview-modal`, `ntp-source-health-modal`,
   `appliance-apply-modal`, `task-detail-modal`, and `task-log-modal`.
+- Appliance Settings: `settings-time-clock-dialog`.
 - Authentication and users: `oidc-client-dialog`, `oidc-client-secret-modal`, `oidc-key-dialog`, `api-token-dialog`,
   `user-account-dialog`, and `user-password-modal`.
 - The OIDC one-time credential handoff reuses the Managed LDAP credential dialog within the wizard-backed client
@@ -354,7 +355,10 @@ narrow, keyboard and native provider acceptance remain pending for #1078 and #10
 ## Settings time
 
 `partials/settings_time.html` uses the existing Settings tabs and the DNS non-grid settings and validation pattern.
+**Clock source** uses the native radio row from Routing & WAN. **NTP client** shows the upstream list, and **Manual**
+offers **Set time** beside the clock source when Settings owns the clock.
 `partials/ntp_upstreams.html` and `partials/ntp_source_wizard.html` share the established NTP upstream editor
-and wizard. Server-owned controls remain visible in a disabled state with a link to NTP and NTS. Mutations require
-administrator access and CSRF. The manual target is a separate reviewed Appliance Apply change. The status request
-reads the clock without changing its mode or restarting a service.
+and wizard. Server-owned controls remain disabled with a link to NTP and NTS. Mutations require administrator
+access and CSRF. The manual clock dialog accepts a UTC target after Atlaso verifies applied Manual mode. The shared
+notice at the top of Settings links pending time and general settings changes to Appliance Apply review. The status
+request reads the clock without changing its mode or restarting a service.

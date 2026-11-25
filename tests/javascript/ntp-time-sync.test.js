@@ -70,6 +70,81 @@ class FakeForm {
   }
 }
 
+test("Settings Time reveals the selected source controls and gates the manual dialog", async () => {
+  const fields = Object.fromEntries([
+    "refresh", "controls", "upstreams", "owner", "stale", "open", "manual-help",
+    "now", "selected", "mode", "sync", "pending", "detail", "validation",
+  ].map((name) => [`[data-settings-time-${name}]`, new FakeElement()]));
+  const field = (name) => fields[`[data-settings-time-${name}]`];
+  const form = new FakeForm({});
+  form.elements = { time_source: { value: "ntp_client" } };
+  const revision = { value: "initial" };
+  const tab = new FakeElement();
+  const dialog = new FakeElement();
+  const cancel = new FakeElement();
+  const target = { value: "previous draft" };
+  dialog.querySelector = (selector) => selector === "[data-settings-time-cancel]" ? cancel : target;
+  dialog.showModal = () => { dialog.open = true; };
+  dialog.close = () => { dialog.open = false; };
+  let redraws = 0;
+  field("upstreams").querySelector = () => ({ atlasoTabulator: { redraw: () => { redraws += 1; } } });
+  field("stale").querySelector = () => new FakeElement();
+  field("validation").replaceChildren = () => {};
+  tab.getAttribute = () => "false";
+  field("owner").hidden = true;
+  field("open").hidden = true;
+  let status = { revision: "manual", effective_mode: "ntp_client", server_enabled: false, manual_ready: false, validation_errors: [] };
+  const panel = {
+    querySelector: (selector) => fields[selector],
+    querySelectorAll: () => [revision],
+  };
+  fields["[data-settings-time-edit]"] = form;
+  fields["#settings-time-clock-dialog"] = dialog;
+  fields["#settings-time-autosave-status"] = new FakeElement();
+  const initialize = vm.runInNewContext(`(${functionSource("initializeSettingsTime")})`, {
+    AbortController,
+    document: { getElementById: (id) => id === "settings-time" ? panel : tab },
+    fetch: async () => ({ ok: true, json: async () => status }),
+  });
+  const refresh = async () => {
+    field("refresh").emit("click");
+    await new Promise(setImmediate);
+  };
+  const select = (value) => {
+    form.elements.time_source.value = value;
+    form.emit("change", { target: { name: "time_source" } });
+  };
+
+  initialize();
+  select("vmware_tools");
+  assert.equal(field("upstreams").hidden, true);
+  assert.equal(field("open").hidden, true);
+  select("ntp_client");
+  assert.equal(field("upstreams").hidden, false);
+  assert.equal(redraws, 1);
+  select("manual");
+  assert.equal(field("upstreams").hidden, true);
+  assert.equal(field("open").hidden, false);
+  assert.equal(field("open").disabled, true);
+  form.emit("atlaso:autosave-success", { detail: { revision: "manual" } });
+  await refresh();
+  assert.equal(field("open").disabled, true);
+  status = { ...status, effective_mode: "manual", manual_ready: true };
+  await refresh();
+  assert.equal(field("open").disabled, false);
+  field("open").emit("click");
+  assert.equal(dialog.open, true);
+  assert.equal(target.value, "");
+  cancel.emit("click");
+  assert.equal(dialog.open, false);
+  field("open").emit("click");
+  status = { ...status, revision: "server", effective_mode: "ntp_server", server_enabled: true, manual_ready: false };
+  await refresh();
+  assert.equal(dialog.open, false);
+  assert.equal(field("open").hidden, true);
+  assert.equal(field("controls").disabled, true);
+});
+
 const context = vm.createContext({
   HTMLElement: FakeElement,
   HTMLInputElement: FakeElement,
@@ -302,12 +377,12 @@ test("queued Time edits retain their revision and controls until the latest save
   form.dataset.autosaveSerialize = "";
   const revision = new FakeElement();
   revision.value = "initial";
-  form.selectedSource = "manual";
+  form.elements = { time_source: { value: "manual" } };
   form.getAttribute = () => "/settings/time";
   form.querySelectorAll = () => [];
   form.dispatchEvent = (event) => form.emit(event.type, event);
   const fields = Object.fromEntries([
-    "refresh", "controls", "upstreams", "manual", "owner", "stale", "manual-help",
+    "refresh", "controls", "upstreams", "owner", "stale",
     "now", "selected", "mode", "sync", "pending", "detail", "validation",
   ].map((name) => ["[data-settings-time-" + name + "]", new FakeElement()]));
   const refresh = fields["[data-settings-time-refresh]"];
@@ -341,7 +416,7 @@ test("queued Time edits retain their revision and controls until the latest save
     FormData: class {
       constructor(submitted) {
         this.revision = revision.value;
-        this.selectedSource = controls.disabled ? undefined : submitted.selectedSource;
+        this.selectedSource = controls.disabled ? undefined : submitted.elements.time_source.value;
       }
     },
     fetch: (_url, options) => new Promise((respond) => {
@@ -367,7 +442,7 @@ test("queued Time edits retain their revision and controls until the latest save
   refresh.emit("click");
   const first = form.atlasoSaveNow();
   await new Promise(setImmediate);
-  form.selectedSource = "ntp_client";
+  form.elements.time_source.value = "ntp_client";
   const second = form.atlasoSaveNow();
   await new Promise(setImmediate);
   assert.equal(writes.length, 1);
@@ -375,7 +450,7 @@ test("queued Time edits retain their revision and controls until the latest save
   writes[0].succeed("first");
   assert.equal((await first).valid, true);
   await new Promise(setImmediate);
-  form.selectedSource = "vmware_tools";
+  form.elements.time_source.value = "vmware_tools";
   const third = form.atlasoSaveNow();
   refresh.emit("click");
   assert.equal(reads.length, 1);
