@@ -4425,7 +4425,8 @@ every eligible package to the newest version that satisfies the seven-day cutoff
 requirements. CI installs that hash-locked environment before installing Atlaso itself as an editable package with
 dependency resolution and build isolation disabled. This keeps test collection reproducible when a new transitive
 release appears between pull-request and post-merge runs without weakening warnings-as-errors or the package-age
-policy.</p>
+policy. On Windows, the development lock installs <code>tzdata</code> so schedule validation can resolve IANA timezones through
+Python's <code>zoneinfo</code> module. Linux uses the system timezone database.</p>
 <p>Because pip resolves environment markers for its current host, the Windows-supported lock generator cannot select
 Linux-only dependencies from <code>uvicorn[standard]</code>. The project <code>dev</code> extra therefore declares the reviewed Linux
 <code>uvloop</code> pin explicitly, and the wrapper adds its eligible release hashes to <code>requirements-dev.lock</code> under the same
