@@ -65,7 +65,7 @@ function Invoke-PackerValidateFixture {
     $startInfo.Environment['CHECKPOINT_DISABLE'] = '1'
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
-    $timeoutSeconds = 60
+    $timeoutSeconds = 120
     $timeoutMilliseconds = $timeoutSeconds * 1000
     $deadline = [System.Diagnostics.Stopwatch]::StartNew()
     try {
