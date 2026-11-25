@@ -118,7 +118,7 @@ def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
     assert "Encrypted LDAP Recovery" not in page.text
     assert "/ldap/recovery/export" not in page.text
     assert "/ldap/recovery/import" not in page.text
-    app_css = client.get("/static/app.css").text
+    app_css = client.get("/static/app.css").text.replace("\r\n", "\n")
     assert (
         ".service-settings-workspace {\n  grid-template-columns: minmax(0, 1fr) 360px;"
         in app_css
@@ -681,7 +681,7 @@ def test_managed_ldap_generates_complete_synthetic_directory_once(client):
     assert "Cancel" in helper_modal
     assert "Generate directory entries" in helper_modal
     assert "Done" not in helper_modal
-    modal_css = client.get("/static/app.css").text
+    modal_css = client.get("/static/app.css").text.replace("\r\n", "\n")
     assert "width: min(920px, calc(100vw - 32px));" in modal_css
     assert (
         "#ldap-generate-modal .confirm-modal-actions {\n  flex-wrap: nowrap;"
