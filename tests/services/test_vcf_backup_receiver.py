@@ -21,6 +21,7 @@ from atlaso.app.services import vcf_backup_receiver as receiver
 from atlaso.app.services.applied_service_dns import APPLIANCE_APPLY_BASELINES_KEY
 from atlaso.app.services.log_sanitization import redact_operational_text
 from atlaso.app.services.vcf_backups import render_vcf_backup_config
+from atlaso.app.services.vcf_service_storage import storage_config_metadata
 
 
 @pytest.fixture
@@ -74,17 +75,21 @@ def _settings(db: Session, *, user: User | None = None, enabled: bool = True) ->
     return settings
 
 
-def _save_baseline(db: Session, config: str) -> None:
+def _save_baseline(db: Session, config: str, *, assignment: dict[str, str] | None = None) -> None:
     """Persist the exact rendered configuration as the applied baseline.
 
     Args:
         db: Test database session receiving the apply baseline setting.
         config: Rendered VCF Backup configuration whose applied identity is recorded.
+        assignment: Exact applied registered-volume assignment, if present.
     """
     db.add(
         Setting(
             key=APPLIANCE_APPLY_BASELINES_KEY,
-            value=json.dumps({"vcf_backups": {"config_preview": redact_operational_text(config)}}),
+            value=json.dumps({"vcf_backups": {
+                "config_preview": redact_operational_text(config),
+                "snapshot_marker": assignment,
+            }}),
         )
     )
     db.flush()
@@ -194,6 +199,35 @@ def test_stale_applied_baseline_blocks_before_public_key_or_ssh_checks(db, monke
     assert result["ready"] is False
     assert "Apply pending VCF Backup SFTP changes" in result["reason"]
     assert calls == []
+
+
+def test_pending_storage_reassignment_keeps_the_applied_receiver_usable(db, monkeypatch):
+    """Bind native backup work to the current verified storage during a pending reassignment.
+
+    Args:
+        db: Isolated session containing current and proposed storage assignments.
+        monkeypatch: Pytest fixture used to observe receiver key and runtime probes.
+    """
+    settings = _settings(db, user=User(username="vcf-backup", enabled=True, os_sync_status="applied"))
+    applied = {
+        "uuid": "00000000-0000-0000-0000-000000000001",
+        "path": "/mnt/existing/backups",
+        "volume_path": "/mnt/existing",
+        "device": "/dev/disk/by-id/ata-existing",
+    }
+    preview = render_vcf_backup_config(settings) + storage_config_metadata(applied)
+    _save_baseline(db, preview, assignment=applied)
+    settings.storage_volume_uuid = "00000000-0000-0000-0000-000000000002"
+    settings.storage_volume_path = "/mnt/candidate/backups"
+    db.flush()
+    calls = _admit_ready_receiver(monkeypatch)
+
+    state = receiver.receiver_state(db)
+
+    assert state["ready"] is True
+    assert state["volume"] == applied["path"]
+    assert state["storage_assignment"] == applied
+    assert calls[-1] == ("runtime", preview)
 
 
 def test_readiness_uses_applied_public_state_without_loading_vault_secrets(db, monkeypatch):

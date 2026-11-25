@@ -127,7 +127,7 @@ def _iso_member(iso: pycdlib.PyCdlib, path: str) -> bytes:
 
 
 def _admitted_inputs(iso_path: Path, iso_sha256: str, *, content: bool = False,
-                     helper: bool = False) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+                     helper: bool = False, loopback_ping: bool = False) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Bind base and optional content expectations to the original installer.
 
     Args:
@@ -135,7 +135,10 @@ def _admitted_inputs(iso_path: Path, iso_sha256: str, *, content: bool = False,
         iso_sha256: Independently preserved digest of that ISO.
         content: Also prepare the fixed existing-validator content checks.
         helper: Include the separately sourced appliance helper identity.
+        loopback_ping: Bind loopback ping acceptance to the validated RPM inventory.
     """
+    if loopback_ping and not content:
+        raise ValueError("loopback ping acceptance requires admitted content inputs")
     if not _DIGEST.fullmatch(iso_sha256):
         raise ValueError("installation ISO digest is invalid")
     checked_path = installation_iso._checked_path(iso_path, final_kind="file")
@@ -236,6 +239,8 @@ def _admitted_inputs(iso_path: Path, iso_sha256: str, *, content: bool = False,
 
                 sources = {name: _iso_member(iso, "/atlaso/" + name) for name in SOURCE_MEMBERS}
                 checks = prepare_content_inputs(expected, manifest, sources)
+                if loopback_ping:
+                    expected["loopback_ping_required"] = "iputils" in manifest["packages"]
             installation_iso._verify_pinned(pinned)
             return expected, checks
         finally:
@@ -293,8 +298,12 @@ def guest_program(
         software_root: Staged signed software root; injectable only for isolated fixtures.
         identity_root: Public identity filesystem root; injectable only for isolated fixtures.
     """
-    if set(expected) != _EXPECTED_KEYS or expected.get("schema") != 1:
+    ping_selected = "loopback_ping_required" in expected
+    expected_keys = _EXPECTED_KEYS | ({"loopback_ping_required"} if ping_selected else set())
+    if set(expected) != expected_keys or expected.get("schema") != 1:
         raise ValueError("inspection expectations are invalid")
+    if ping_selected and type(expected["loopback_ping_required"]) is not bool:
+        raise ValueError("loopback ping expectation is invalid")
     for field in ("iso_sha256", "release_manifest_sha256", "software_verifier_sha256", "payload_inspector_sha256", "wheel_sha256"):
         if not isinstance(expected[field], str) or not _DIGEST.fullmatch(expected[field]):
             raise ValueError("inspection expectation digest is invalid")
@@ -302,7 +311,7 @@ def guest_program(
     source_root_json = json.dumps(str(atlaso_root))
     software_root_json = json.dumps(str(software_root))
     identity_root_json = json.dumps(str(identity_root))
-    body = f'''import base64,hashlib,importlib.metadata,json,os,re,stat,types
+    body = f'''import base64,hashlib,importlib.metadata,json,os,re,stat,subprocess,types
 e=json.loads(base64.b64decode("{expected_json}"))
 def load(p,h,n):
  fd=os.open(p,os.O_RDONLY|os.O_NOFOLLOW);s=os.fdopen(fd,"rb");z=os.fstat(fd);b=s.read(1048577);s.close()
@@ -324,12 +333,15 @@ def read(p,n):
  if not stat.S_ISREG(z.st_mode) or z.st_nlink!=1 or len(b)>n: raise ValueError()
  return b
 phase="public-identities"
+if e.get("loopback_ping_required"):
+ subprocess.run(["ping","-4","-n","-c","1","-W","2","127.0.0.1"],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=4)
 mid=read(str(Path({identity_root_json})/"etc/machine-id"),128).strip()
 k=read(str(Path({identity_root_json})/"etc/ssh/ssh_host_ed25519_key.pub"),4096).split(None,2)
 if not re.fullmatch(b"[0-9a-f]{{32}}",mid) or mid==b"0"*32 or len(k)<2 or k[0]!=b"ssh-ed25519": raise ValueError()
 b=base64.b64decode(k[1],validate=True)
 if len(b)!=51 or int.from_bytes(b[:4],"big")!=11 or b[4:15]!=b"ssh-ed25519" or int.from_bytes(b[15:19],"big")!=32: raise ValueError()
 r={{"schema":1,"machine_id_sha256":hashlib.sha256(mid).hexdigest(),"host_key_sha256":"SHA256:"+base64.b64encode(hashlib.sha256(b).digest()).decode().rstrip("="),"version":s["version"],"source_commit":s["source_commit"],"wheel_sha256":i.file_digest(w,268435456),**p}}
+if "loopback_ping_required" in e:r["loopback_ping_verified"]=e["loopback_ping_required"]
 x=json.dumps(r,sort_keys=True,separators=(",",":")).encode()
 if len(x)>2048: raise ValueError()
 print("ATLASO-INSPECTION:"+base64.b64encode(x).decode()+":END")'''
@@ -353,7 +365,10 @@ def validate_report(raw: bytes, expected: dict[str, Any]) -> dict[str, Any]:
         value = json.loads(raw)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError("inspection report is invalid") from exc
-    if (not isinstance(value, dict) or set(value) != _REPORT_KEYS or type(value.get("schema")) is not int
+    ping_selected = isinstance(expected, dict) and "loopback_ping_required" in expected
+    expected_keys = _EXPECTED_KEYS | ({"loopback_ping_required"} if ping_selected else set())
+    report_keys = _REPORT_KEYS | ({"loopback_ping_verified"} if ping_selected else set())
+    if (not isinstance(value, dict) or set(value) != report_keys or type(value.get("schema")) is not int
             or value["schema"] != 1):
         raise ValueError("inspection report schema is invalid")
     for key in ("machine_id_sha256", "wheel_sha256", "wheel_payload_sha256", "installed_payload_sha256"):
@@ -368,10 +383,14 @@ def validate_report(raw: bytes, expected: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("inspection host key identity is invalid")
     if value["wheel_payload_sha256"] != value["installed_payload_sha256"]:
         raise ValueError("installed application payload differs from its wheel")
-    if (set(expected) != _EXPECTED_KEYS or expected.get("schema") != 1
+    if (set(expected) != expected_keys or expected.get("schema") != 1
             or value.get("version") != expected.get("version") or value.get("source_commit") != expected.get("source_commit")
             or value.get("wheel_sha256") != expected.get("wheel_sha256")):
         raise ValueError("installed software identity differs from the admitted ISO")
+    if ping_selected and (type(expected["loopback_ping_required"]) is not bool
+                          or type(value["loopback_ping_verified"]) is not bool
+                          or value["loopback_ping_verified"] is not expected["loopback_ping_required"]):
+        raise ValueError("installed loopback ping differs from the admitted RPM inventory")
     if type(value.get("verified_payload_files")) is not int or not 1 <= value["verified_payload_files"] <= 10_000:
         raise ValueError("inspection payload file count is invalid")
     return {key: value[key] for key in sorted(_REPORT_KEYS)}
@@ -425,7 +444,7 @@ def main() -> int:
     try:
         if args.operation == "prepare":
             if args.content:
-                expected, checks = _admitted_inputs(args.iso, args.iso_sha256, content=True)
+                expected, checks = _admitted_inputs(args.iso, args.iso_sha256, content=True, loopback_ping=True)
             else:
                 expected, checks = expected_inputs(args.iso, args.iso_sha256), []
             result = {"expected": expected, "command": guest_program(expected)}

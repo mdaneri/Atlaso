@@ -13,7 +13,7 @@
     <link rel="icon" href="/favicon.ico" type="image/x-icon">
     <link rel="icon" href="/static/brand/atlaso-icon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="/static/vendor/tabulator/tabulator.min.css">
-    <link rel="stylesheet" href="/static/app.css?v=primary-nav-1220">
+    <link rel="stylesheet" href="/static/app.css?v=storage-1198-nav-1223">
     {% block extra_head %}{% endblock %}
   </head>
   <body>
@@ -21,7 +21,7 @@
     <div class="app-shell">
       <aside class="sidebar">
         <a class="brand sidebar-brand" href="{{ management_ui_root }}" aria-label="Atlaso Dashboard">
-          <img class="sidebar-brand-logo" src="/static/brand/atlaso-logo-horizontal-transparent-1200x300.png" width="1200" height="300" alt="">
+          <img class="sidebar-brand-logo" src="/static/brand/atlaso-logo-horizontal-transparent-1200x300.png" alt="">
         </a>
         <nav class="nav-stack" aria-label="Primary" data-primary-navigation>
           {% set nav_groups = [
@@ -30,7 +30,9 @@
               ("Monitor", management_ui_path("/monitor"), "read:monitoring")
             ]),
             ("appliance-setup", "Appliance Setup", [
-              ("Settings", management_ui_path("/settings"), "admin:all"),
+              ("Settings", management_ui_path("/settings"), "admin:all")
+            ] + ([("Storage Volumes", management_ui_path("/settings/storage-volumes"), "read:esx-storage")]
+                 if identity and not identity.can("admin:all") else []) + [
               ("Physical Interfaces", management_ui_path("/physical-interfaces"), "read:interfaces"),
               ("VLAN Interfaces", management_ui_path("/vlan-interfaces"), "read:vlans"),
               ("Network Objects", management_ui_path("/network-objects"), "read:firewall"),
@@ -405,7 +407,7 @@
     <script src="/static/ui-routes.js?v=issue-287-1"></script>
     <script src="/static/chunk-uploads.js?v=issue-779-7"></script>
     <script src="/static/log-viewer.js?v=full-history-822-17"></script>
-    <script src="/static/app.js?v=primary-nav-1220"></script>
+    <script src="/static/app.js?v=storage-1198-nav-1223"></script>
     <script src="/static/pwa.js?v=issue-287-2"></script>
     {% block extra_scripts %}{% endblock %}
   </body>

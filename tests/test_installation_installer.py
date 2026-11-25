@@ -25,8 +25,34 @@ Args:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     if not native_choices:
-        monkeypatch.setattr(module, "storage_choice", lambda *_args: 0)
+        monkeypatch.setattr(module, "storage_layout_screen", lambda *_args: True)
     return module
+
+
+def assign_service_targets(module, config, targets, inventory):
+    """Apply exact service targets to a tentative layout in tests.
+
+    Args:
+        module: Loaded installer adapter.
+        config: Layout updated by the simulated operator choices.
+        targets: Target value for each named service mount.
+        inventory: Eligible disk snapshot.
+    """
+    working = module.copy.deepcopy(config)
+    for _title, mountpoint in module.SERVICE_STORAGE:
+        target = targets[mountpoint]
+        if target == "keep":
+            continue
+        choices = module.service_storage_choices(working, mountpoint, inventory)
+        _label, action, value = next(choice for choice in choices
+                                     if choice[1] in {"disk", "partition"} and choice[2] == target)
+        partition = (working["partitions"][value] if action == "partition"
+                     else {"disk": value, "size": 0, "filesystem": "ext4"})
+        working["partitions"] = [item for item in working["partitions"] if item.get("mountpoint") != mountpoint]
+        partition["mountpoint"] = mountpoint
+        if action == "disk":
+            working["partitions"].append(partition)
+    config["partitions"] = working["partitions"]
 
 
 def test_bound_inventory_excludes_source_without_mount_or_label_assumptions(monkeypatch):
@@ -132,29 +158,13 @@ def test_named_service_storage_selects_only_explicit_disks(monkeypatch, autopart
                for letter, size in zip("abcd", (64, 20, 500, 500), strict=True)}
     config = {"disk": "/dev/sda", "arch": "x86_64", "bootmode": "efi", "autopartition": autopartition,
               "partitions": [{"mountpoint": "/", "size": 0, "filesystem": "ext4"}]}
-    targets = iter(["/dev/sdd", "/dev/sdc"])
-
-    def choose(_height, _width, title, mountpoint, choices):
-        """Explicitly select two disks while checking the named public choices.
-
-        Args:
-            _height: Console rows.
-            _width: Console columns.
-            title: Service name.
-            mountpoint: Fixed service mount path.
-            choices: Tentative assignments offered by the installer.
-        """
-        assert (title, mountpoint) in module.SERVICE_STORAGE
-        assert choices[0][1] == "keep"
-        assert not any(action == "disk" and value == "/dev/sda" for _label, action, value in choices)
-        if mountpoint.endswith("offline-depot"):
-            assert not any(action == "disk" and value == "/dev/sdd" for _label, action, value in choices)
-        target = next(targets)
-        return next(i for i, (_label, action, value) in enumerate(choices) if action == "disk" and value == target)
-
     monkeypatch.setattr(module, "disk_inventory", lambda: initial)
-    monkeypatch.setattr(module, "storage_choice", choose)
-    assert module.assign_service_storage(25, 80, config, initial)
+    monkeypatch.setattr(module, "storage_layout_screen", lambda _height, _width, selected_config, eligible, *_args:
+                        (assign_service_targets(module, selected_config, {
+                            "/mnt/atlaso-vcf-backups": "/dev/sdd",
+                            "/mnt/atlaso-vcf-offline-depot": "/dev/sdc",
+                        }, eligible) or True))
+    assert module.storage_layout_screen(25, 80, config, initial)
     assert config["autopartition"] is autopartition
     assert [(p["mountpoint"], p.get("disk", config["disk"])) for p in config["partitions"]] == [
         ("/", "/dev/sda"), ("/mnt/atlaso-vcf-backups", "/dev/sdd"), ("/mnt/atlaso-vcf-offline-depot", "/dev/sdc")]
@@ -166,43 +176,86 @@ def test_named_service_storage_selects_only_explicit_disks(monkeypatch, autopart
         module.revalidate_disks(config, consent, changed)
 
 
-def test_service_storage_assigns_custom_partition_and_preserves_existing_role(monkeypatch):
+@pytest.mark.parametrize(("data_disk", "data_size"), [("/dev/sdb", 8192), ("/dev/sda", 0)])
+def test_service_storage_assigns_custom_partition_and_preserves_existing_role(monkeypatch, data_disk, data_size):
     """Rename only a selected data mount and preserve another service's layout.
 
     Args:
         monkeypatch: Isolated disk inventory and native menu selections.
+        data_disk: Disk containing the Custom partition to assign.
+        data_size: Fixed size or Photon's zero-size remainder.
     """
-    module = load_installer(monkeypatch)
+    module = load_installer(monkeypatch, native_choices=True)
     config = {"disk": "/dev/sda", "partitions": [
-        {"mountpoint": "/", "size": 0, "filesystem": "ext4"},
+        {"mountpoint": "/", "size": 16384, "filesystem": "ext4"},
         {"mountpoint": "/var", "disk": "/dev/sdb", "size": 4096, "filesystem": "ext4"},
-        {"mountpoint": "/mnt/data", "disk": "/dev/sdb", "size": 8192, "filesystem": "xfs"},
+        {"mountpoint": "/mnt/data", "disk": data_disk, "size": data_size, "filesystem": "xfs"},
         {"mountpoint": "/mnt/atlaso-vcf-offline-depot", "disk": "/dev/sdc", "size": 0, "filesystem": "ext4"},
     ]}
     initial = {f"/dev/sd{letter}": {"size": 64 * 1024**3} for letter in "abc"}
-
-    def choose(_height, _width, _title, mountpoint, choices):
-        """Choose the compatible custom data row, then keep the existing depot.
-
-        Args:
-            _height: Console rows.
-            _width: Console columns.
-            _title: Public service label.
-            mountpoint: Fixed service mount.
-            choices: Offered assignments.
-        """
-        if mountpoint.endswith("backups"):
-            assert [value for _label, action, value in choices if action == "partition"] == [2]
-            return 1
-        assert choices[0][0] == "Keep existing partition on /dev/sdc"
-        return 0
+    rendered = []
 
     monkeypatch.setattr(module, "disk_inventory", lambda: initial)
-    monkeypatch.setattr(module, "storage_choice", choose)
-    assert module.assign_service_storage(25, 80, config, initial)
+    class Window:
+        def bkgd(self, *_args):
+            """Accept background setup in the isolated terminal window.
+
+            Args:
+                *_args: Native background attributes.
+            """
+            pass
+
+        def keypad(self, *_args):
+            """Accept keypad setup in the isolated terminal window.
+
+            Args:
+                *_args: Native keypad flags.
+            """
+            pass
+
+        def erase(self):
+            pass
+
+        def box(self):
+            pass
+
+        def addstr(self, *_args):
+            """Collect rendered text in the storage assignment test.
+
+            Args:
+                *_args: Coordinates, text, and optional drawing style.
+            """
+            rendered.append(_args[2])
+
+        def refresh(self):
+            pass
+
+        def clear(self):
+            pass
+
+        def getch(self):
+            return next(keys)
+
+    # A remainder beside the Custom root cannot share the disk with an Auto root.
+    keys = iter((9, ord("e"), 260, ord("l"), 10, ord("l"), 10) if data_size == 0 else (9, ord("e"), 10))
+    module.curses.newwin = lambda *_args: Window()
+    module.curses.A_BOLD = 1
+    module.curses.A_REVERSE = 2
+    module.curses.A_UNDERLINE = 4
+    module.curses.KEY_ENTER = 10
+    module.curses.KEY_RIGHT = 261
+    module.curses.KEY_DOWN = 258
+    module.curses.KEY_BTAB = 353
+    module.curses.KEY_LEFT = 260
+    module.curses.KEY_UP = 259
+    module.curses.color_pair = lambda _index: 0
+    assert module.storage_layout_screen(25, 80, config, initial)
     assert config["partitions"][1]["mountpoint"] == "/var"
-    assert config["partitions"][2] == {"mountpoint": "/mnt/atlaso-vcf-backups", "disk": "/dev/sdb",
-                                       "size": 8192, "filesystem": "xfs"}
+    assert config["partitions"][2] == {"mountpoint": "/mnt/atlaso-vcf-backups", "disk": data_disk,
+                                       "size": data_size, "filesystem": "xfs"}
+    assert f"Volume: Partition on {data_disk} (xfs)" in rendered
+    if data_size == 0:
+        assert "Root disk cannot also be assigned to a service role." in rendered
     assert config["partitions"][3]["mountpoint"] == "/mnt/atlaso-vcf-offline-depot"
 
 
@@ -216,10 +269,9 @@ def test_service_storage_back_discards_tentative_assignments(monkeypatch):
     config = {"disk": "/dev/sda", "partitions": [{"mountpoint": "/", "size": 0, "filesystem": "ext4"}]}
     original = module.copy.deepcopy(config)
     initial = {f"/dev/sd{letter}": {"size": 64 * 1024**3} for letter in "ab"}
-    selections = iter([1, None, None])
     monkeypatch.setattr(module, "disk_inventory", lambda: initial)
-    monkeypatch.setattr(module, "storage_choice", lambda *_args: next(selections))
-    assert not module.assign_service_storage(25, 80, config, initial)
+    monkeypatch.setattr(module, "storage_layout_screen", lambda *_args: False)
+    assert not module.storage_layout_screen(25, 80, config, initial)
     assert config == original
 
 
@@ -245,53 +297,260 @@ def test_service_storage_reserves_native_efi_slot_and_accepts_swap(monkeypatch):
                for _label, action, value in module.service_storage_choices(config, "/mnt/atlaso-vcf-backups", eligible))
 
 
-@pytest.mark.parametrize("back", [True, False])
-def test_storage_menu_keeps_exact_actions_behind_bounded_native_labels(monkeypatch, back):
-    """Exercise Photon-compatible native callbacks without a console or disk.
+@pytest.mark.parametrize("whole_disk", [False, True])
+def test_combined_storage_layout_displays_all_roles_before_review(monkeypatch, whole_disk):
+    """Keep all three assignments and mount paths visible before review.
 
     Args:
-        monkeypatch: Native Window/Menu doubles.
-        back: Whether the native window returns Back.
+        monkeypatch: Isolate curses drawing and the eligible disk inventory.
+        whole_disk: Assign a whole disk and attempt to move the root to it.
     """
     module = load_installer(monkeypatch, native_choices=True)
-    observed = {}
+    rendered = []
 
     class Window:
-        """Retain one native panel for the public selection test."""
-        def __init__(self, *args):
-            """Capture native geometry and title.
+        def bkgd(self, *_args):
+            """Accept background setup in the isolated terminal window.
 
             Args:
-                *args: Native constructor parameters.
+                *_args: Native background attributes.
             """
-            observed["window"] = args
+            pass
+
+        def keypad(self, *_args):
+            """Accept keypad setup in the isolated terminal window.
+
+            Args:
+                *_args: Native keypad flags.
+            """
+            pass
+
+        def erase(self):
+            pass
+
+        def box(self):
+            pass
+
         def addstr(self, *_args):
-            """Accept public mount instructions.
+            """Collect visible text from the isolated terminal window.
 
             Args:
-                *_args: Native text coordinates and content.
+                *_args: Coordinates, text, and optional drawing style.
             """
-        def set_action_panel(self, panel):
-            """Bind the native menu.
+            rendered.append(str(_args[2]))
+
+        def refresh(self):
+            pass
+
+        def clear(self):
+            pass
+
+        def getch(self):
+            return next(keys)
+
+    keys = iter((9, ord("e"), 260, ord("d"), 10, ord("d"), 10) if whole_disk else (9, 9, 10))
+    module.curses.newwin = lambda *_args: Window()
+    module.curses.A_BOLD = 1
+    module.curses.A_REVERSE = 2
+    module.curses.A_UNDERLINE = 4
+    module.curses.KEY_ENTER = 10
+    module.curses.KEY_RIGHT = 261
+    module.curses.KEY_DOWN = 258
+    module.curses.KEY_BTAB = 353
+    module.curses.KEY_LEFT = 260
+    module.curses.KEY_UP = 259
+    module.curses.KEY_BACKSPACE = 263
+    module.curses.color_pair = lambda _index: 0
+    initial = {"/dev/sda": {"size": 64 * 1024**3}}
+    if whole_disk:
+        initial["/dev/sdb"] = {"size": 64 * 1024**3}
+    monkeypatch.setattr(module, "disk_inventory", lambda: initial)
+    config = {"disk": "/dev/sda", "autopartition": True,
+              "partitions": [{"mountpoint": "/", "size": 0, "filesystem": "ext4"}]}
+
+    assert module.storage_layout_screen(25, 80, config, initial)
+    assert "Root installation target" in rendered
+    assert "Mount: /" in rendered
+    assert "Volume: /dev/sda (64 GiB) - Auto" in rendered
+    assert "SFTP backup storage" in rendered
+    assert "Mount: /mnt/atlaso-vcf-backups" in rendered
+    assert "VCFDT depot storage" in rendered
+    assert "Mount: /mnt/atlaso-vcf-offline-depot" in rendered
+    assert config["autopartition"] is True
+    if whole_disk:
+        assert "Volume: Whole disk /dev/sdb (erase after review)" in rendered
+        assert "Root disk cannot also be assigned to a service role." in rendered
+        assert config["disk"] == "/dev/sda"
+
+
+def test_custom_editor_back_returns_to_combined_page_state(monkeypatch):
+    """Return to the combined page with its prior Auto layout after Custom Back.
+
+    Args:
+        monkeypatch: Isolate curses input, drawing, and eligible disk reads.
+    """
+    module = load_installer(monkeypatch, native_choices=True)
+    layouts = []
+
+    class Window:
+        def bkgd(self, *_args):
+            """Accept background setup in the isolated terminal window.
 
             Args:
-                panel: Native menu double.
+                *_args: Native background attributes.
             """
-            self.panel = panel
-        def do_action(self):
-            """Return Back or the exact second native callback."""
-            if back:
-                return SimpleNamespace(success=False)
-            _label, callback, value = self.panel[2][1]
-            return callback(value)
+            pass
 
-    monkeypatch.setitem(sys.modules, "window", SimpleNamespace(Window=Window))
-    monkeypatch.setitem(sys.modules, "menu", SimpleNamespace(Menu=lambda *args: args))
-    monkeypatch.setitem(sys.modules, "actionresult", SimpleNamespace(
-        ActionResult=lambda success, result: SimpleNamespace(success=success, result=result)))
-    choices = [("Keep shared storage", "keep", None), ("Erase whole disk " + "x" * 100, "disk", "/dev/exact")]
-    assert module.storage_choice(25, 80, "SFTP backup storage", "/mnt/atlaso-vcf-backups", choices) == (None if back else 1)
-    assert observed["window"] == (18, 70, 25, 80, "SFTP backup storage", True)
+        def keypad(self, *_args):
+            """Accept keypad setup in the isolated terminal window.
+
+            Args:
+                *_args: Native keypad flags.
+            """
+            pass
+
+        def erase(self):
+            pass
+
+        def box(self):
+            pass
+
+        def addstr(self, *_args):
+            """Ignore rendered text in the navigation test.
+
+            Args:
+                *_args: Coordinates, text, and optional drawing style.
+            """
+            pass
+
+        def refresh(self):
+            pass
+
+        def clear(self):
+            pass
+
+        def getch(self):
+            return next(keys)
+
+    keys = iter((ord("l"), 10))
+    module.curses.newwin = lambda *_args: Window()
+    module.curses.A_BOLD = 1
+    module.curses.A_REVERSE = 2
+    module.curses.A_UNDERLINE = 4
+    module.curses.KEY_ENTER = 10
+    module.curses.KEY_RIGHT = 261
+    module.curses.KEY_DOWN = 258
+    module.curses.KEY_BTAB = 353
+    module.curses.KEY_LEFT = 260
+    module.curses.KEY_UP = 259
+    module.curses.KEY_BACKSPACE = 263
+    module.curses.color_pair = lambda _index: 0
+    initial = {"/dev/sda": {"size": 64 * 1024**3}}
+    monkeypatch.setattr(module, "disk_inventory", lambda: initial)
+    config = {"disk": "/dev/sda", "autopartition": True,
+              "partitions": [{"mountpoint": "/", "size": 0, "filesystem": "ext4"}]}
+
+    def custom_back(candidate):
+        """Model an abandoned Custom layout and return Back.
+
+        Args:
+            candidate: Mutable tentative configuration passed to the editor.
+        """
+        layouts.append(candidate["autopartition"])
+        candidate["partitions"] = [{"mountpoint": "/old", "size": 4096, "filesystem": "ext4"}]
+        return False
+
+    assert module.storage_layout_screen(25, 80, config, initial, custom_editor=custom_back)
+    assert layouts == [False]
+    assert config["autopartition"] is True
+    assert config["partitions"] == [{"mountpoint": "/", "size": 0, "filesystem": "ext4"}]
+
+
+def test_custom_layout_survives_auto_toggle_and_reopens(monkeypatch):
+    """Retain the Custom draft while toggling Auto and back on the shared page.
+
+    Args:
+        monkeypatch: Isolated curses drawing, input, and disk inventory.
+    """
+    module = load_installer(monkeypatch, native_choices=True)
+    visits = []
+
+    class Window:
+        def bkgd(self, *_args):
+            """Accept background setup in the isolated terminal window.
+
+            Args:
+                *_args: Native background attributes.
+            """
+            pass
+
+        def keypad(self, *_args):
+            """Accept keypad setup in the isolated terminal window.
+
+            Args:
+                *_args: Native keypad flags.
+            """
+            pass
+
+        def erase(self):
+            pass
+
+        def box(self):
+            pass
+
+        def addstr(self, *_args):
+            """Ignore rendered text in the navigation test.
+
+            Args:
+                *_args: Coordinates, text, and optional drawing style.
+            """
+            pass
+
+        def refresh(self):
+            pass
+
+        def clear(self):
+            pass
+
+        def getch(self):
+            return next(keys)
+
+    keys = iter((ord("l"), ord("l"), ord("l"), 10))
+    module.curses.newwin = lambda *_args: Window()
+    module.curses.A_BOLD = 1
+    module.curses.A_REVERSE = 2
+    module.curses.A_UNDERLINE = 4
+    module.curses.KEY_ENTER = 10
+    module.curses.KEY_RIGHT = 261
+    module.curses.KEY_DOWN = 258
+    module.curses.KEY_BTAB = 353
+    module.curses.KEY_LEFT = 260
+    module.curses.KEY_UP = 259
+    module.curses.color_pair = lambda _index: 0
+    initial = {"/dev/sda": {"size": 64 * 1024**3}}
+    monkeypatch.setattr(module, "disk_inventory", lambda: initial)
+    config = {"disk": "/dev/sda", "autopartition": True,
+              "partitions": [{"mountpoint": "/", "size": 0, "filesystem": "ext4"}]}
+
+    def edit_custom(candidate):
+        """Model successive edits to the retained Custom draft.
+
+        Args:
+            candidate: Mutable candidate layout supplied by the shared screen.
+        """
+        visits.append(module.copy.deepcopy(candidate["partitions"]))
+        if len(visits) == 1:
+            candidate["partitions"].append({"mountpoint": "/var/lib/atlaso", "size": 4096,
+                                            "filesystem": "ext4", "disk": "/dev/sda"})
+        else:
+            assert any(item.get("mountpoint") == "/var/lib/atlaso" for item in candidate["partitions"])
+        return True
+
+    assert module.storage_layout_screen(25, 80, config, initial, custom_editor=edit_custom)
+    assert len(visits) == 2
+    assert any(item.get("mountpoint") == "/var/lib/atlaso" for item in visits[1])
+    assert config["autopartition"] is False
+    assert any(item.get("mountpoint") == "/var/lib/atlaso" for item in config["partitions"])
 
 
 @pytest.mark.parametrize("hardware,kind,accepted", [
@@ -933,47 +1192,38 @@ def test_setup_back_navigation_preserves_prewrite_boundaries(monkeypatch, flow):
     module = load_installer(monkeypatch)
     events = []
     review_lines = []
-    configurations = []
     password_calls = []
     revalidations = []
     initial = {"/dev/sda": {"size": 64 * 1024**3, "serial": "target"}}
     if flow == "service-disks":
         initial.update({f"/dev/sd{letter}": {"size": 500 * 1024**3, "serial": letter} for letter in "bc"})
 
-        def storage(_height, _width, _title, mountpoint, choices):
-            """Bind both named roles to explicit data disks in the real wizard.
+        monkeypatch.setattr(module, "storage_layout_screen", lambda _height, _width, selected_config, eligible, *_args:
+                            (assign_service_targets(module, selected_config, {
+                                "/mnt/atlaso-vcf-backups": "/dev/sdb",
+                                "/mnt/atlaso-vcf-offline-depot": "/dev/sdc",
+                            }, eligible) or True))
+    if flow == "custom-back":
+        def edit_custom(_height, _width, selected_config, _eligible, _source, custom_editor):
+            """Enter Custom and return to the shared page after Back.
 
             Args:
-                _height: Console rows.
-                _width: Console columns.
-                _title: Service title.
-                mountpoint: Fixed service mount.
-                choices: Exact offered assignments.
+                _height: Terminal row count.
+                _width: Terminal column count.
+                selected_config: Mutable tentative storage configuration.
+                _eligible: Initial eligible disk identities.
+                _source: Captured installation source binding.
+                custom_editor: Existing native Custom partition editor callback.
             """
-            target = "/dev/sdb" if mountpoint.endswith("backups") else "/dev/sdc"
-            return next(i for i, (_label, action, value) in enumerate(choices) if action == "disk" and value == target)
-
-        monkeypatch.setattr(module, "storage_choice", storage)
-
-    class SelectDisk:
-        """Model explicit disk/layout selection only."""
-        def __init__(self, _height, _width, config):
-            """Retain each fresh configuration.
-
-            Args:
-                _height: Console rows.
-                _width: Console columns.
-                config: Native selection configuration.
-            """
-            assert "partitions" not in config
-            self.config = config
-            configurations.append(config)
-
-        def display(self):
-            """Choose Custom once or the supported Auto target."""
-            self.config.update(disk="/dev/sda", autopartition=not (flow == "custom-back" and len(configurations) == 1))
             events.append("select")
-            return SimpleNamespace(success=True)
+            original = module.copy.deepcopy(selected_config)
+            selected_config["autopartition"] = False
+            if not custom_editor(selected_config):
+                selected_config.clear()
+                selected_config.update(original)
+            return True
+
+        monkeypatch.setattr(module, "storage_layout_screen", edit_custom)
 
     class CustomPartition:
         """Model an abandoned native Custom plan."""
@@ -993,7 +1243,6 @@ def test_setup_back_navigation_preserves_prewrite_boundaries(monkeypatch, flow):
             events.append("custom-back")
             return SimpleNamespace(success=False)
 
-    monkeypatch.setitem(sys.modules, "selectdisk", SimpleNamespace(SelectDisk=SelectDisk))
     monkeypatch.setitem(sys.modules, "custompartition", SimpleNamespace(CustomPartition=CustomPartition))
     monkeypatch.setitem(sys.modules, "partitionpane", SimpleNamespace(PartitionPane=type("Pane", (), {})))
     monkeypatch.setitem(sys.modules, "device", SimpleNamespace(Device=type("Device", (), {})))
@@ -1068,7 +1317,7 @@ def test_setup_back_navigation_preserves_prewrite_boundaries(monkeypatch, flow):
         assert config["partitions"][0] == {"mountpoint": "/", "size": 0, "filesystem": "ext4"}
         assert len(config["partitions"]) == (3 if flow == "service-disks" else 1)
         assert not any("password" in key for key in config)
-        assert len(configurations) == (2 if flow == "custom-back" else 1)
+        assert ("custom-back" in events) is (flow == "custom-back")
         assert events.count("confirm") == (2 if flow == "admin-back" else 1)
 
 
@@ -1436,21 +1685,6 @@ def test_disk_review_cancellation_returns_before_passwords_or_install(monkeypatc
             """
             pass
 
-    class SelectDisk:
-        def __init__(self, _height, _width, config):
-            """Retain the configuration passed to the fake selection window.
-
-            Args:
-                _height: Console height supplied to the fake UI callback.
-                _width: Console width supplied to the fake UI callback.
-                config: Installer configuration passed to the fake backend.
-            """
-            self.config = config
-
-        def display(self):
-            self.config.update({"disk": "/dev/nvme0n1", "autopartition": True})
-            return SimpleNamespace(success=True)
-
     class CustomPartition:
         pass
 
@@ -1465,13 +1699,27 @@ def test_disk_review_cancellation_returns_before_passwords_or_install(monkeypatc
         ("custompartition", SimpleNamespace(CustomPartition=CustomPartition, PartitionPane=PartitionPane)),
         ("device", SimpleNamespace(Device=Device)),
         ("partitionpane", SimpleNamespace(PartitionPane=PartitionPane)),
-        ("selectdisk", SimpleNamespace(SelectDisk=SelectDisk)),
     ):
         monkeypatch.setitem(sys.modules, name, value)
     initial = {"/dev/nvme0n1": {"size": size_gib * 1024**3, "model": "Test NVMe", "serial": "serial-root"}}
     monkeypatch.setattr(module, "disk_inventory", lambda: initial)
     monkeypatch.setattr(module, "selected_disks", lambda _config: ["/dev/nvme0n1"])
     monkeypatch.setattr(module, "revalidate_disks", lambda *_args: calls.append("revalidate"))
+    rendered = []
+    def layout_screen(_height, _width, config, _eligible, *_args):
+        """Record the tentative target and model screen navigation.
+
+        Args:
+            _height: Terminal row count.
+            _width: Terminal column count.
+            config: Tentative installer configuration.
+            _eligible: Initial eligible disk identities.
+            *_args: Optional source and Custom editor callbacks.
+        """
+        rendered.append(config["disk"])
+        return size_gib >= 64
+
+    monkeypatch.setattr(module, "storage_layout_screen", layout_screen)
 
     confirmation = {}
 
@@ -1530,11 +1778,9 @@ def test_disk_review_cancellation_returns_before_passwords_or_install(monkeypatc
     if size_gib < 64:
         with pytest.raises(module.Cancelled):
             module.configure_console(Screen(), initial, {"/srv": "/var/srv"})
-        assert calls == ["revalidate"]
-        assert confirmation["info"] is True
-        assert "default installation requires a disk of at least 64 GiB" in confirmation["message"]
-        assert f"Selected /dev/nvme0n1 has {size_gib * 1024**3} bytes." in confirmation["message"]
-        assert "Press Enter to choose another disk, or Esc to cancel." in confirmation["message"]
+        assert calls == []
+        assert confirmation == {}
+        assert rendered == ["/dev/nvme0n1"]
     else:
         with pytest.raises(module.Cancelled):
             module.configure_console(Screen(), initial, {"/srv": "/var/srv"})
@@ -1547,109 +1793,79 @@ def test_disk_review_cancellation_returns_before_passwords_or_install(monkeypatc
         assert "ALL EXISTING DATA ON SELECTED DISKS WILL BE LOST." in confirmation["message"]
 
 
-def test_small_default_disk_refusal_returns_to_native_disk_selection(monkeypatch):
-    """Allow choosing a different disk after a native capacity refusal.
+def test_root_disk_cycle_shows_inline_capacity_error_and_allows_eligible_target(monkeypatch):
+    """Cycle through an undersized target and back before destructive review.
 
     Args:
-        monkeypatch: Pytest fixture for replacing controlled dependencies.
+        monkeypatch: Isolated curses drawing, key input, and disk inventory.
     """
-    module = load_installer(monkeypatch)
-    selected = []
-    messages = []
+    module = load_installer(monkeypatch, native_choices=True)
+    rendered = []
 
-    class Screen:
-        def getmaxyx(self):
-            return 25, 80
-
+    class Window:
         def bkgd(self, *_args):
-            """Accept the standard Photon background setup.
+            """Accept background setup in the isolated terminal window.
 
             Args:
-                *_args: Background arguments supplied by the installer.
+                *_args: Native background attributes.
             """
+            pass
 
-    class SelectDisk:
-        def __init__(self, _height, _width, config):
-            """Capture the selection configuration.
+        def keypad(self, *_args):
+            """Accept keypad setup in the isolated terminal window.
 
             Args:
-                _height: Terminal height supplied by the installer.
-                _width: Terminal width supplied by the installer.
-                config: Mutable native installer configuration.
+                *_args: Native keypad flags.
             """
-            self.config = config
+            pass
 
-        def display(self):
-            path = ("/dev/sdb", "/dev/nvme0n1")[len(selected)]
-            selected.append(path)
-            self.config.update({"disk": path, "autopartition": True})
-            return SimpleNamespace(success=True)
+        def erase(self):
+            pass
 
-    class ConfirmWindow:
-        def __init__(self, height, width, maxy, maxx, starty, message, info=False):
-            """Capture and validate a native Photon confirmation window.
+        def box(self):
+            pass
+
+        def addstr(self, *_args):
+            """Collect rendered text for inline-error assertions.
 
             Args:
-                height: Dialog height.
-                width: Dialog width.
-                maxy: Terminal height.
-                maxx: Terminal width.
-                starty: Native menu start row.
-                message: Text presented by the dialog.
-                info: Whether the dialog is informational.
+                *_args: Coordinates, text, and optional drawing style.
             """
-            assert_native_confirmation_geometry(height, width, maxy, maxx, starty, message)
-            messages.append((message, info))
-            self.menu = SimpleNamespace(position=0)
+            rendered.append(str(_args[2]))
 
-        def do_action(self):
-            if messages[-1][1]:
-                return SimpleNamespace(success=True, result={})
-            return SimpleNamespace(success=True, result={"yes": False})
+        def refresh(self):
+            pass
 
-    class CustomPartition:
-        pass
+        def clear(self):
+            pass
 
-    class Device:
-        refresh_devices = None
-        refresh_devices_bytes = None
+        def getch(self):
+            return next(keys)
 
-    class PartitionPane:
-        pass
-
-    monkeypatch.setitem(sys.modules, "custompartition", SimpleNamespace(
-        CustomPartition=CustomPartition, PartitionPane=PartitionPane,
-    ))
-    monkeypatch.setitem(sys.modules, "device", SimpleNamespace(Device=Device))
-    monkeypatch.setitem(sys.modules, "partitionpane", SimpleNamespace(PartitionPane=PartitionPane))
-    monkeypatch.setitem(sys.modules, "selectdisk", SimpleNamespace(SelectDisk=SelectDisk))
-    monkeypatch.setitem(sys.modules, "confirmwindow", SimpleNamespace(ConfirmWindow=ConfirmWindow))
+    keys = iter((ord("d"), 10, ord("d"), 10))
+    module.curses.newwin = lambda *_args: Window()
+    module.curses.A_BOLD = 1
+    module.curses.A_REVERSE = 2
+    module.curses.A_UNDERLINE = 4
+    module.curses.KEY_ENTER = 10
+    module.curses.KEY_RIGHT = 261
+    module.curses.KEY_DOWN = 258
+    module.curses.KEY_BTAB = 353
+    module.curses.KEY_LEFT = 260
+    module.curses.KEY_UP = 259
+    module.curses.color_pair = lambda _index: 0
     initial = {
-        "/dev/sdb": {"size": 4 * 1024**3, "model": "Small test disk", "serial": "serial-small"},
-        "/dev/nvme0n1": {"size": 128 * 1024**3, "model": "NVMe", "serial": "serial-root"},
+        "/dev/sda": {"size": 4 * 1024**3},
+        "/dev/sdb": {"size": 128 * 1024**3},
     }
     monkeypatch.setattr(module, "disk_inventory", lambda: initial)
-    monkeypatch.setattr(module, "selected_disks", lambda config: [config["disk"]])
-    revalidated = []
-    monkeypatch.setattr(module, "revalidate_disks", lambda _config, consent, _current: revalidated.append(tuple(consent)))
-    monkeypatch.setattr(module.curses, "init_pair", lambda *_args: None, raising=False)
-    monkeypatch.setattr(module.curses, "curs_set", lambda *_args: None, raising=False)
-    monkeypatch.setattr(module.curses, "color_pair", lambda *_args: 0, raising=False)
-    monkeypatch.setattr(module.curses, "COLOR_WHITE", 1, raising=False)
-    monkeypatch.setattr(module.curses, "COLOR_BLUE", 2, raising=False)
-    monkeypatch.setattr(module.curses, "COLOR_BLACK", 3, raising=False)
-    monkeypatch.setattr(module.curses, "COLOR_GREEN", 4, raising=False)
-    monkeypatch.setattr(module.curses, "COLOR_RED", 5, raising=False)
-    monkeypatch.setattr(module, "account_passwords", lambda *_args, **_kwargs: pytest.fail("credentials must follow capacity admission"))
+    config = {"disk": "/dev/sdb", "autopartition": True,
+              "partitions": [{"mountpoint": "/", "size": 0, "filesystem": "ext4"}]}
 
-    with pytest.raises(module.Cancelled):
-        module.configure_console(Screen(), initial, {"/srv": "/var/srv"})
-
-    assert selected == ["/dev/sdb", "/dev/nvme0n1"]
-    assert len(revalidated) == 3
-    assert messages[0][1] is True
-    assert "Selected /dev/sdb has 4294967296 bytes." in messages[0][0]
-    assert messages[1][1] is False
+    assert module.storage_layout_screen(25, 80, config, initial)
+    assert "Automatic installation requires a root disk of at least 64 GiB." in rendered
+    assert config["disk"] == "/dev/sdb"
+    assert config["autopartition"] is True
 
 
 def test_custom_multi_disk_adapter_displays_selected_disk_and_maps_each_partition(monkeypatch):
@@ -1685,7 +1901,7 @@ def test_custom_multi_disk_adapter_displays_selected_disk_and_maps_each_partitio
             self.path = path
 
     class SelectDisk:
-        selected = iter(("/dev/nvme0n1", "/dev/nvme0n1", "/dev/nvme0n1", "/dev/sdb"))
+        selected = iter(("/dev/nvme0n1", "/dev/nvme0n1", "/dev/sdb", "/dev/sdb"))
 
         def __init__(self, _height, _width, selection):
             """Retain the disk selection passed to the fake native selector.
@@ -1733,7 +1949,7 @@ def test_custom_multi_disk_adapter_displays_selected_disk_and_maps_each_partitio
                 "partitions": [
                     {"mountpoint": "/", "filesystem": "ext4", "size": 0},
                     {"mountpoint": "/var/lib/atlaso", "filesystem": "ext4", "size": 4096},
-                    {"mountpoint": "/mnt/atlaso-vcf-backups", "filesystem": "xfs", "size": 8192},
+                    {"mountpoint": "/mnt/custom-volume", "filesystem": "xfs", "size": 8192},
                 ]
             }
 
@@ -1766,7 +1982,7 @@ def test_custom_multi_disk_adapter_displays_selected_disk_and_maps_each_partitio
                 False, "Use /var/srv; /srv is a symlink.",
             )
             assert self.cp_config["partitionsnumber"] == 0
-            assert self.partition_disks == {}
+            assert self.partition_disks == {0: "/dev/nvme0n1"}
             # The native editor stores type/mount in partition_info1/2. Reject
             # the next mounted row before its validator consumes disk capacity.
             self.cp_config.update({"partitionsnumber": 31})
@@ -1774,7 +1990,7 @@ def test_custom_multi_disk_adapter_displays_selected_disk_and_maps_each_partitio
                 self.cp_config[f"{index}partition_info1"] = "ext4"
                 self.cp_config[f"{index}partition_info2"] = "/" if index == 0 else f"/mnt/data-{index}"
             assert self.validate_partition(("512", "ext4", "/mnt/overflow", "0")) == (False, "31 mounts + EFI")
-            assert self.partition_disks == {}
+            assert self.partition_disks == {0: "/dev/nvme0n1"}
             assert self.validate_partition(("512", "swap", "", "0"))[0]
             self.cp_config["30partition_info1"] = "swap"
             self.cp_config["30partition_info2"] = ""
@@ -1789,7 +2005,7 @@ def test_custom_multi_disk_adapter_displays_selected_disk_and_maps_each_partitio
             self.validate_partition(("", "ext4", "/var/lib/atlaso", "4096"))
             self.create_function()
             self.cp_config.update({"partitionsnumber": 2, "2partition_info0": "existing"})
-            self.validate_partition(("", "xfs", "/mnt/atlaso-vcf-backups", "8192"))
+            self.validate_partition(("", "xfs", "/mnt/custom-volume", "8192"))
             result = self.next()
             self.config["partitions"] = self.install_config["partitions"]
             interactions.append(self.install_config["partitions"])
@@ -1807,6 +2023,21 @@ def test_custom_multi_disk_adapter_displays_selected_disk_and_maps_each_partitio
     monkeypatch.setattr(module, "disk_inventory", lambda: initial)
     monkeypatch.setattr(module, "selected_disks", lambda _config: ["/dev/nvme0n1", "/dev/sdb"])
     monkeypatch.setattr(module, "revalidate_disks", lambda *_args: None)
+    def enter_custom(_height, _width, config, _eligible, _source, custom_editor):
+        """Route the combined page into the existing Custom editor.
+
+        Args:
+            _height: Terminal row count.
+            _width: Terminal column count.
+            config: Tentative installer configuration.
+            _eligible: Initial eligible disk identities.
+            _source: Captured installation source binding.
+            custom_editor: Existing native Custom partition editor callback.
+        """
+        config["autopartition"] = False
+        return custom_editor(config)
+
+    monkeypatch.setattr(module, "storage_layout_screen", enter_custom)
 
     confirmations = []
 
@@ -1852,7 +2083,7 @@ def test_custom_multi_disk_adapter_displays_selected_disk_and_maps_each_partitio
     assert interactions == [[
         {"mountpoint": "/", "filesystem": "ext4", "size": 0, "disk": "/dev/nvme0n1"},
         {"mountpoint": "/var/lib/atlaso", "filesystem": "ext4", "size": 4096, "disk": "/dev/nvme0n1"},
-        {"mountpoint": "/mnt/atlaso-vcf-backups", "filesystem": "xfs", "size": 8192, "disk": "/dev/sdb"},
+        {"mountpoint": "/mnt/custom-volume", "filesystem": "xfs", "size": 8192, "disk": "/dev/sdb"},
     ]]
     assert consent == initial
     assert config["partitions"] == interactions[0]
@@ -1865,7 +2096,7 @@ def test_custom_multi_disk_adapter_displays_selected_disk_and_maps_each_partitio
     assert "Serial/WWN: serial-root" in confirmation["message"]
     assert "/dev/sdb: SATA 256 GiB" in confirmation["message"]
     assert "Serial/WWN: serial-backup" in confirmation["message"]
-    assert "/mnt/atlaso-vcf-backups xfs 8192 MiB" in confirmation["message"]
+    assert "/mnt/custom-volume xfs 8192 MiB" in confirmation["message"]
     pane = custompartition_module.PartitionPane()
     pane.partition()
     assert pane.lines[1].startswith("/dev/nvme0n1")
@@ -1902,21 +2133,6 @@ def test_large_custom_disk_review_pages_identities_and_layout_before_cancellable
                 *_args: Additional positional arguments passed to the test double.
             """
             pass
-
-    class SelectDisk:
-        def __init__(self, _height, _width, config):
-            """Retain the configuration passed to the fake disk selector.
-
-            Args:
-                _height: Console height passed to the fake UI callback.
-                _width: Console width passed to the fake UI callback.
-                config: Installation configuration supplied by the adapter.
-            """
-            self.config = config
-
-        def display(self):
-            self.config.update({"disk": paths[0], "autopartition": False})
-            return SimpleNamespace(success=True)
 
     class CustomPartition:
         def __init__(self, _height, _width, config):
@@ -1965,11 +2181,25 @@ def test_large_custom_disk_review_pages_identities_and_layout_before_cancellable
     monkeypatch.setitem(sys.modules, "custompartition", custompartition)
     monkeypatch.setitem(sys.modules, "device", SimpleNamespace(Device=type("Device", (), {})))
     monkeypatch.setitem(sys.modules, "partitionpane", SimpleNamespace(PartitionPane=object))
-    monkeypatch.setitem(sys.modules, "selectdisk", SimpleNamespace(SelectDisk=SelectDisk))
     monkeypatch.setitem(sys.modules, "confirmwindow", SimpleNamespace(ConfirmWindow=ConfirmWindow))
     monkeypatch.setattr(module, "disk_inventory", lambda: initial)
     monkeypatch.setattr(module, "selected_disks", lambda _config: paths)
     monkeypatch.setattr(module, "revalidate_disks", lambda *_args: None)
+    def enter_custom(_height, _width, config, _eligible, _source, custom_editor):
+        """Route the combined page into the existing Custom editor.
+
+        Args:
+            _height: Terminal row count.
+            _width: Terminal column count.
+            config: Tentative installer configuration.
+            _eligible: Initial eligible disk identities.
+            _source: Captured installation source binding.
+            custom_editor: Existing native Custom partition editor callback.
+        """
+        config["autopartition"] = False
+        return custom_editor(config)
+
+    monkeypatch.setattr(module, "storage_layout_screen", enter_custom)
     monkeypatch.setattr(module, "account_passwords", lambda *_args, **_kwargs: pytest.fail("credentials must follow consent"))
     writes = []
     monkeypatch.setattr(module, "install", lambda *_args: writes.append("install"))

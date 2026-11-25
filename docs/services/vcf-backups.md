@@ -30,11 +30,31 @@ This verified appliance view provides visual orientation before you begin.
 The wizard is enabled only when the Atlaso **VCF Backups** SFTP service is ready. Configure the receiver at
 `/ui/management/vcf-backups`, then apply its current settings before returning to VCF Helper. The selected local SFTP
 user must be enabled, have its current Photon OS password synchronized by **Local Users**, and have no pending password
-change. The receiver also requires the fixed `/mnt/atlaso-vcf-backups` volume, chroot and password authentication, the
+change. The receiver also requires available installed or assigned storage, chroot and password authentication, the
 applied VCF Backups configuration, an active `sshd` listener, and the appliance's required public SSH host keys. The
-wizard checks the mount, rendered applied configuration, and live listener before each workflow action; saving intent
-alone is not enough. Apply **Local Users** first when the selected account or password needs synchronization, then apply
-**VCF Backups** through the shared [Appliance Apply](../operate/appliance-apply.md) workflow.
+wizard checks the active storage mount, rendered applied configuration, and live listener before each workflow action.
+Apply **Local Users** first when the selected account or password needs
+synchronization, then apply **VCF Backups** through the shared [Appliance Apply](../operate/appliance-apply.md) workflow.
+
+### Choose backup storage
+
+On **VCF Backups → SFTP Settings**, choose **Change storage** to open the shared storage wizard. Select a registered
+volume; Atlaso appends `vcf-backups` to its mount path and displays the resulting storage directory. Register additional
+volumes in
+[Settings → Storage Volumes](../operate/appliance-settings.md#register-storage-volumes).
+**Appliance default** uses the storage configured during installation at `/mnt/atlaso-vcf-backups`. To reuse a volume
+selected by VCF Offline Depot or VCF Private Registry, reassign that service first; each volume can serve one VCF
+storage assignment at a time.
+
+The wizard asks whether to **Move**, **Leave**, or **Delete** existing files when changing directories. Saving stages the
+choice for Appliance Apply. Review the current and proposed directories and selected data action under
+**Review appliance changes**. Delete requires typing the exact confirmation shown there before submitting Appliance
+Apply. An explicit storage reassignment can be staged and applied while SFTP is disabled; disabling SFTP by itself
+retains the current storage assignment. Disabling SFTP remains available even when its assigned volume is unavailable.
+An older volume selection without a staged data action takes effect when you enable SFTP and apply the service.
+The service uses the new directory only after the storage change applies successfully. After Apply, confirm the
+selected volume and directory in VCF Backups, reboot the appliance, and check that the assignment and SFTP writes
+persist. VCF clients continue to use the stable `/backups` remote directory when chroot is enabled.
 
 The SFTP server must present the ECDSA key used for fingerprint confirmation and advertise a modern RSA-SHA2 host-key
 algorithm as well as an ECDSA host-key algorithm. These are separate requirements: an ECDSA fingerprint alone does not
@@ -228,5 +248,17 @@ These captures show responsive layouts and useful operational states referenced 
 ![Atlaso VCF Backups page in the clean-appliance responsive viewport.](../assets/screenshots/vcf-backups-clean-responsive.webp)
 
 *Figure: VCF Backups in the verified clean-appliance responsive state.*
+
+![Existing data step in the VCF Backups storage wizard showing Move, Leave and Delete.](../assets/screenshots/vcf-backups-storage-data.webp)
+
+*Figure: Choose what Appliance Apply will do with existing backup files.*
+
+![VCF Backups storage wizard with Next disabled while the saved volume is selected.](../assets/screenshots/vcf-backups-storage-volume.webp)
+
+*Figure: Select a different volume to continue the storage wizard.*
+
+![VCF Backups storage wizard Review with the current path, proposed path and choice for existing files.](../assets/screenshots/vcf-backups-storage.webp)
+
+*Figure: Review the backing directory for the SFTP service before staging a storage change.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->

@@ -2,8 +2,14 @@
 
 from types import SimpleNamespace
 
+import pytest
+from sqlalchemy import select
+
 from atlaso.app import ui
 from atlaso.app.adapters.system import AdapterResult
+from atlaso.app.database import SessionLocal
+from atlaso.app.models import Role, User
+from atlaso.app.security import roles_to_json
 from tests.routers.ui.helpers import login
 
 
@@ -29,6 +35,7 @@ def test_esx_storage_ui_router_owns_exact_transport_set() -> None:
         for route in ui.esx_storage_router.routes
     ] == [
         ("/ui/management/esx-storage", ("GET",), "esx_storage_page"),
+        ("/ui/management/settings/storage-volumes", ("GET",), "storage_volumes_page"),
         (
             "/ui/management/esx-storage/settings",
             ("POST",),
@@ -109,6 +116,30 @@ def test_esx_storage_ui_keeps_late_bound_facade_adapter_seam(
     assert response.json()["detail"] == "late-bound UI facade adapter"
 
 
+@pytest.mark.parametrize(("role", "can_write"), [(Role.SERVICE_ADMIN, True), (Role.VIEWER, False)])
+def test_storage_volumes_retains_esx_storage_permissions(client, role, can_write):
+    """Keep the existing disk role scopes while isolating administrator-only settings.
+
+    Args:
+        client: Isolated HTTP test client exercising the management UI.
+        role: Existing non-administrator ESX Storage role.
+        can_write: Whether the role can open the add-volume wizard.
+    """
+    with SessionLocal() as db:
+        user = db.scalar(select(User).where(User.username == "admin"))
+        user.role = role.value
+        user.roles_json = roles_to_json([role.value])
+        db.commit()
+
+    login(client)
+    page = client.get("/ui/management/settings/storage-volumes")
+    assert page.status_code == 200
+    assert 'id="esx-storage-volumes-table"' in page.text
+    assert ('id="esx-storage-volume-modal"' in page.text) is can_write
+    assert "Appliance identity and resolver" not in page.text
+    assert client.get("/ui/management/settings").status_code == 403
+
+
 def test_esx_storage_page_and_dual_stack_api_contract(client):
     """Verify that esx storage page and dual stack api contract.
 
@@ -128,16 +159,25 @@ def test_esx_storage_page_and_dual_stack_api_contract(client):
     page = client.get("/esx-storage")
     assert page.status_code == 200
     assert "IPv4 and IPv6 are equivalent connection paths" in page.text
-    assert 'id="esx-storage-volumes-table"' in page.text
+    assert 'id="esx-storage-volumes-table"' not in page.text
+    assert 'id="esx-storage-volume-modal"' not in page.text
     assert 'id="esx-storage-shares-table"' in page.text
-    assert 'data-esx-storage-wizard-open="volume"' in page.text
-    assert "+ Add storage volume here" in page.text
-    assert 'id="esx-storage-volume-modal"' in page.text
-    assert 'data-esx-storage-wizard="volume"' in page.text
-    assert "Select an eligible blank disk" not in page.text
-    assert "Select an eligible mounted ext4 volume" not in page.text
-    assert "No eligible blank disks available" in page.text
-    assert "No eligible mounted ext4 volumes available" in page.text
+    assert 'href="/ui/management/settings/storage-volumes"' in page.text
+    settings = client.get("/ui/management/settings")
+    assert settings.status_code == 200
+    assert 'href="/ui/management/settings/storage-volumes"' in settings.text
+    volumes = client.get("/ui/management/settings/storage-volumes")
+    assert volumes.status_code == 200
+    assert 'id="esx-storage-volumes-table"' in volumes.text
+    assert 'id="esx-storage-shares-table"' not in volumes.text
+    assert 'data-esx-storage-wizard-open="volume"' in volumes.text
+    assert "+ Add storage volume here" in volumes.text
+    assert 'id="esx-storage-volume-modal"' in volumes.text
+    assert 'data-esx-storage-wizard="volume"' in volumes.text
+    assert "No eligible blank disks available" in volumes.text
+    assert "No eligible mounted ext4 volumes available" in volumes.text
+    assert 'data-esx-storage-mounted-source class="hidden" hidden' in volumes.text
+    assert "Mount path after Apply" in volumes.text
     assert 'data-esx-storage-wizard-open="share"' in page.text
     assert "+ Add NFS datastore here" in page.text
     assert 'id="esx-storage-share-modal"' in page.text
@@ -156,7 +196,7 @@ def test_esx_storage_page_and_dual_stack_api_contract(client):
     assert "any IPv4 client" in client.get("/static/app.js").text
     assert "await fetch(form.action" in client.get("/static/app.js").text
     assert (
-        'window.history.replaceState(null, "", target)'
+        'window.location.assign(managementUiPath("/settings/storage-volumes"))'
         in client.get("/static/app.js").text
     )
     assert (

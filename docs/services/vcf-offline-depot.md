@@ -47,8 +47,20 @@ unauthenticated browsing do not extend a browser session.
 
 ## Configure the depot
 
-1. Confirm the fixed depot mount is present and has sufficient working space.
-2. Configure the service listener and the HTTP user used by approved VCF targets. New configurations default to HTTPS
+1. On **VCF Offline Depot → Depot Settings**, choose **Change storage** to open the shared storage wizard. Select a
+   registered volume. Atlaso appends `vcf-offline-depot` to its mount path and displays the resulting directory.
+   **Appliance default** uses the storage configured during installation at `/mnt/atlaso-vcf-offline-depot`. A volume
+   can serve one VCF storage assignment at a time, so reassign it from the other service before selecting it here.
+   Register or attach additional volumes in [Settings → Storage Volumes](../operate/appliance-settings.md#register-storage-volumes).
+   VCF Helper uploads and profile downloads use this same assignment.
+2. The wizard asks whether to **Move**, **Leave**, or **Delete** existing files when changing directories. Saving stages
+   the choice for Appliance Apply. Review the current and proposed directories and selected data action
+   under **Review appliance changes**. Delete requires typing the exact confirmation shown there before submitting
+   Appliance Apply. Depot storage changes apply even with the HTTPS endpoint disabled because VCF Helper uploads also
+   use this directory. Disabling HTTPS alone leaves the current assignment in place even if its volume is unavailable.
+   The service uses the new directory only after the storage change applies successfully. Once Apply succeeds, verify
+   the selected volume and directory and reboot the appliance to confirm the assignment survives restart.
+3. Configure the service listener and the HTTP user used by approved VCF targets. New configurations default to HTTPS
    port **8443**, for example `https://depot.example.test:8443/PROD/`. Existing saved ports, including **443** and custom
    values, remain unchanged. Older settings archives that omit the port retain the historical **443** default.
    Validation checks active TCP listener ownership before activation. Overlapping listeners must belong to the nginx
@@ -65,7 +77,7 @@ unauthenticated browsing do not extend a browser session.
    File restoration is attempted even if service cleanup fails, and incomplete rollback is reported in the task log.
    If nginx cannot be verified inactive after cleanup, Atlaso attempts to reload the restored configuration.
    A successful listener check does not establish VCF target authentication or metadata synchronization.
-3. Select **Add** or **Update** for the VCF Download Tool package. The two-step package wizard reviews the archive name,
+4. Select **Add** or **Update** for the VCF Download Tool package. The two-step package wizard reviews the archive name,
    size, and desired-state boundary before upload. During upload, Review remains visible and reports transferred bytes
    and upload percentage. Then select **Configure** under **VCFDT configuration**. Atlaso
    displays the
@@ -80,23 +92,23 @@ unauthenticated browsing do not extend a browser session.
 Credential values are never loaded into the browser; an uploaded text file takes precedence over pasted text.
 The application-properties Monaco editor is directly editable and synchronizes every change to the submitted textarea;
 its visible editor is not nested in the source textarea's label.
-4. Save the wizard. Credentials and application properties are committed together, but the save does not mutate the
+5. Save the wizard. Credentials and application properties are committed together, but the save does not mutate the
    appliance or replace an existing Software Depot ID.
-5. Review certificate readiness and the generated software depot identity. Atlaso reads the persisted identity back
+6. Review certificate readiness and the generated software depot identity. Atlaso reads the persisted identity back
    from VCFDT after generation and displays only that canonical value.
-6. Validate the desired state and submit the VCF Offline Depot unit through
+7. Validate the desired state and submit the VCF Offline Depot unit through
    [Appliance Apply](../operate/appliance-apply.md). Changed firewall configuration is included automatically so its
    generated depot admission uses the selected port. Review the included firewall changes before submitting.
    Apply records each component separately: a later depot failure keeps its previous applied baseline and restores its
    nginx site, but does not undo an earlier successful firewall component. Inspect the component results and correct or
    reapply the desired configuration before retrying external downloads; the previous port might no longer be admitted.
-7. When the apply task succeeds, the page refreshes automatically so the authoritative applied VCF Download Tool
+8. When the apply task succeeds, the page refreshes automatically so the authoritative applied VCF Download Tool
    version and generated Software Depot ID replace the previously staged values.
-8. Run downloads as tasks and follow their terminal result in the page's **Profile download tasks** grid. This is the
+9. Run downloads as tasks and follow their terminal result in the page's **Profile download tasks** grid. This is the
    shared [Tasks](../operate/tasks.md) grid scoped to VCF Download Tool profile downloads, with the same filters,
    pagination, detail view, live state refresh, and access to the active or archived VCFDT task log. Use **Open full
    task history** when you need the appliance-wide view.
-9. Use **Schedule download** in an enabled profile's row menu to open the shared Automation schedule wizard directly on
+10. Use **Schedule download** in an enabled profile's row menu to open the shared Automation schedule wizard directly on
    the depot page. Its contextual **Schedule**, **Timing**, **State**, and **Review** steps show the selected profile but
    no task-type or profile selectors; Atlaso binds both values server-side. Disabled profiles cannot be scheduled.
 
@@ -188,6 +200,10 @@ These captures show responsive layouts and useful operational states referenced 
 ![VCF Offline Depot contextual Schedule wizard Review showing Schedule, Timing, State, and Review steps with Binaries fixed as the selected profile.](../assets/screenshots/vcf-offline-depot-schedule-action-desktop.webp)
 
 *Figure: VCF Offline Depot review binds the selected profile in the contextual schedule flow.*
+
+![VCF Offline Depot storage wizard Review showing the current and proposed directories and data action.](../assets/screenshots/vcf-offline-depot-storage.webp)
+
+*Figure: Review the destination shared by VCFDT and VCF Helper uploads before saving.*
 
 ### VCF Offline Depot browser
 

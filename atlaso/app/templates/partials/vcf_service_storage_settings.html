@@ -1,0 +1,84 @@
+{% from "partials/resource_wizard.html" import resource_wizard %}
+{% set selection = vcf_storage.selection %}
+{% set applied = vcf_storage.applied %}
+{% set pending = selection.volume_uuid != applied.uuid or selection.mount_path != applied.path %}
+<section class="settings-subsection">
+  <h3>{{ storage_heading }}</h3>
+  <div class="settings-list">
+    <div><span>Current storage directory</span><strong>{{ applied.path }}</strong></div>
+    {% if pending %}
+      <div>
+        <span>{{ "Storage after SFTP is enabled" if vcf_storage.awaiting_sftp_enablement else "Pending storage directory" }}</span>
+        <strong>{{ selection.mount_path }}</strong>
+      </div>
+    {% endif %}
+  </div>
+  {% if storage_writable %}
+    <button class="button secondary" type="button" data-vcf-storage-open aria-haspopup="dialog"
+      aria-controls="vcf-service-storage-wizard" hidden>Change storage</button>
+    <noscript><p class="muted">Changing the storage volume requires JavaScript.</p></noscript>
+  {% endif %}
+  <p class="muted">Register volumes in <a href="{{ management_ui_root }}/settings/storage-volumes">Settings → Storage Volumes</a>.</p>
+</section>
+{% if storage_writable %}
+  {% set steps = [
+    {"id": "volume", "label": "Volume", "summary": "Choose the new location"},
+    {"id": "data", "label": "Existing data", "summary": "Choose what happens to your files"},
+    {"id": "review", "label": "Review", "summary": "Review the storage change"},
+  ] %}
+  {% call resource_wizard("vcf-service-storage-wizard", "vcf-service-storage", management_ui_root ~ "/" ~ storage_action, steps, "Change storage", "Choose the volume for " ~ storage_heading ~ ".", "Save storage change") %}
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="storage_assignment_only" value="1">
+    <section class="vcf-sddc-step-page" data-atlaso-wizard-step="volume">
+      <label for="vcf-service-storage-volume">
+        <span class="field-label"><span>Storage volume</span><button class="help-icon" type="button" aria-label="Help for storage volume"
+          data-help="Choose an available registered volume or the appliance default. A registered volume can be assigned to one VCF service at a time. Appliance Apply switches the backing directory.">i</button></span>
+        <select id="vcf-service-storage-volume" name="storage_volume_uuid">
+          <option value="" data-storage-path="{{ vcf_storage.default_path }}" {{ "selected" if not selection.volume_uuid else "" }}>Appliance default</option>
+          {% if selection.volume_uuid and not vcf_storage.options|selectattr("uuid", "equalto", selection.volume_uuid)|list %}
+            <option selected disabled>Current volume unavailable</option>
+          {% endif %}
+          {% for volume in vcf_storage.options %}
+            <option value="{{ volume.uuid }}" data-storage-path="{{ volume.storage_path }}" {{ "selected" if selection.volume_uuid == volume.uuid else "" }}>{{ volume.name }} · {{ volume.mount_path }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <p class="muted">Appliance default uses the location set during installation.</p>
+      <div class="derived-field fixed-value-field">
+        <span class="field-label">Proposed storage directory</span>
+        <strong data-vcf-storage-proposed aria-live="polite">{{ selection.mount_path }}</strong>
+      </div>
+    </section>
+    <section class="vcf-sddc-step-page" data-atlaso-wizard-step="data" hidden>
+      <div class="alert warning" data-vcf-storage-warning>
+        Changing volumes switches where the service reads and writes data. Choose what to do with the files in
+        <strong>{{ applied.path }}</strong>.
+      </div>
+      <p data-vcf-storage-unchanged hidden>The selected directory matches the current storage. No data action is needed.</p>
+      <fieldset class="form-stack" data-vcf-storage-migration>
+        <legend><span class="field-label"><span>Existing files</span><button class="help-icon" type="button" aria-label="Help for existing files"
+          data-help="Move copies and verifies the files before removing originals. Leave keeps them where they are. Delete removes them after switching and requires you to type the previous directory in Appliance Apply.">i</button></span></legend>
+        <label class="choice-row">
+          <input type="radio" name="storage_migration_policy" value="move" {{ "checked" if pending and selection.migration_policy == "move" else "" }}>
+          <span class="choice-copy"><strong>Move</strong><small>Transfer the files to the new directory before switching.</small></span>
+        </label>
+        <label class="choice-row">
+          <input type="radio" name="storage_migration_policy" value="leave" {{ "checked" if pending and selection.migration_policy == "leave" else "" }}>
+          <span class="choice-copy"><strong>Leave</strong><small>Keep the files at the current location and switch the service.</small></span>
+        </label>
+        <label class="choice-row">
+          <input type="radio" name="storage_migration_policy" value="delete" {{ "checked" if pending and selection.migration_policy == "delete" else "" }}>
+          <span class="choice-copy"><strong>Delete</strong><small>Permanently remove the old files after the switch. Appliance Apply requires confirmation.</small></span>
+        </label>
+      </fieldset>
+    </section>
+    <section class="vcf-sddc-step-page" data-atlaso-wizard-step="review" hidden>
+      <div class="settings-list">
+        <div><span>Current storage directory</span><strong data-vcf-storage-current data-volume="{{ applied.uuid }}">{{ applied.path }}</strong></div>
+        <div><span>Proposed storage directory</span><strong data-vcf-storage-proposed>{{ selection.mount_path }}</strong></div>
+        <div><span>Existing files</span><strong data-vcf-storage-policy-review></strong></div>
+      </div>
+      <p>Saving stages the change. Review and submit it through Appliance Apply.</p>
+    </section>
+  {% endcall %}
+{% endif %}
