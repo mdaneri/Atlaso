@@ -4750,6 +4750,10 @@ categories from its recent boot journal. Credentials, console frames, raw OCR, a
 the artifact. A failed or incomplete run leaves the draft hidden. A passing run publishes the same draft as a
 prerelease and verifies the public assets before advancing <code>development</code>. To retry, dispatch
 <strong>Publish appliance release</strong> from <code>main</code> with the full <code>release_sha</code>.</p>
+<p>For <code>v0.9.523</code> and later, the hosted fixture also runs IPv4 and IPv6 loopback ping and traceroute and a
+<code>localhost</code> lookup through the installed Atlaso implementation as its service account. It gives the probes
+up to three minutes to report a fixed result on a cleared console. A failed probe records its name.
+A guest timeout or an unreadable result also fails acceptance.</p>
 <p>If OCR misses a field on <strong>Storage layout</strong>, the hosted test restores the highlighted text and reads the same frame
 again. It uses the native <strong>Back</strong> action to leave <strong>Custom</strong>, verifies the original <strong>Auto</strong> root assignment, and
 checks all three mount paths before continuing to destructive review.</p>
