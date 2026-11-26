@@ -37,6 +37,10 @@ native Workstation cleanup, hostname, Photon build, and credential fixtures with
 fixture scripts provider responses and advances its poll clock to reproduce diagnostic outcomes under the shared
 deadline. Stalled-provider cases still launch real children through the production bounded runner.
 
+The installation ISO console regression queues a complete Custom form at an expired deadline, then admits the
+same input at a live deadline. It checks the fixed Form timeout and progress output independently of runner speed.
+The Photon kickstart fixture gives syntax-only Packer validation two minutes for the child process and its output.
+
 For task-owned local validation, first create an empty root with the existing
 [`PytestGitFixtures` owner](completed-task-cleanup.md#disposable-pytest-git-fixtures), preserving its original receipt
 outside every removal root. Pass that root and its original native identity as `-FixtureRoot` and

@@ -1497,11 +1497,13 @@ Assert-InstallationVmCondition ($privateLanWriterBranch.Count -eq 1 -and
 Create and connect one in-process byte-mode named-pipe pair.
 .PARAMETER Name
 Unique local pipe identifier for the current test.
+.PARAMETER BufferSize
+Explicit buffer size in bytes when a fixture must queue data before reading.
 #>
 function New-InstallationTestPipePair {
-    param([string]$Name)
+    param([string]$Name, [int]$BufferSize = 0)
     $server = [IO.Pipes.NamedPipeServerStream]::new($Name, [IO.Pipes.PipeDirection]::InOut, 1,
-        [IO.Pipes.PipeTransmissionMode]::Byte, [IO.Pipes.PipeOptions]::Asynchronous)
+        [IO.Pipes.PipeTransmissionMode]::Byte, [IO.Pipes.PipeOptions]::Asynchronous, $BufferSize, $BufferSize)
     $client = [IO.Pipes.NamedPipeClientStream]::new('.', $Name, [IO.Pipes.PipeDirection]::InOut,
         [IO.Pipes.PipeOptions]::Asynchronous)
     try {
@@ -1827,20 +1829,37 @@ $highBitVisibility = @{}
 $queries = @(ConvertFrom-InstallationConsoleFrame -Text ("`e[3;5H" + [char]0xc3 + "`e[34h`e[34l`e[6n") -CursorOnly -CursorState $highBitVisibility)
 Assert-InstallationVmCondition ($queries.Count -eq 1 -and -not $queries[0].Known) `
     'Visibility controls must never invent a coordinate after an unknown character width.'
-$deadlinePair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
+$deadlinePair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N')) -BufferSize 4096
 $publicState = @{ Text = '' }
 try {
-    $deadlineWriter = [AtlasoInstallationPipeTestWriter]::Start($deadlinePair.Client, [string[]]@('PublicSyntheticSensitiveFixture'))
-    $timer = [Diagnostics.Stopwatch]::StartNew()
-    $deadlineRefused = $false
-    $phaseOutput = @(& {
-        try { Wait-InstallationCustomPublicState -Pipe $deadlinePair.Server -State $publicState -CursorState @{} -Deadline ([DateTimeOffset]::UtcNow.AddMilliseconds(500)) -Kind Form }
-        catch { $script:deadlineRefused = $_.Exception.Message -ceq 'The complete public Custom state was not observed before its bounded deadline. Phase: Form.' }
-    } 6>&1) | Out-String
-    Assert-InstallationVmCondition ($deadlineRefused -and $timer.Elapsed.TotalSeconds -lt 5) `
-        'A Custom phase must be clipped to its earlier original deadline and report only its fixed phase.'
-    Assert-InstallationVmCondition (-not $phaseOutput.Contains('PublicSyntheticSensitiveFixture')) 'Custom progress must never echo unclassified console data.'
-    Assert-InstallationVmCondition $deadlineWriter.Wait(5000) 'The Custom deadline fixture writer must complete.'
+    # Queue a complete form so ignoring the original deadline would succeed without waiting for another writer.
+    $sentinel = 'PublicSyntheticSensitiveFixture'
+    $formBytes = [Text.Encoding]::ASCII.GetBytes($sentinel + $customForm)
+    $null = [AtlasoInstallationPipeTestWriter]::RawBytes($deadlinePair.Client, $formBytes).GetAwaiter().GetResult()
+    $phaseOutput = [Collections.Generic.List[string]]::new()
+    $failure = $null
+    try {
+        Wait-InstallationCustomPublicState -Pipe $deadlinePair.Server -State $publicState -CursorState @{} `
+            -Deadline ([DateTimeOffset]::UtcNow.AddMinutes(-1)) -Kind Form 6>&1 |
+            ForEach-Object { $phaseOutput.Add($_.ToString()) }
+    }
+    catch { $failure = $_ }
+    Assert-InstallationVmCondition ($null -ne $failure) 'The expired original deadline must refuse an already available Custom form.'
+    Assert-InstallationVmCondition ($failure.Exception.Message -ceq 'The complete public Custom state was not observed before its bounded deadline. Phase: Form.') `
+        'The expired Custom deadline must report the fixed Form timeout.'
+    Assert-InstallationVmCondition ($publicState.Text.Length -eq 0) 'The expired Custom deadline must prevent reading the queued frame.'
+    Assert-InstallationVmCondition (($phaseOutput -join "`n") -ceq 'Public Custom phase: awaiting-Form') `
+        'The expired Custom wait must emit only the fixed Form progress line.'
+
+    # The same queued input must be accepted before a live deadline and stay private even after it is read.
+    $phaseOutput.Clear()
+    Wait-InstallationCustomPublicState -Pipe $deadlinePair.Server -State $publicState -CursorState @{} `
+        -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(30)) -Kind Form 6>&1 |
+        ForEach-Object { $phaseOutput.Add($_.ToString()) }
+    Assert-InstallationVmCondition ($publicState.Text.StartsWith($sentinel, [StringComparison]::Ordinal)) `
+        'The live Custom wait must read the synthetic console marker as part of the queued frame.'
+    Assert-InstallationVmCondition (($phaseOutput -join "`n") -ceq "Public Custom phase: awaiting-Form`nPublic Custom phase ready: Form") `
+        'Reading a complete Custom form must emit only fixed Form progress without console data.'
 } finally { $publicState.Clear(); Close-InstallationTestPipePair -Pair $deadlinePair }
 Write-Host 'Custom public refusal, form and destructive-review checks passed.'
 
