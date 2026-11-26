@@ -38,6 +38,85 @@ test("runtime status reports partial and unavailable observations", () => {
   assert.equal(runtime.monitorRuntimeStatusText({ routes: "unavailable" }), "Runtime data is unavailable.");
 });
 
+function initializeMonitor({ search = "", activeView, views = ["overview", "network", "services"] }) {
+  const clicks = [];
+  const requests = [];
+  const listeners = new Map();
+  const panelId = (view) => `monitor-${view}-panel`;
+  const panels = new Map(views.map((view) => [panelId(view), {
+    id: panelId(view),
+    querySelector: () => null,
+    querySelectorAll: () => [],
+  }]));
+  const tabs = new Map(views.map((view) => [panelId(view), {
+    classList: { contains: (name) => name === "active" && view === activeView },
+    getAttribute: () => String(view === activeView),
+    addEventListener() {},
+    click() {
+      clicks.push(view);
+      activeView = view;
+    },
+  }]));
+  class MonitorRoot {
+    dataset = { networkUrl: "/network/data", servicesUrl: "/services/data" };
+    querySelector(selector) {
+      if (selector === ".monitor-section-tabs") {
+        return { querySelectorAll: () => [...tabs.values()], addEventListener() {} };
+      }
+      if (selector === ".tab-panel.active") return panels.get(panelId(activeView));
+      if (selector.startsWith("#")) return panels.get(selector.slice(1));
+      return tabs.get(/^\[data-tab-target="([^"]+)"\]$/.exec(selector)?.[1]) ?? null;
+    }
+  }
+  const root = new MonitorRoot();
+  const browser = vm.createContext({
+    HTMLElement: MonitorRoot,
+    URLSearchParams,
+    document: {
+      querySelector: () => root,
+      addEventListener: (name, listener) => listeners.set(name, listener),
+    },
+    window: { location: { search }, addEventListener() {} },
+    fetch(url) {
+      requests.push(url);
+      return new Promise(() => {});
+    },
+  });
+  vm.runInContext(runtimeSource, browser);
+  listeners.get("DOMContentLoaded")();
+  return { activeView, clicks, requests };
+}
+
+test("a plain Monitor visit keeps the tab restored by shared navigation and loads its data", async () => {
+  for (const activeView of ["network", "services"]) {
+    const page = initializeMonitor({ activeView });
+    assert.equal(page.activeView, activeView);
+    assert.deepEqual(page.clicks, []);
+    await Promise.resolve();
+    assert.deepEqual(page.requests, [`/${activeView}/data`]);
+  }
+});
+
+test("Monitor deep links override the restored tab", () => {
+  for (const [search, activeView, expectedView] of [
+    ["?view=network", "services", "network"],
+    ["?view=services", "network", "services"],
+    ["?view=overview", "services", "overview"],
+    ["?view=network&update=job_example", "services", "network"],
+    ["?update=job_example", "services", "network"],
+  ]) {
+    const page = initializeMonitor({ search, activeView });
+    assert.equal(page.activeView, expectedView, search);
+    assert.deepEqual(page.clicks, [expectedView], search);
+  }
+});
+
+test("a plain Monitor visit keeps the server fallback when a saved tab was unavailable", () => {
+  const page = initializeMonitor({ activeView: "overview", views: ["overview"] });
+  assert.equal(page.activeView, "overview");
+  assert.deepEqual(page.clicks, []);
+});
+
 test("runtime load coordinator suppresses overlapping refresh requests", async () => {
   let resolveRequest;
   let requestCount = 0;

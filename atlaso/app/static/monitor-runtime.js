@@ -601,16 +601,19 @@
     }
 
     const params = new URLSearchParams(global.location.search);
-    const requestedView = params.get("view") || (params.has("update") ? "network" : "overview");
-    const requestedPanel = requestedView === "network" ? "monitor-network-panel" : requestedView === "services" ? "monitor-services-panel" : "monitor-overview-panel";
-    const requestedTab = root.querySelector(`[data-tab-target="${requestedPanel}"]`);
-    if (requestedTab && !requestedTab.classList.contains("active")) requestedTab.click();
-    else if (requestedPanel !== "monitor-overview-panel") coordinators.get(requestedPanel)?.refresh();
+    const requestedView = params.get("view") || (params.has("update") ? "network" : "");
+    if (requestedView) {
+      const requestedPanel = requestedView === "network" ? "monitor-network-panel" : requestedView === "services" ? "monitor-services-panel" : "monitor-overview-panel";
+      const requestedTab = root.querySelector(`[data-tab-target="${requestedPanel}"]`);
+      if (requestedTab && !requestedTab.classList.contains("active")) requestedTab.click();
+    }
 
-    global.addEventListener("pageshow", () => {
+    const refreshActivePanel = () => {
       const activePanel = root.querySelector(".tab-panel.active");
       if (activePanel?.id) coordinators.get(activePanel.id)?.refresh();
-    });
+    };
+    refreshActivePanel();
+    global.addEventListener("pageshow", refreshActivePanel);
   }
 
   global.MonitorRuntime = {

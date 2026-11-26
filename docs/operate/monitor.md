@@ -24,6 +24,9 @@ This verified appliance view provides visual orientation before you begin.
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
+When you reopen **Monitor** from the sidebar, it restores your last available tab in the same browser.
+Links to a specific Monitor view open that view.
+
 Select **Network Diagnostics** beside **Route lookup** when you need to send a probe from the appliance. Administrators
 and Network Administrators can also open [Network Diagnostics](network-diagnostics.md) from **Operations**.
 
