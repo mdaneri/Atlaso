@@ -47,6 +47,16 @@ INSTALL_SECONDS = 3 * 60 * 60
 BOOT_SECONDS = 15 * 60
 MINIMUM_FREE_BYTES = 16 * 1024**3
 FIRST_NETWORK_DIAGNOSTICS_VERSION = (0, 9, 523)
+NETWORK_PROBES = (
+    ("IPv4 loopback ping", "ping", "127.0.0.1", "127.0.0.1", "reply"),
+    ("IPv4 loopback traceroute", "traceroute", "127.0.0.1", "127.0.0.1", "reply"),
+    ("IPv6 loopback ping", "ping", "::1", "::1", "reply"),
+    ("IPv6 loopback traceroute", "traceroute", "::1", "::1", "reply"),
+    ("localhost lookup", "dns", "localhost", "", "resolved"),
+)
+NETWORK_PROBE_EXIT_CODES = {20 + index: probe[0] for index, probe in enumerate(NETWORK_PROBES)}
+NETWORK_RESULT = re.compile(r"(?im)^[ \t]*NETWORK RESULT (PASS|ERROR [0-9]{1,3})[ \t]*$")
+NETWORK_RESULT_SECONDS = 180
 ACTIVE_STATES = "active|inactive|activating|deactivating|failed|reloading|refreshing|maintenance|unknown"
 STARTUP_UNITS = (
     "atlaso.service", "atlaso-worker.service", "atlaso-bootstrap-https.service",
@@ -1002,6 +1012,51 @@ def check_installed_services(qmp: Qmp, output: Path, evidence: FailureEvidence) 
             raise AcceptanceError(f"{service} did not become active in the media-free boot")
 
 
+def check_installed_network_diagnostics(qmp: Qmp, output: Path, evidence: FailureEvidence) -> None:
+    """Require all offline network probes to pass under the installed service account.
+
+    Args:
+        qmp: Control connection to the authenticated guest.
+        output: Fixture directory used for transient console frames.
+        evidence: Failure record that receives the fixed checkpoint or probe name.
+    """
+    evidence.checkpoint = "installed network diagnostics"
+    probes = json.dumps([probe[1:] for probe in NETWORK_PROBES], separators=(",", ":"))
+    # Submit the arguments and program separately to limit console line wrapping.
+    run_console_command(qmp, f"NET_PROBES='{probes}'")
+    run_console_command(
+        qmp,
+        "NET_SCRIPT='import json,sys;from atlaso.app.services.network_diagnostics import run_check as r;"
+        "sys.exit(next((i for i,(k,a,s,e) in enumerate(json.loads(sys.argv[1]),20) "
+        'if r(k,a,s,"auto").state!=e),0))\'',
+    )
+    # Leave time to read the result even if the guest command reaches its limit.
+    run_console_command(
+        qmp,
+        "timeout -k 2s 165s runuser -u atlaso -- env ATLASO_DRY_RUN_SYSTEM_ADAPTERS=false "
+        '$P -BI -c "$NET_SCRIPT" "$NET_PROBES" >/dev/null 2>&1; S=$?; '
+        "printf '\\033[2J\\033[H'; "
+        'if [ "$S" = 0 ]; then echo NETWORK RESULT PASS; '
+        'else printf "NETWORK RESULT ERROR %s\\n" "$S"; fi',
+    )
+    frame = wait_screen(qmp, output, NETWORK_RESULT.search, evidence.checkpoint, NETWORK_RESULT_SECONDS)
+    results = NETWORK_RESULT.findall(frame)
+    if len(results) != 1:
+        raise AcceptanceError("the installed network diagnostics returned ambiguous results")
+    result = results[0].upper()
+    if result == "PASS":
+        print("IPv4 and IPv6 loopback probes and localhost lookup verified.", flush=True)
+        return
+    code = int(result.removeprefix("ERROR "))
+    failed_probe = NETWORK_PROBE_EXIT_CODES.get(code)
+    if failed_probe:
+        evidence.checkpoint = f"installed network diagnostics: {failed_probe}"
+        raise AcceptanceError(f"the installed Atlaso service account failed {failed_probe}")
+    if code in (124, 137):
+        raise AcceptanceError("the installed network diagnostics exceeded the guest execution deadline")
+    raise AcceptanceError(f"the installed network diagnostics could not execute (exit {code})")
+
+
 def check_installed_application(qmp: Qmp, output: Path, version: str, commit: str, evidence: FailureEvidence) -> None:
     """Verify installed build metadata, services, and local diagnostic execution.
 
@@ -1027,26 +1082,8 @@ def check_installed_application(qmp: Qmp, output: Path, version: str, commit: st
     check_installed_services(qmp, output, evidence)
     print("The installed version, source commit and both Atlaso services verified.", flush=True)
 
-    if tuple(map(int, version.split("."))) < FIRST_NETWORK_DIAGNOSTICS_VERSION:
-        return
-
-    # Exercise the installed implementation as the service account, with the ISO
-    # removed and no network peer. Keep console evidence to a public status line.
-    evidence.checkpoint = "installed network diagnostics"
-    run_console_command(
-        qmp,
-        "runuser -u atlaso -- env ATLASO_DRY_RUN_SYSTEM_ADAPTERS=false $P -BI -c "
-        "'from atlaso.app.services.network_diagnostics import run_check as r;"
-        "assert all(r(k,a,a,\"auto\").state==\"reply\" for a in (\"127.0.0.1\",\"::1\") "
-        "for k in (\"ping\",\"traceroute\"));"
-        "assert r(\"dns\",\"localhost\",\"\",\"auto\").state==\"resolved\"' "
-        ">/dev/null 2>&1 && echo PROBES-OK || echo PROBES-FAILED",
-    )
-    probe_status = re.compile(r"(?im)^[ \t]*PROBES-(OK|FAILED)[ \t]*$")
-    result = wait_screen(qmp, output, probe_status.search, "installed network diagnostics", 55)
-    if [status.upper() for status in probe_status.findall(result)] != ["OK"]:
-        raise AcceptanceError("the installed Atlaso service account could not run its local network diagnostics")
-    print("IPv4 and IPv6 loopback probes and localhost lookup verified.", flush=True)
+    if tuple(map(int, version.split("."))) >= FIRST_NETWORK_DIAGNOSTICS_VERSION:
+        check_installed_network_diagnostics(qmp, output, evidence)
 
 
 def verify_installed(
