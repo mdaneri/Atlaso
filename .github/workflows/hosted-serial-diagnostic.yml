@@ -1,0 +1,52 @@
+name: Hosted serial diagnostic for issue 1240
+
+on:
+  push:
+    branches: [diagnostic/1240-hosted-serial]
+
+permissions:
+  contents: read
+
+jobs:
+  serial:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install QEMU and extract an Ubuntu guest kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+          state="$RUNNER_TEMP/atlaso-serial-1240"
+          mkdir -m 700 "$state"
+          sudo apt-get update -qq
+          sudo apt-get install --no-install-recommends -y qemu-system-x86 qemu-utils ovmf seabios cpio gcc libc6-dev busybox-static
+          kernel_pkg=$(apt-cache depends linux-image-generic | awk '$1 == "Depends:" && $2 ~ /^linux-image-[0-9].*-generic$/ {print $2}')
+          [[ "$kernel_pkg" =~ ^linux-image-[0-9.-]+-generic$ ]]
+          cd "$state"
+          apt-get download "$kernel_pkg"
+          dpkg-deb -x ./*.deb kernel
+          kernels=(kernel/boot/vmlinuz-*)
+          [[ ${#kernels[@]} = 1 && -f "${kernels[0]}" ]]
+          chmod u+r "${kernels[0]}"
+          echo "GUEST_KERNEL=$state/${kernels[0]}" >> "$GITHUB_ENV"
+          echo "SMOKE_STATE=$state" >> "$GITHUB_ENV"
+          printf 'Guest kernel package %s\n' "$kernel_pkg"
+          qemu-system-x86_64 --version
+      - name: Build the synthetic guest
+        run: |
+          mkdir -m 700 "$SMOKE_STATE/initrd"
+          bash scripts/installation/diagnostic_guest/build.sh "$SMOKE_STATE/initrd"
+      - name: Measure the host and exercise the guest serial channel
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          mkdir -m 700 "$SMOKE_STATE/vm"
+          jq -n --arg run "$GITHUB_RUN_ID" --arg attempt "$GITHUB_RUN_ATTEMPT" --arg sha "$GITHUB_SHA" \
+            --arg path "$SMOKE_STATE/vm" --arg identity "$(stat -c '%d:%i' "$SMOKE_STATE/vm")" \
+            '{run:$run, attempt:$attempt, source:$sha, path:$path, identity:$identity}' > "$SMOKE_STATE/vm-owner.json"
+          python3 -m scripts.installation.hosted_serial_resources \
+            python3 -m scripts.installation.hosted_serial_smoke \
+              --state "$SMOKE_STATE/vm" --kernel "$GUEST_KERNEL" --initrd "$SMOKE_STATE/initrd/guest.cpio.gz"
