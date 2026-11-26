@@ -19,7 +19,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from scripts.installation.manifest import digest
 
@@ -64,6 +64,11 @@ NETWORK_RINGBUF = "atlaso-probes"
 NETWORK_RINGBUF_BYTES = 4096
 NETWORK_RINGBUF_READ_BYTES = 1024
 ACTIVE_STATES = "active|inactive|activating|deactivating|failed|reloading|refreshing|maintenance|unknown"
+SERVICE_STATES = ACTIVE_STATES + "|unrecognized"
+SERVICE_RESULT_STATES = (
+    "success|resources|protocol|timeout|exit-code|signal|core-dump|watchdog|start-limit-hit|oom-kill|"
+    "dependency|exec-condition|assert|skipped"
+)
 STARTUP_UNITS = (
     "atlaso.service", "atlaso-worker.service", "atlaso-bootstrap-https.service",
     "atlaso-data-disks.service", "atlaso-guest-agent-select.service", "atlaso-wan.service",
@@ -330,25 +335,65 @@ class Qmp:
             deadline: Monotonic deadline for collecting the complete fixed result.
             terminal: Exact token-bound record that ends this read.
         """
+        pattern = re.compile(rf"ATLASO-PROBE:{re.escape(token)}:(?:READY|[1-5]:(?:PASS|FAIL)|DONE|EXIT:[0-9]{{1,3}})\Z")
+        return self._read_ring_records(
+            deadline,
+            pattern,
+            lambda record: record == f"ATLASO-PROBE:{token}:{terminal}"
+            or (terminal == "EXIT" and record.startswith(f"ATLASO-PROBE:{token}:EXIT:")),
+            "network diagnostic",
+        )
+
+    def read_service_records(self, token: str, deadline: float) -> list[str]:
+        """Read token-bound, allowlisted service observations from the VM's COM2 ring buffer.
+
+        Args:
+            token: Per-service check token.
+            deadline: Monotonic deadline for collecting the terminal record.
+        """
+        pattern = re.compile(
+            rf"ATLASO-SERVICE:{re.escape(token)}:(?:READY|DONE|"
+            rf"(?:APP|WORKER):(?:atlaso\.service|atlaso-worker\.service|-):(?:{SERVICE_STATES}):"
+            rf"(?:{SERVICE_RESULT_STATES}|-):(?:[0-9]{{1,3}}|-))\Z"
+        )
+        return self._read_ring_records(
+            deadline, pattern, lambda record: record == f"ATLASO-SERVICE:{token}:DONE", "service state",
+        )
+
+    def _read_ring_records(
+        self,
+        deadline: float,
+        pattern: re.Pattern[str],
+        is_terminal: Callable[[str], bool],
+        label: str,
+    ) -> list[str]:
+        """Read bounded, newline-delimited records for one token from the in-memory COM2 ring buffer.
+
+        Args:
+            deadline: Monotonic deadline for collecting the terminal record.
+            pattern: Record allowlist for this protocol.
+            is_terminal: Predicate for its final record.
+            label: Fixed public channel name for validation errors.
+        """
         records: list[str] = []
         pending = bytearray()
         received = 0
-        pattern = re.compile(rf"ATLASO-PROBE:{re.escape(token)}:(?:READY|[1-5]:(?:PASS|FAIL)|DONE|EXIT:[0-9]{{1,3}})\Z")
+        error = f"QEMU returned an invalid {label} record"
         while time.monotonic() < deadline:
             encoded = self.execute(
                 "ringbuf-read",
                 {"device": NETWORK_RINGBUF, "size": NETWORK_RINGBUF_READ_BYTES, "format": "base64"},
             )
             if not isinstance(encoded, str):
-                raise AcceptanceError("QEMU returned an invalid network diagnostic record")
+                raise AcceptanceError(error)
             try:
                 chunk = base64.b64decode(encoded, validate=True)
             except binascii.Error as error:
-                raise AcceptanceError("QEMU returned an invalid network diagnostic record") from error
+                raise AcceptanceError(f"QEMU returned an invalid {label} record") from error
             if chunk:
                 received += len(chunk)
                 if received > NETWORK_RINGBUF_BYTES:
-                    raise AcceptanceError("network diagnostic records exceeded their fixed buffer")
+                    raise AcceptanceError(f"{label} records exceeded their fixed buffer")
                 pending.extend(chunk)
                 while b"\n" in pending:
                     raw, _, remaining = pending.partition(b"\n")
@@ -356,21 +401,19 @@ class Qmp:
                     try:
                         record = raw.decode("ascii").removesuffix("\r")
                     except UnicodeDecodeError as error:
-                        raise AcceptanceError("QEMU returned an invalid network diagnostic record") from error
+                        raise AcceptanceError(f"QEMU returned an invalid {label} record") from error
                     if not pattern.fullmatch(record):
-                        raise AcceptanceError("QEMU returned an invalid network diagnostic record")
+                        raise AcceptanceError(f"QEMU returned an invalid {label} record")
                     records.append(record)
-                    if record == f"ATLASO-PROBE:{token}:{terminal}" or (
-                        terminal == "EXIT" and record.startswith(f"ATLASO-PROBE:{token}:EXIT:")
-                    ):
+                    if is_terminal(record):
                         if pending:
-                            raise AcceptanceError("QEMU returned records after the completed diagnostic phase")
+                            raise AcceptanceError(f"QEMU returned records after {label} completion")
                         return records
-                    if ":EXIT:" in record and terminal != "EXIT":
+                    if label == "network diagnostic" and ":EXIT:" in record:
                         raise AcceptanceError("the guest returned a network diagnostic exit before readiness")
             else:
                 time.sleep(0.25)
-        raise ScreenTimeout("the guest did not return complete network diagnostic records")
+        raise ScreenTimeout(f"the guest did not return complete {label} records")
 
     def close(self) -> None:
         self.stream.close()
@@ -1035,42 +1078,110 @@ def collect_service_failure(qmp: Qmp, output: Path, service: str, evidence: Fail
         evidence.collection = "journal_unavailable" if evidence.collection == "not_attempted" else "unavailable"
 
 
+def service_observations(records: list[str], token: str, key: str, service: str) -> list[tuple[str, str, str]]:
+    """Validate a complete reply before retaining any observation from it."""
+    prefix = f"ATLASO-SERVICE:{token}:"
+    if len(records) < 3 or records[0] != prefix + "READY" or records[-1] != prefix + "DONE":
+        raise AcceptanceError("the guest returned incomplete service state evidence")
+    unavailable = f"{prefix}{key}:-:unrecognized:-:-"
+    observation = re.compile(
+        re.escape(f"{prefix}{key}:{service}:")
+        + rf"({ACTIVE_STATES}):({SERVICE_RESULT_STATES}|-):([0-9]{{1,3}}|-)"
+    )
+    snapshots = []
+    for index, record in enumerate(records[1:-1], 1):
+        if record == unavailable:
+            snapshots.append(("unrecognized", "-", "-"))
+            continue
+        match = observation.fullmatch(record)
+        if match is None:
+            raise AcceptanceError("the guest returned invalid service state evidence")
+        state, result, status = match.groups()
+        if status != "-" and int(status) > 255:
+            raise AcceptanceError("the guest returned an invalid systemd exit status")
+        if state == "active":
+            if index != len(records) - 2:
+                raise AcceptanceError("the guest returned service states after reporting active")
+            if result == "-" or status == "-":
+                raise AcceptanceError("the guest returned incomplete active systemd status")
+        snapshots.append((state, result, status))
+    return snapshots
+
+
 def check_installed_services(qmp: Qmp, output: Path, evidence: FailureEvidence) -> None:
-    """Require a fresh, unambiguous active reply for each service within its original deadline.
+    """Require fresh serial-reported active states for both installed Atlaso services.
 
     Args:
         qmp: Control connection to the authenticated guest.
         output: Fixture directory used for transient console frames.
         evidence: Record that receives normalized service observations.
     """
-    for prefix, service in zip(("APP", "WORKER"), STARTUP_UNITS[:2], strict=True):
+    # Define the function once on the authenticated Bash console. Only the short
+    # invocation for each unit is typed during its individual check.
+    helper = r"""
+        service_probe() {
+            test -c /dev/ttyS1 && exec 3>/dev/ttyS1 || return 1;
+            local prefix=ATLASO-SERVICE:$3 unit=$2 label=$1;
+            printf '%s:READY\n' "$prefix" >&3;
+            local stop=$((SECONDS+150)) remaining properties name value id state result status;
+            while (( SECONDS < stop )); do
+                remaining=$((stop-SECONDS)); (( remaining > 5 )) && remaining=5;
+                id=; state=; result=; status=;
+                if properties=$(timeout "$remaining" systemctl show -p Id -p ActiveState -p Result -p ExecMainStatus "$unit" 2>/dev/null); then
+                    while IFS='=' read -r name value; do
+                        case "$name" in
+                            Id) id=$value ;;
+                            ActiveState) state=$value ;;
+                            Result) result=$value ;;
+                            ExecMainStatus) status=$value ;;
+                        esac;
+                    done <<< "$properties";
+                fi;
+                (( SECONDS < stop )) || break;
+                if [[ -z $id || -z $state || -z $result || -z $status ]]; then
+                    id=-; state=unrecognized; result=-; status=-;
+                fi;
+                printf '%s:%s:%s:%s:%s:%s\n' "$prefix" "$label" "$id" "$state" "$result" "$status" >&3;
+                [[ $id = "$unit" && $state = active ]] && break;
+                remaining=$((stop-SECONDS)); (( remaining > 5 )) && remaining=5;
+                (( remaining > 0 )) && sleep "$remaining";
+            done;
+            printf '%s:DONE\n' "$prefix" >&3;
+        }
+    """
+    run_console_command(qmp, " ".join(line.strip() for line in helper.splitlines() if line.strip()))
+    for key, service in zip(("APP", "WORKER"), STARTUP_UNITS[:2], strict=True):
         evidence.checkpoint = f"{service} active"
-        deadline = time.monotonic() + 150
-        attempt = 0
-        active = False
-        while time.monotonic() < deadline:
-            attempt += 1
-            marker = f"{prefix} {attempt}"
-            pattern = re.compile(rf"(?im)^[ \t]*{marker}[ \t]+({ACTIVE_STATES})[ \t]*$")
-            run_console_command(qmp, f'printf "{marker} %s\\n" "$(systemctl is-active {service})"')
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                break
-            try:
-                result = wait_screen(qmp, output, pattern.search, f"{service} state", min(25, remaining))
-            except ScreenTimeout:
-                evidence.record_state(service, "unrecognized")
-            else:
-                states = pattern.findall(result)
-                state = states[0].casefold() if len(states) == 1 else "ambiguous"
-                evidence.record_state(service, state)
-                if state == "active" and time.monotonic() <= deadline:
-                    active = True
-                    break
-            time.sleep(max(0, min(5, deadline - time.monotonic())))
-        if not active:
+        token = uuid.uuid4().hex
+        run_console_command(qmp, f"service_probe {key} {service} {token}")
+        try:
+            # The guest enforces 150 seconds for observations. Allow the final serial
+            # records to arrive even when the hosted VM is slow to schedule.
+            records = qmp.read_service_records(token, time.monotonic() + 165)
+            snapshots = service_observations(records, token, key, service)
+        except (AcceptanceError, OSError, ValueError, subprocess.SubprocessError) as error:
+            evidence.record_state(service, "unrecognized")
             collect_service_failure(qmp, output, service, evidence)
-            raise AcceptanceError(f"{service} did not become active in the media-free boot")
+            raise AcceptanceError(f"{service} state could not be read in the media-free boot") from error
+
+        for state, _, _ in snapshots:
+            evidence.record_state(service, state)
+        state, _, _ = snapshots[-1]
+        if state == "active":
+            continue
+
+        collect_service_failure(qmp, output, service, evidence)
+        # Keep the result and exit status from the same systemd snapshot.
+        for observed, result, status in reversed(snapshots):
+            if observed != "unrecognized":
+                if result != "-":
+                    evidence.unit_result = result
+                if status != "-":
+                    evidence.exec_main_status = int(status)
+                break
+        if state == "unrecognized":
+            raise AcceptanceError(f"{service} state could not be read in the media-free boot")
+        raise AcceptanceError(f"{service} remained {state} in the media-free boot")
 
 
 def check_installed_network_diagnostics(qmp: Qmp, output: Path, evidence: FailureEvidence) -> None:

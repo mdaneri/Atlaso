@@ -192,7 +192,8 @@ retrying release publication. The signed installation artifact index records the
 GitHub Actions downloads the signed draft's ISO parts, verifies the signed index and reconstructs the exact installer.
 The QEMU/OVMF job checks disconnected UEFI installation to a 64 GiB disk, preservation of a second 4 GiB disk, boot
 without installation media, active Atlaso services and matching application version and source commit. The runner reads
-the installed identity and service state through the appliance's authenticated native console. The disk-only boot uses
+the installed identity through the authenticated native console. It queries systemd for each service and reads the
+reply over the disk-only VM's serial port. Each service has 150 seconds to report an active state. The disk-only boot uses
 isolated virtual DHCP with no forwarded ports. Its success receipt binds all checkpoints to the ISO SHA-256 and the
 workflow attempt that ran them. After fixture admission, a failed test retains a separate
 `vm-acceptance-failure-<run-id>-<attempt>` artifact for 14 days. It records the failed checkpoint, the last classified
