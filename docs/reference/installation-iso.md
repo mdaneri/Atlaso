@@ -204,9 +204,11 @@ prerelease and verifies the public assets before advancing `development`. To ret
 **Publish appliance release** from `main` with the full `release_sha`.
 
 For `v0.9.523` and later, the hosted fixture also runs IPv4 and IPv6 loopback ping and traceroute and a
-`localhost` lookup through the installed Atlaso implementation as its service account. It gives the probes
-up to three minutes to report a fixed result on a cleared console. A failed probe records its name.
-A guest timeout or an unreadable result also fails acceptance.
+`localhost` lookup through the installed Atlaso implementation as its service account. After native console
+login, the fixture checks that the guest can write to a dedicated virtual serial port. It reads the five
+probe results directly from QEMU's in-memory buffer and allows three minutes for completion. The release
+requires a successful result for every probe. A failed probe, missing result, or guest execution error
+leaves the release in draft.
 
 If OCR misses a field on **Storage layout**, the hosted test restores the highlighted text and reads the same frame
 again. It uses the native **Back** action to leave **Custom**, verifies the original **Auto** root assignment, and

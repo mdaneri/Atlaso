@@ -1,5 +1,6 @@
 """Focused unit checks for release VM acceptance evidence and controls."""
 
+import base64
 import io
 import json
 import os
@@ -520,6 +521,9 @@ def test_acceptance_exercises_network_diagnostics_from_the_first_shipping_versio
     monkeypatch.setattr(vm_acceptance, "run_console_command", lambda *_: None)
     monkeypatch.setattr(vm_acceptance, "check_installed_services", lambda *_: observed.append("services"))
 
+    monkeypatch.setattr(vm_acceptance, "check_installed_network_diagnostics",
+                        lambda *_: observed.append("installed network diagnostics"))
+
     def wait_screen(_qmp, _output, predicate, label, _seconds):
         """Supply the correct recognized frame for the current checkpoint.
 
@@ -531,9 +535,8 @@ def test_acceptance_exercises_network_diagnostics_from_the_first_shipping_versio
             _seconds: Unused checkpoint budget.
         """
         observed.append(label)
-        response = "NETWORK RESULT PASS" if label == "installed network diagnostics" else "True"
-        assert predicate(response)
-        return response
+        assert predicate("True")
+        return "True"
 
     monkeypatch.setattr(vm_acceptance, "wait_screen", wait_screen)
     vm_acceptance.check_installed_application(object(), tmp_path, version, "a" * 40, vm_acceptance.FailureEvidence())
@@ -544,53 +547,114 @@ def test_acceptance_exercises_network_diagnostics_from_the_first_shipping_versio
     assert observed == expected
 
 
-@pytest.mark.parametrize(("response", "message", "checkpoint"), [
-    ("NETWORK RESULT PASS", None, "installed network diagnostics"),
-    ("NETWORK RESULT ERROR 23", "failed IPv6 loopback traceroute", "installed network diagnostics: IPv6 loopback traceroute"),
-    ("NETWORK RESULT ERROR 124", "exceeded the guest execution deadline", "installed network diagnostics"),
-    ("NETWORK RESULT ERROR 1", "could not execute", "installed network diagnostics"),
-    ("NETWORK RESULT PASS\nNETWORK RESULT ERROR 22", "ambiguous results", "installed network diagnostics"),
-    ("else echo NETWORK RESULT PASS; fi", "unrecognized", "installed network diagnostics"),
-])
-def test_network_diagnostics_requires_one_fresh_result(monkeypatch, tmp_path, response, message, checkpoint):
-    """Distinguish an observed probe failure, command failure, and unreadable result.
+@pytest.mark.parametrize("installing", [True, False])
+def test_probe_serial_port_only_exists_on_media_free_boot(monkeypatch, tmp_path, installing):
+    """Keep the dedicated in-memory result port on the installed guest.
 
     Args:
-        monkeypatch: Fixture that substitutes the guest console.
-        tmp_path: Fixture directory for the guest.
-        response: Simulated console text at the result checkpoint.
-        message: Expected acceptance error text or None for successful acceptance.
-        checkpoint: Fixed checkpoint retained in the failure record.
+        monkeypatch: Replace QEMU launch and control.
+        tmp_path: Fixture paths for the QEMU command.
+        installing: Whether this boot has installation media attached.
     """
     commands = []
-    evidence = vm_acceptance.FailureEvidence()
-    monkeypatch.setattr(vm_acceptance, "run_console_command", lambda _qmp, command: commands.append(command))
+    monkeypatch.setattr(vm_acceptance.subprocess, "Popen", lambda cmd, **kw: commands.append(cmd))
+    monkeypatch.setattr(vm_acceptance, "Qmp", lambda *args, **kw: SimpleNamespace(execute=lambda *_: None))
+    vm_acceptance.start_qemu(tmp_path / "installation.iso" if installing else None, tmp_path,
+                             tmp_path / "disk", tmp_path / "vars", tmp_path / "code", "control",
+                             abstract_sockets=False, accelerator="tcg")
+    args = commands[0]
+    assert ("ringbuf,id=atlaso-probes,size=4096" in args) == (not installing)
+    assert ("isa-serial,chardev=atlaso-probes,index=1" in args) == (not installing)
 
-    def wait_screen(_qmp, _output, predicate, _label, seconds):
-        """Return a matching result or simulate a console timeout.
+
+def test_serial_reader_reassembles_fragmented_guest_records(monkeypatch):
+    """Read LF and CRLF records split at arbitrary QMP boundaries.
+
+    Args:
+        monkeypatch: Supply fragments from the simulated QEMU ring buffer.
+    """
+    vm = object.__new__(vm_acceptance.Qmp)
+    chunks = iter([b"ATLASO-PRO", b"BE:abc:DONE\r", b"\nATLASO-PROBE:abc:EXIT:0\n"])
+
+    def execute(command, arguments):
+        """Read one fragment from the fixed device.
 
         Args:
-            _qmp: Unused fixture control.
-            _output: Unused fixture directory.
-            predicate: Matcher for a real output line.
-            _label: Unused checkpoint name.
-            seconds: Budget for guest execution and recognition.
+            command: QMP operation.
+            arguments: Character device and encoding.
         """
-        assert seconds == 180
-        if not predicate(response):
-            raise vm_acceptance.ScreenTimeout("unrecognized")
-        return response
+        assert command == "ringbuf-read"
+        assert arguments["device"] == "atlaso-probes" and arguments["format"] == "base64"
+        return base64.b64encode(next(chunks)).decode("ascii")
 
-    monkeypatch.setattr(vm_acceptance, "wait_screen", wait_screen)
-    if message is None:
-        vm_acceptance.check_installed_network_diagnostics(object(), tmp_path, evidence)
+    monkeypatch.setattr(vm, "execute", execute)
+    assert vm.read_network_records("abc", vm_acceptance.time.monotonic() + 5, "EXIT") == [
+        "ATLASO-PROBE:abc:DONE", "ATLASO-PROBE:abc:EXIT:0",
+    ]
+
+
+@pytest.mark.parametrize("payload", [
+    b"ATLASO-PROBE:stale:READY\n", b"unexpected guest output\n",
+    b"ATLASO-PROBE:abc:READY\nextra", b"ATLASO-PROBE:abc:EXIT:1\n",
+])
+def test_serial_reader_rejects_invalid_handshake(monkeypatch, payload):
+    """Fail closed without emitting raw guest bytes.
+
+    Args:
+        monkeypatch: Supply a simulated QEMU reply.
+        payload: Guest bytes returned by the ring buffer.
+    """
+    vm = object.__new__(vm_acceptance.Qmp)
+    monkeypatch.setattr(vm, "execute", lambda *_: base64.b64encode(payload).decode("ascii"))
+    with pytest.raises(vm_acceptance.AcceptanceError) as error:
+        vm.read_network_records("abc", vm_acceptance.time.monotonic() + 5, "READY")
+    assert "unexpected guest output" not in str(error.value)
+
+
+@pytest.mark.parametrize(("reports", "error"), [
+    (["1:PASS", "2:PASS", "3:PASS", "4:PASS", "5:PASS", "DONE", "EXIT:0"], None),
+    (["1:PASS", "2:PASS", "3:PASS", "4:FAIL", "5:PASS", "DONE", "EXIT:1"], "IPv6 loopback traceroute"),
+    (["1:PASS", "2:PASS", "2:PASS", "4:PASS", "5:PASS", "DONE", "EXIT:0"], "invalid"),
+    (["EXIT:0"], "exited before completing"),
+    (["EXIT:124"], "deadline"),
+    (["EXIT:127"], "127"),
+])
+def test_installed_network_probes_require_five_results_and_clean_exit(monkeypatch, tmp_path, reports, error):
+    """Accept only the complete probe sequence from a runnable guest command.
+
+    Args:
+        monkeypatch: Intercept guest keyboard input and serial reads.
+        tmp_path: Guest fixture directory.
+        reports: Fixed guest records returned after the handshake.
+        error: Expected failure message or None for success.
+    """
+    commands = []
+
+    def read_records(token, deadline, terminal):
+        """Supply records tagged for the active attempt.
+
+        Args:
+            token: Per-attempt identity.
+            deadline: Absolute time limit for the current phase.
+            terminal: Expected last record.
+        """
+        if terminal == "READY":
+            assert len(commands) == 1 and "/dev/ttyS1" in commands[0]
+            return [f"ATLASO-PROBE:{token}:READY"]
+        assert 175 < deadline - vm_acceptance.time.monotonic() <= 180
+        return [f"ATLASO-PROBE:{token}:{value}" for value in reports]
+
+    monkeypatch.setattr(vm_acceptance, "run_console_command", lambda _, command: commands.append(command))
+    qmp = SimpleNamespace(read_network_records=read_records)
+    evidence = vm_acceptance.FailureEvidence()
+    if error is None:
+        vm_acceptance.check_installed_network_diagnostics(qmp, tmp_path, evidence)
     else:
-        with pytest.raises(vm_acceptance.AcceptanceError, match=message):
-            vm_acceptance.check_installed_network_diagnostics(object(), tmp_path, evidence)
-
-    assert "timeout -k 2s 165s runuser -u atlaso" in commands[-1]
-    assert "\\033[2J\\033[H" in commands[-1]
-    assert evidence.checkpoint == checkpoint
+        with pytest.raises(vm_acceptance.AcceptanceError, match=error):
+            vm_acceptance.check_installed_network_diagnostics(qmp, tmp_path, evidence)
+    assert any("runuser -u atlaso" in cmd for cmd in commands)
+    for command in commands:
+        vm_acceptance.key_events(command)
 
 
 def test_failed_acceptance_only_seals_allowlisted_evidence(monkeypatch, tmp_path, capsys):

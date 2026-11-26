@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
+import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import socket
 import subprocess
 import sys
+import textwrap
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -54,9 +59,10 @@ NETWORK_PROBES = (
     ("IPv6 loopback traceroute", "traceroute", "::1", "::1", "reply"),
     ("localhost lookup", "dns", "localhost", "", "resolved"),
 )
-NETWORK_PROBE_EXIT_CODES = {20 + index: probe[0] for index, probe in enumerate(NETWORK_PROBES)}
-NETWORK_RESULT = re.compile(r"(?im)^[ \t]*NETWORK RESULT (PASS|ERROR [0-9]{1,3})[ \t]*$")
 NETWORK_RESULT_SECONDS = 180
+NETWORK_RINGBUF = "atlaso-probes"
+NETWORK_RINGBUF_BYTES = 4096
+NETWORK_RINGBUF_READ_BYTES = 1024
 ACTIVE_STATES = "active|inactive|activating|deactivating|failed|reloading|refreshing|maintenance|unknown"
 STARTUP_UNITS = (
     "atlaso.service", "atlaso-worker.service", "atlaso-bootstrap-https.service",
@@ -315,6 +321,56 @@ class Qmp:
             {"keys": [{"type": "qcode", "data": key} for key in keys], "hold-time": 75},
         )
         time.sleep(0.1)
+
+    def read_network_records(self, token: str, deadline: float, terminal: str) -> list[str]:
+        """Read bounded UTF-8 records from the disk-only VM's in-memory COM2 ring buffer.
+
+        Args:
+            token: Per-check random token that binds records to this probe attempt.
+            deadline: Monotonic deadline for collecting the complete fixed result.
+            terminal: Exact token-bound record that ends this read.
+        """
+        records: list[str] = []
+        pending = bytearray()
+        received = 0
+        pattern = re.compile(rf"ATLASO-PROBE:{re.escape(token)}:(?:READY|[1-5]:(?:PASS|FAIL)|DONE|EXIT:[0-9]{{1,3}})\Z")
+        while time.monotonic() < deadline:
+            encoded = self.execute(
+                "ringbuf-read",
+                {"device": NETWORK_RINGBUF, "size": NETWORK_RINGBUF_READ_BYTES, "format": "base64"},
+            )
+            if not isinstance(encoded, str):
+                raise AcceptanceError("QEMU returned an invalid network diagnostic record")
+            try:
+                chunk = base64.b64decode(encoded, validate=True)
+            except binascii.Error as error:
+                raise AcceptanceError("QEMU returned an invalid network diagnostic record") from error
+            if chunk:
+                received += len(chunk)
+                if received > NETWORK_RINGBUF_BYTES:
+                    raise AcceptanceError("network diagnostic records exceeded their fixed buffer")
+                pending.extend(chunk)
+                while b"\n" in pending:
+                    raw, _, remaining = pending.partition(b"\n")
+                    pending = bytearray(remaining)
+                    try:
+                        record = raw.decode("ascii").removesuffix("\r")
+                    except UnicodeDecodeError as error:
+                        raise AcceptanceError("QEMU returned an invalid network diagnostic record") from error
+                    if not pattern.fullmatch(record):
+                        raise AcceptanceError("QEMU returned an invalid network diagnostic record")
+                    records.append(record)
+                    if record == f"ATLASO-PROBE:{token}:{terminal}" or (
+                        terminal == "EXIT" and record.startswith(f"ATLASO-PROBE:{token}:EXIT:")
+                    ):
+                        if pending:
+                            raise AcceptanceError("QEMU returned records after the completed diagnostic phase")
+                        return records
+                    if ":EXIT:" in record and terminal != "EXIT":
+                        raise AcceptanceError("the guest returned a network diagnostic exit before readiness")
+            else:
+                time.sleep(0.25)
+        raise ScreenTimeout("the guest did not return complete network diagnostic records")
 
     def close(self) -> None:
         self.stream.close()
@@ -811,6 +867,11 @@ def start_qemu(
             "-drive", f"if=none,id=cdrom,media=cdrom,readonly=on,file={iso}",
             "-device", "scsi-cd,drive=cdrom,bus=scsi0.0,channel=0,scsi-id=2,lun=0",
         ])
+    else:
+        command.extend([
+            "-chardev", f"ringbuf,id={NETWORK_RINGBUF},size={NETWORK_RINGBUF_BYTES}",
+            "-device", f"isa-serial,chardev={NETWORK_RINGBUF},index=1",
+        ])
     process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
     qmp = None
     try:
@@ -1020,41 +1081,71 @@ def check_installed_network_diagnostics(qmp: Qmp, output: Path, evidence: Failur
         output: Fixture directory used for transient console frames.
         evidence: Failure record that receives the fixed checkpoint or probe name.
     """
-    evidence.checkpoint = "installed network diagnostics"
-    probes = json.dumps([probe[1:] for probe in NETWORK_PROBES], separators=(",", ":"))
-    # Submit the arguments and program separately to limit console line wrapping.
-    run_console_command(qmp, f"NET_PROBES='{probes}'")
+    evidence.checkpoint = "network diagnostic channel readiness"
+    token = uuid.uuid4().hex
+    prefix = f"ATLASO-PROBE:{token}:"
+    probes = [probe[1:] for probe in NETWORK_PROBES]
+    program = textwrap.dedent(f"""\
+        import os
+        from atlaso.app.services.network_diagnostics import run_check
+
+        with os.fdopen(3, "w", buffering=1, encoding="ascii") as result:
+            passed_all = True
+            for number, (kind, target, source, expected) in enumerate({probes!r}, 1):
+                passed = run_check(kind, target, source, "auto").state == expected
+                status = "PASS" if passed else "FAIL"
+                print(f"{prefix}{{number}}:{{status}}", file=result)
+                passed_all = passed_all and passed
+            print("{prefix}DONE", file=result)
+        raise SystemExit(0 if passed_all else 1)
+        """).encode("ascii")
+    encoded_program = base64.b64encode(program).decode("ascii")
+    program_digest = hashlib.sha256(program).hexdigest()
     run_console_command(
         qmp,
-        "NET_SCRIPT='import json,sys;from atlaso.app.services.network_diagnostics import run_check as r;"
-        "sys.exit(next((i for i,(k,a,s,e) in enumerate(json.loads(sys.argv[1]),20) "
-        'if r(k,a,s,"auto").state!=e),0))\'',
+        "test -c /dev/ttyS1 && exec 3>/dev/ttyS1 && "
+        f"printf '%s\\n' {shlex.quote(prefix + 'READY')} >&3",
     )
-    # Leave time to read the result even if the guest command reaches its limit.
+    ready = qmp.read_network_records(token, time.monotonic() + 15, "READY")
+    if ready != [prefix + "READY"]:
+        raise AcceptanceError("the guest network diagnostic channel returned invalid readiness evidence")
+    evidence.checkpoint = "installed network diagnostics"
     run_console_command(
         qmp,
         "timeout -k 2s 165s runuser -u atlaso -- env ATLASO_DRY_RUN_SYSTEM_ADAPTERS=false "
-        '$P -BI -c "$NET_SCRIPT" "$NET_PROBES" >/dev/null 2>&1; S=$?; '
-        "printf '\\033[2J\\033[H'; "
-        'if [ "$S" = 0 ]; then echo NETWORK RESULT PASS; '
-        'else printf "NETWORK RESULT ERROR %s\\n" "$S"; fi',
+        f"$P -B -I -c \"import base64,hashlib; b=base64.b64decode('{encoded_program}',validate=True); "
+        f"assert hashlib.sha256(b).hexdigest()=='{program_digest}'; "
+        "exec(compile(b,'<atlaso-acceptance>','exec'))\" "
+        "</dev/null >/dev/null 2>&1; S=$?; "
+        f"printf 'ATLASO-PROBE:{token}:EXIT:%s\\n' \"$S\" >&3",
     )
-    frame = wait_screen(qmp, output, NETWORK_RESULT.search, evidence.checkpoint, NETWORK_RESULT_SECONDS)
-    results = NETWORK_RESULT.findall(frame)
-    if len(results) != 1:
-        raise AcceptanceError("the installed network diagnostics returned ambiguous results")
-    result = results[0].upper()
-    if result == "PASS":
-        print("IPv4 and IPv6 loopback probes and localhost lookup verified.", flush=True)
-        return
-    code = int(result.removeprefix("ERROR "))
-    failed_probe = NETWORK_PROBE_EXIT_CODES.get(code)
-    if failed_probe:
-        evidence.checkpoint = f"installed network diagnostics: {failed_probe}"
-        raise AcceptanceError(f"the installed Atlaso service account failed {failed_probe}")
-    if code in (124, 137):
-        raise AcceptanceError("the installed network diagnostics exceeded the guest execution deadline")
-    raise AcceptanceError(f"the installed network diagnostics could not execute (exit {code})")
+    records = qmp.read_network_records(token, time.monotonic() + NETWORK_RESULT_SECONDS, "EXIT")
+    if not records or not records[-1].startswith(prefix + "EXIT:"):
+        raise AcceptanceError("the guest did not return complete network diagnostic records")
+    exit_match = re.fullmatch(re.escape(prefix) + r"EXIT:([0-9]{1,3})", records[-1])
+    if exit_match is None:
+        raise AcceptanceError("the guest returned an invalid network diagnostic exit status")
+    exit_code = int(exit_match[1])
+    if records[-2:-1] != [prefix + "DONE"]:
+        if exit_code in (124, 137):
+            raise AcceptanceError("the installed network diagnostic process exceeded its execution deadline")
+        raise AcceptanceError(f"the installed network diagnostic process exited before completing (exit {exit_code})")
+    probe_records = records[:-2]
+    if len(probe_records) != len(NETWORK_PROBES):
+        raise AcceptanceError("the guest returned incomplete network diagnostic results")
+    failures = []
+    for number, (record, probe) in enumerate(zip(probe_records, NETWORK_PROBES, strict=True), 1):
+        if record == f"{prefix}{number}:PASS":
+            continue
+        if record != f"{prefix}{number}:FAIL":
+            raise AcceptanceError("the guest returned invalid network diagnostic results")
+        failures.append(probe[0])
+    if failures:
+        evidence.checkpoint = f"installed network diagnostics: {failures[0]}"
+        raise AcceptanceError(f"the installed Atlaso service account failed {failures[0]}")
+    if exit_code != 0:
+        raise AcceptanceError(f"the installed network diagnostic process exited unsuccessfully (exit {exit_code})")
+    print("IPv4 and IPv6 loopback probes and localhost lookup verified.", flush=True)
 
 
 def check_installed_application(qmp: Qmp, output: Path, version: str, commit: str, evidence: FailureEvidence) -> None:
