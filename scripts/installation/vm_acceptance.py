@@ -28,7 +28,11 @@ STORAGE_LAYOUT_LABELS = (
     r"\bsftp backup storage\b",
     r"\bvy?cfdt depot storage\b",
 )
-STORAGE_LAYOUT_MOUNTS = ("/", "/mnt/atlaso-vcf-backups", "/mnt/atlaso-vcf-offline-depot")
+STORAGE_LAYOUT_MOUNTS = (
+    r"[/+]",
+    r"/mnt(?:-?/|-)atlaso-[vu]cf-backups",
+    r"/mnt(?:-?/|-)atlaso-[vu]cf-offline-depot",
+)
 STORAGE_ROOT_DISK = re.compile(r"/d(?:ev|eu)/sd[a-z]\b", re.I)
 CHECKS = [
     "disconnected_uefi_install",
@@ -352,7 +356,35 @@ def type_text(qmp: Qmp, value: str) -> None:
     qmp.send_key("ret")
 
 
-def preprocess_ppm(raw: bytes) -> tuple[bytes, bool]:
+def restore_highlighted_text(rows: list[bytearray]) -> None:
+    """Restore dark glyphs where the Photon console reverses a selected field.
+
+    Args:
+        rows: Cropped rows with one for dark pixels and zero for light pixels.
+    """
+    width = len(rows[0])
+    runs = re.compile(rb"\x01{%d,}" % max(24, width // 5))
+    scanlines: dict[tuple[int, int], list[int]] = {}
+    for y, row in enumerate(rows):
+        for run in runs.finditer(row):
+            if run.start() > 0 and run.end() < width:
+                scanlines.setdefault(run.span(), []).append(y)
+
+    occupied: set[int] = set()
+    invert = bytes.maketrans(b"\x00\x01", b"\x01\x00")
+    for left, right in sorted(scanlines, key=lambda bounds: bounds[0] - bounds[1]):
+        matches = scanlines[left, right]
+        top, bottom = matches[0], matches[-1]
+        band = range(top, bottom + 1)
+        # A selected VGA line has solid dark top and bottom scanlines.
+        if not 5 <= bottom - top <= 31 or occupied.intersection(band):
+            continue
+        for y in band:
+            rows[y][left:right] = rows[y][left:right].translate(invert)
+        occupied.update(band)
+
+
+def preprocess_ppm(raw: bytes, *, storage_layout: bool = False) -> tuple[bytes, bool]:
     """Crop the neutral-gray Photon dialog and enlarge it for reliable OCR.
 
     Full-frame QEMU screenshots are mostly blue background. The installer window
@@ -362,6 +394,7 @@ def preprocess_ppm(raw: bytes) -> tuple[bytes, bool]:
 
     Args:
         raw: Bytes of a raw RGB PPM screenshot returned by QMP.
+        storage_layout: Restore reverse-video text and enlarge storage fields.
     """
     header = re.match(rb"P6\s+(\d+)\s+(\d+)\s+255\s", raw)
     if header is None:
@@ -391,17 +424,28 @@ def preprocess_ppm(raw: bytes) -> tuple[bytes, bool]:
     else:
         left, top, right, bottom = 0, 0, width, height
 
-    scale = 3 if cropped else 2
     crop_width, crop_height = right - left, bottom - top
+    scale = 3 if cropped else 2
+    if cropped and storage_layout and max(crop_width, crop_height) <= 1024:
+        scale = 5
     enlarged_width, enlarged_height = crop_width * scale, crop_height * scale
     enlarged = bytearray(enlarged_width * enlarged_height * 3)
+    dark_rows = []
+    if cropped:
+        for y in range(top, bottom):
+            start = (y * width + left) * 3
+            line = pixels[start:start + crop_width * 3]
+            dark_rows.append(bytearray(
+                max(line[index:index + 3]) <= 96 for index in range(0, len(line), 3)
+            ))
+        if storage_layout:
+            restore_highlighted_text(dark_rows)
     for y in range(crop_height):
         source = ((top + y) * width + left) * 3
         line = pixels[source:source + crop_width * 3]
         if cropped:
             expanded = b"".join(
-                (b"\0\0\0" if max(line[index:index + 3]) <= 96 else b"\xff\xff\xff") * scale
-                for index in range(0, len(line), 3)
+                (b"\0\0\0" if dark else b"\xff\xff\xff") * scale for dark in dark_rows[y]
             )
         else:
             expanded = b"".join(line[index:index + 3] * scale for index in range(0, len(line), 3))
@@ -424,22 +468,28 @@ def screen_text(qmp: Qmp, directory: Path) -> str:
     prepared = directory / f"frame-{uuid.uuid4().hex}-ocr.ppm"
     try:
         qmp.execute("screendump", {"filename": str(image), "format": "ppm"})
-        prepared_bytes, cropped = preprocess_ppm(image.read_bytes())
-        prepared.write_bytes(prepared_bytes)
-        result = subprocess.run(
-            ["tesseract", str(prepared), "stdout", "--psm", "6" if cropped else "11"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=15,
-            env={**os.environ, "OMP_THREAD_LIMIT": "1"},
-        )
-        if result.returncode:
-            print(f"Console OCR could not read a frame (exit {result.returncode}).", flush=True)
-            return ""
-        if len(result.stdout) > 32768:
-            raise AcceptanceError("guest screen text exceeded its fixed bound")
-        return result.stdout
+        raw = image.read_bytes()
+        for storage_layout in (False, True):
+            prepared_bytes, cropped = preprocess_ppm(raw, storage_layout=storage_layout)
+            prepared.write_bytes(prepared_bytes)
+            result = subprocess.run(
+                ["tesseract", str(prepared), "stdout", "--psm", "6" if cropped else "11"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                env={**os.environ, "OMP_THREAD_LIMIT": "1"},
+            )
+            if result.returncode:
+                print(f"Console OCR could not read a frame (exit {result.returncode}).", flush=True)
+                return ""
+            if len(result.stdout) > 32768:
+                raise AcceptanceError("guest screen text exceeded its fixed bound")
+            if storage_layout or "storage layout" not in result.stdout.casefold():
+                return result.stdout
+            if is_combined_storage_layout_screen(result.stdout):
+                return result.stdout
+        return ""
     except subprocess.TimeoutExpired:
         print("Console OCR timed out on a frame.", flush=True)
         return ""
@@ -486,16 +536,21 @@ def is_combined_storage_layout_screen(text: str) -> bool:
         text: OCR text from one native Photon installer frame.
     """
     folded = text.casefold()
-    root_start = folded.find("root installation target")
-    service_start = folded.find("sftp backup storage")
-    root_section = folded[root_start:service_start] if 0 <= root_start < service_start else ""
+    mounts = re.findall(r"(?im)^[ \t]*(?:x|\|)?[ \t]*mount[ \t]*:[ \t]*(.+)$", folded)
+    # Console OCR sometimes inserts spaces in a mount word or reads a VGA
+    # hyphen as a dash. Keep the role order and the full path checks.
+    mounts = [
+        re.sub(r"[-–—]+", "-", re.sub(r"\s+", "", mount.rstrip().removesuffix("|").removesuffix(" x")))
+        for mount in mounts
+    ]
     return (
         "storage layout" in folded
         and all(re.search(pattern, text, re.I) is not None for pattern in STORAGE_LAYOUT_LABELS)
-        and re.search(r"(?im)^\s*(?:x|\|)?\s*mount\s*:\s*/\s*(?:x|\|)?\s*$", root_section) is not None
-        and all(re.search(rf"(?i)mount\s*:\s*{re.escape(mount)}(?:\s|$)", text) for mount in STORAGE_LAYOUT_MOUNTS[1:])
-        and len(re.findall(r"(?im)^\s*(?:x|\|)?\s*volume\s*:", text)) >= 3
-        and re.search(r"\b(auto|custom)\b", root_section) is not None
+        and len(mounts) == len(STORAGE_LAYOUT_MOUNTS)
+        and all(re.fullmatch(pattern, mount) for pattern, mount in zip(STORAGE_LAYOUT_MOUNTS, mounts, strict=True))
+        and len(re.findall(r"(?im)^[ \t]*(?:x|\|)?[ \t]*volume[ \t]*:", text)) >= 3
+        and storage_layout_root_disk(text) is not None
+        and re.search(r"\b(auto|custom)\b", storage_layout_root_section(folded)) is not None
     )
 
 
@@ -560,10 +615,8 @@ def is_custom_partition_editor_screen(text: str) -> bool:
     Args:
         text: OCR text from one native Photon installer frame.
     """
-    return (
-        "storage layout" not in text.casefold()
-        and re.search(r"\bpartitions?\b", text, re.I) is not None
-    )
+    folded = text.casefold()
+    return "current partitions" in folded and "go back" in folded
 
 
 def configure_storage_assignments(
@@ -596,7 +649,9 @@ def configure_storage_assignments(
             raise AcceptanceError("the disconnected Auto fixture did not begin in Auto layout mode")
         qmp.send_key("l")
         wait_screen(qmp, output, is_custom_partition_editor_screen, "Custom partition editor", 60)
-        qmp.send_key("esc")
+        # Photon's native editor returns through its Back action.
+        for key in ("left", "left", "ret"):
+            qmp.send_key(key)
         screen = wait_screen(qmp, output, is_auto_storage_layout_screen, "Auto storage layout after Custom", 60)
         if storage_layout_root_disk(screen) != expected_root_disk:
             raise AcceptanceError("returning from Custom changed the selected Auto root device")
