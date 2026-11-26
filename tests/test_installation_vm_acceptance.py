@@ -531,7 +531,7 @@ def test_acceptance_exercises_network_diagnostics_from_the_first_shipping_versio
             _seconds: Unused checkpoint budget.
         """
         observed.append(label)
-        response = "PROBES-OK" if label == "installed network diagnostics" else "True"
+        response = "NETWORK RESULT PASS" if label == "installed network diagnostics" else "True"
         assert predicate(response)
         return response
 
@@ -542,6 +542,55 @@ def test_acceptance_exercises_network_diagnostics_from_the_first_shipping_versio
     if probes_required:
         expected.append("installed network diagnostics")
     assert observed == expected
+
+
+@pytest.mark.parametrize(("response", "message", "checkpoint"), [
+    ("NETWORK RESULT PASS", None, "installed network diagnostics"),
+    ("NETWORK RESULT ERROR 23", "failed IPv6 loopback traceroute", "installed network diagnostics: IPv6 loopback traceroute"),
+    ("NETWORK RESULT ERROR 124", "exceeded the guest execution deadline", "installed network diagnostics"),
+    ("NETWORK RESULT ERROR 1", "could not execute", "installed network diagnostics"),
+    ("NETWORK RESULT PASS\nNETWORK RESULT ERROR 22", "ambiguous results", "installed network diagnostics"),
+    ("else echo NETWORK RESULT PASS; fi", "unrecognized", "installed network diagnostics"),
+])
+def test_network_diagnostics_requires_one_fresh_result(monkeypatch, tmp_path, response, message, checkpoint):
+    """Distinguish an observed probe failure, command failure, and unreadable result.
+
+    Args:
+        monkeypatch: Fixture that substitutes the guest console.
+        tmp_path: Fixture directory for the guest.
+        response: Simulated console text at the result checkpoint.
+        message: Expected acceptance error text or None for successful acceptance.
+        checkpoint: Fixed checkpoint retained in the failure record.
+    """
+    commands = []
+    evidence = vm_acceptance.FailureEvidence()
+    monkeypatch.setattr(vm_acceptance, "run_console_command", lambda _qmp, command: commands.append(command))
+
+    def wait_screen(_qmp, _output, predicate, _label, seconds):
+        """Return a matching result or simulate a console timeout.
+
+        Args:
+            _qmp: Unused fixture control.
+            _output: Unused fixture directory.
+            predicate: Matcher for a real output line.
+            _label: Unused checkpoint name.
+            seconds: Budget for guest execution and recognition.
+        """
+        assert seconds == 180
+        if not predicate(response):
+            raise vm_acceptance.ScreenTimeout("unrecognized")
+        return response
+
+    monkeypatch.setattr(vm_acceptance, "wait_screen", wait_screen)
+    if message is None:
+        vm_acceptance.check_installed_network_diagnostics(object(), tmp_path, evidence)
+    else:
+        with pytest.raises(vm_acceptance.AcceptanceError, match=message):
+            vm_acceptance.check_installed_network_diagnostics(object(), tmp_path, evidence)
+
+    assert "timeout -k 2s 165s runuser -u atlaso" in commands[-1]
+    assert "\\033[2J\\033[H" in commands[-1]
+    assert evidence.checkpoint == checkpoint
 
 
 def test_failed_acceptance_only_seals_allowlisted_evidence(monkeypatch, tmp_path, capsys):
