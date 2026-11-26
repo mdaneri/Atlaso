@@ -203,6 +203,10 @@ the artifact. A failed or incomplete run leaves the draft hidden. A passing run 
 prerelease and verifies the public assets before advancing `development`. To retry, dispatch
 **Publish appliance release** from `main` with the full `release_sha`.
 
+If OCR misses a field on **Storage layout**, the hosted test restores the highlighted text and reads the same frame
+again. It uses the native **Back** action to leave **Custom**, verifies the original **Auto** root assignment, and
+checks all three mount paths before continuing to destructive review.
+
 Before the first hosted test, configure the protected `installation-acceptance` GitHub environment for `main`.
 Set `OP_ENVIRONMENT_ID` to the dedicated `Atlaso Installer CI` 1Password Environment and save its read-only service
 account token as `OP_SERVICE_ACCOUNT_TOKEN`. Scope the service account to that Environment and leave vault access

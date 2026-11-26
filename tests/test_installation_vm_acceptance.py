@@ -79,6 +79,56 @@ Volume: shared"""
     assert not vm_acceptance.is_combined_storage_layout_screen(missing_root_mount)
 
 
+def test_storage_ocr_recovers_highlight_without_accepting_wrong_assignments(tmp_path, monkeypatch):
+    """Replay recognized text from the signed installer with the root row highlighted.
+
+    Args:
+        tmp_path: Directory for the transient frame and its OCR input.
+        monkeypatch: Supplies the captured text for each pass through OCR.
+    """
+    recovered = """storage layout
+Root installation target
+Mount: +
+Volume: /dev/sda (64 GiB) - Auto
+SFTP backup storage
+Mount: /mnt-/at laso-ucf-backups
+Volume: Shared storage on /devu-/sda
+VCFDT depot storage
+Mount: /mnt-at laso-ucf—-offline-depot
+Volume: Shared storage on /devu-/sda
+"""
+    frame = b"P6\n1 1\n255\n" + bytes(3)
+    vm = object.__new__(vm_acceptance.Qmp)
+    monkeypatch.setattr(vm, "execute", lambda _, args: Path(args["filename"]).write_bytes(frame))
+    responses = iter((recovered.replace("Volume: /dev/sda (64 GiB) - Auto\n", ""), recovered))
+    monkeypatch.setattr(
+        vm_acceptance.subprocess, "run",
+        lambda cmd, **_: subprocess.CompletedProcess(cmd, 0, next(responses), ""),
+    )
+
+    observed = vm_acceptance.screen_text(vm, tmp_path)
+    assert observed == recovered
+    assert vm_acceptance.initial_installer_screen(observed)
+    assert vm_acceptance.storage_layout_root_disk(observed) == "/dev/sda"
+    assert not vm_acceptance.initial_installer_screen(recovered.replace("ucf-backups", "ucf-depot"))
+    assert not vm_acceptance.initial_installer_screen(recovered.replace("Mount: +", "Mount: /other"))
+    assert not list(tmp_path.iterdir())
+
+
+def test_storage_preprocessing_restores_reversed_glyphs():
+    """Keep selected text dark while clearing its reverse-video background."""
+    rows = [bytearray(120) for _ in range(16)]
+    for y in range(3, 13):
+        rows[y][20:90] = bytes([1]) * 70
+    rows[8][32] = 0
+    rows[8][100] = 1
+
+    vm_acceptance.restore_highlighted_text(rows)
+
+    assert rows[8][31:34] == bytes([0, 1, 0])
+    assert rows[8][100] == 1
+
+
 def test_storage_acceptance_advances_through_combined_layout_once(monkeypatch):
     """Verify the combined page keeps Custom editing nondestructive.
 
@@ -99,7 +149,7 @@ Volume: shared"""
     qmp = SimpleNamespace(send_key=lambda key: qmp_events.append(key))
     observed = []
     screens = iter((
-        "Custom partition editor\nEdit Partitions",
+        "Current partitions:\n<Go Back> <Delete All> <Create New> <Next>",
         screen,
         screen,
         screen,
@@ -124,7 +174,7 @@ Volume: shared"""
 
     vm_acceptance.configure_storage_assignments(qmp, Path("fixture"), "/dev/sda", screen)
 
-    assert qmp_events == ["l", "esc", "tab", "tab", "ret"]
+    assert qmp_events == ["l", "left", "left", "ret", "tab", "tab", "ret"]
     assert observed == [
         "Custom partition editor", "Auto storage layout after Custom",
         "combined SFTP backup storage assignment", "combined VCFDT depot storage assignment",
