@@ -584,7 +584,7 @@ def test_incomplete_or_out_of_order_service_evidence_is_rejected(fields):
 
 @pytest.mark.parametrize(("version", "probes_required"), [("0.9.522", False), ("0.9.523", True), ("1.0.0", True)])
 def test_acceptance_exercises_network_diagnostics_from_the_first_shipping_version(
-    monkeypatch, tmp_path, version, probes_required,
+    monkeypatch, tmp_path, version, probes_required, capsys,
 ):
     """Apply the network probe requirement only to versions that ship it.
 
@@ -593,6 +593,7 @@ def test_acceptance_exercises_network_diagnostics_from_the_first_shipping_versio
         tmp_path: Directory representing the VM fixture.
         version: Installed version to verify.
         probes_required: Whether this version must exercise the network probes.
+        capsys: Fixture used to verify that only the discarded byte count is logged.
     """
     observed = []
     monkeypatch.setattr(vm_acceptance, "run_console_command", lambda *_: None)
@@ -600,6 +601,13 @@ def test_acceptance_exercises_network_diagnostics_from_the_first_shipping_versio
 
     monkeypatch.setattr(vm_acceptance, "check_installed_network_diagnostics",
                         lambda *_: observed.append("installed network diagnostics"))
+
+    def discard_serial_boot_output():
+        """Record that the one-time serial backlog drain occurs at this point."""
+        observed.append("discard serial boot output")
+        return 37
+
+    qmp = SimpleNamespace(discard_serial_boot_output=discard_serial_boot_output)
 
     def wait_screen(_qmp, _output, predicate, label, _seconds):
         """Supply the correct recognized frame for the current checkpoint.
@@ -616,12 +624,20 @@ def test_acceptance_exercises_network_diagnostics_from_the_first_shipping_versio
         return "True"
 
     monkeypatch.setattr(vm_acceptance, "wait_screen", wait_screen)
-    vm_acceptance.check_installed_application(object(), tmp_path, version, "a" * 40, vm_acceptance.FailureEvidence())
+    vm_acceptance.check_installed_application(qmp, tmp_path, version, "a" * 40, vm_acceptance.FailureEvidence())
 
-    expected = ["installed Atlaso version", "installed Atlaso source commit", "services"]
+    expected = [
+        "installed Atlaso version",
+        "installed Atlaso source commit",
+        "discard serial boot output",
+        "services",
+    ]
     if probes_required:
         expected.append("installed network diagnostics")
     assert observed == expected
+    output = capsys.readouterr().out
+    assert "Discarded 37 serial boot bytes" in output
+    assert "ATLASO-PROBE" not in output
 
 
 @pytest.mark.parametrize("installing", [True, False])
@@ -668,6 +684,124 @@ def test_serial_reader_reassembles_fragmented_guest_records(monkeypatch):
     assert vm.read_network_records("abc", vm_acceptance.time.monotonic() + 5, "EXIT") == [
         "ATLASO-PROBE:abc:DONE", "ATLASO-PROBE:abc:EXIT:0",
     ]
+
+
+@pytest.mark.parametrize("payload", [
+    b"",
+    b"\x00partial ATLASO-PROBE:old:REA\xff",
+    bytes(range(256)) * 16,
+])
+def test_serial_boot_drain_reads_one_bounded_ring_buffer(monkeypatch, capsys, payload):
+    """Discard arbitrary startup bytes in one full-capacity QMP read.
+
+    Args:
+        monkeypatch: Supply one encoded ring-buffer response.
+        capsys: Fixture that verifies no guest bytes are logged.
+        payload: Empty, partial, binary, or full-capacity startup data.
+    """
+    vm = object.__new__(vm_acceptance.Qmp)
+    calls = []
+
+    def execute(command, arguments):
+        """Capture the request and return the queued buffer contents.
+
+        Args:
+            command: QMP operation.
+            arguments: Character device, read size, and encoding.
+        """
+        calls.append((command, arguments))
+        return base64.b64encode(payload).decode("ascii")
+
+    monkeypatch.setattr(vm, "execute", execute)
+
+    assert vm.discard_serial_boot_output() == len(payload)
+    assert calls == [(
+        "ringbuf-read",
+        {"device": "atlaso-probes", "size": vm_acceptance.NETWORK_RINGBUF_BYTES, "format": "base64"},
+    )]
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert output.err == ""
+
+
+@pytest.mark.parametrize("response", [
+    None,
+    b"not a string",
+    "@@@",
+    base64.b64encode(b"x" * (vm_acceptance.NETWORK_RINGBUF_BYTES + 1)).decode("ascii"),
+])
+def test_serial_boot_drain_rejects_invalid_qmp_buffers(monkeypatch, response):
+    """Reject invalid or oversized QMP data without exposing its contents.
+
+    Args:
+        monkeypatch: Supply an invalid QMP ring-buffer response.
+        response: Wrong type, malformed base64, or payload larger than the ring.
+    """
+    vm = object.__new__(vm_acceptance.Qmp)
+    monkeypatch.setattr(vm, "execute", lambda *_: response)
+
+    with pytest.raises(vm_acceptance.AcceptanceError) as error:
+        vm.discard_serial_boot_output()
+
+    assert "not a string" not in str(error.value)
+    assert "@@@" not in str(error.value)
+
+
+def test_serial_boot_drain_discards_partial_preamble_before_fresh_challenge(monkeypatch):
+    """Ignore arbitrary boot bytes and accept a subsequent fresh challenge record.
+
+    Args:
+        monkeypatch: Supply startup bytes followed by one fresh token-bound record.
+    """
+    vm = object.__new__(vm_acceptance.Qmp)
+    preamble = b"\x00\xffATLASO-PROBE:stale:REA"
+    fresh_record = b"ATLASO-PROBE:fresh:READY\n"
+    chunks = iter((preamble, fresh_record))
+    reads = []
+
+    def execute(command, arguments):
+        """Return the next ring-buffer chunk and retain request sizes.
+
+        Args:
+            command: QMP operation.
+            arguments: Character device, read size, and encoding.
+        """
+        assert command == "ringbuf-read"
+        reads.append(arguments["size"])
+        return base64.b64encode(next(chunks)).decode("ascii")
+
+    monkeypatch.setattr(vm, "execute", execute)
+
+    assert vm.discard_serial_boot_output() == len(preamble)
+    assert vm.read_network_records("fresh", vm_acceptance.time.monotonic() + 5, "READY") == [
+        "ATLASO-PROBE:fresh:READY",
+    ]
+    assert reads == [vm_acceptance.NETWORK_RINGBUF_BYTES, vm_acceptance.NETWORK_RINGBUF_READ_BYTES]
+
+
+@pytest.mark.parametrize("post_challenge", [
+    b"ATLASO-PROBE:stale:READY\n",
+    b"ATLASO-PROBE:fresh:READY\nATLASO-PROBE:stale:DONE\n",
+    b"ATLASO-PROBE:fresh:REA\xff\n",
+])
+def test_serial_boot_drain_does_not_weaken_post_challenge_token_checks(monkeypatch, post_challenge):
+    """Reject stale or extra serial records that arrive after the drain boundary.
+
+    Args:
+        monkeypatch: Supply startup bytes and invalid post-challenge data.
+        post_challenge: Stale-token reply or extra record after a valid READY.
+    """
+    vm = object.__new__(vm_acceptance.Qmp)
+    chunks = iter((b"old partial preamble", post_challenge))
+    monkeypatch.setattr(
+        vm,
+        "execute",
+        lambda *_: base64.b64encode(next(chunks)).decode("ascii"),
+    )
+
+    vm.discard_serial_boot_output()
+    with pytest.raises(vm_acceptance.AcceptanceError):
+        vm.read_network_records("fresh", vm_acceptance.time.monotonic() + 5, "READY")
 
 
 def test_service_serial_reader_reassembles_fragmented_status_records(monkeypatch):

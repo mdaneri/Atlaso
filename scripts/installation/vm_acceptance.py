@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import base64
-import binascii
 import hashlib
 import json
 import os
@@ -360,6 +359,27 @@ class Qmp:
             deadline, pattern, lambda record: record == f"ATLASO-SERVICE:{token}:DONE", "service state",
         )
 
+    def _read_serial_chunk(self, size: int) -> bytes:
+        """Consume up to size bytes from COM2 without exposing the guest payload.
+
+        Args:
+            size: Maximum decoded byte count requested from QEMU.
+        """
+        encoded = self.execute("ringbuf-read", {"device": NETWORK_RINGBUF, "size": size, "format": "base64"})
+        if not isinstance(encoded, str):
+            raise AcceptanceError("QEMU returned an unexpected serial buffer response type")
+        try:
+            chunk = base64.b64decode(encoded, validate=True)
+        except ValueError:
+            raise AcceptanceError("QEMU returned an invalid base64 serial buffer response") from None
+        if len(chunk) > size:
+            raise AcceptanceError("QEMU returned more serial bytes than requested")
+        return chunk
+
+    def discard_serial_boot_output(self) -> int:
+        """Consume the whole COM2 backlog in one read before the first guest challenge."""
+        return len(self._read_serial_chunk(NETWORK_RINGBUF_BYTES))
+
     def _read_ring_records(
         self,
         deadline: float,
@@ -378,18 +398,8 @@ class Qmp:
         records: list[str] = []
         pending = bytearray()
         received = 0
-        error = f"QEMU returned an invalid {label} record"
         while time.monotonic() < deadline:
-            encoded = self.execute(
-                "ringbuf-read",
-                {"device": NETWORK_RINGBUF, "size": NETWORK_RINGBUF_READ_BYTES, "format": "base64"},
-            )
-            if not isinstance(encoded, str):
-                raise AcceptanceError(error)
-            try:
-                chunk = base64.b64decode(encoded, validate=True)
-            except binascii.Error as error:
-                raise AcceptanceError(f"QEMU returned an invalid {label} record") from error
+            chunk = self._read_serial_chunk(NETWORK_RINGBUF_READ_BYTES)
             if chunk:
                 received += len(chunk)
                 if received > NETWORK_RINGBUF_BYTES:
@@ -400,8 +410,8 @@ class Qmp:
                     pending = bytearray(remaining)
                     try:
                         record = raw.decode("ascii").removesuffix("\r")
-                    except UnicodeDecodeError as error:
-                        raise AcceptanceError(f"QEMU returned an invalid {label} record") from error
+                    except UnicodeDecodeError:
+                        raise AcceptanceError(f"QEMU returned a non-ASCII {label} record") from None
                     if not pattern.fullmatch(record):
                         raise AcceptanceError(f"QEMU returned an invalid {label} record")
                     records.append(record)
@@ -1281,6 +1291,9 @@ def check_installed_application(qmp: Qmp, output: Path, version: str, commit: st
         if not re.search(r"(?im)^[ \t]*true[ \t]*$", result):
             raise AcceptanceError(f"the {label} differs from the verified release")
 
+    evidence.checkpoint = "clear serial boot output"
+    discarded = qmp.discard_serial_boot_output()
+    print(f"Discarded {discarded} serial boot bytes before the first guest challenge.", flush=True)
     check_installed_services(qmp, output, evidence)
     print("The installed version, source commit and both Atlaso services verified.", flush=True)
 
