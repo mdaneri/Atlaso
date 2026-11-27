@@ -433,81 +433,167 @@ def test_final_receipt_is_new_and_contains_only_public_acceptance_fields(tmp_pat
 
 
 def test_service_checks_require_current_unambiguous_replies(monkeypatch, tmp_path):
-    """Ignore stale replies and require one state for the current poll.
+    """Require fresh serial observations and a delayed active state for both units.
 
     Args:
-        monkeypatch: Fixture that replaces console input and OCR.
-        tmp_path: Directory representing the VM fixture.
+        monkeypatch: Fixture used to capture guest console commands.
+        tmp_path: Temporary VM output directory.
     """
     evidence = vm_acceptance.FailureEvidence()
     commands = []
-    frames = iter([
-        ("APP 2 active", "APP 1 activating"),
-        ("APP 1 active", "APP 2 inactive\nAPP 2 active"),
-        ("APP 3 ACTIVE",),
-        ("APP 3 active", "WORKER 1 active"),
-    ])
+    requested = iter((("APP", "atlaso.service"), ("WORKER", "atlaso-worker.service")))
     monkeypatch.setattr(vm_acceptance, "run_console_command", lambda _qmp, command: commands.append(command))
-    monkeypatch.setattr(vm_acceptance.time, "sleep", lambda _seconds: None)
 
-    def wait_screen(_qmp, _output, predicate, _label, _seconds):
-        """Match the current frame and reject every stale frame.
+    def read_service_records(token, _deadline):
+        """Supply fresh, unit-bound serial observations.
 
         Args:
-            _qmp: Unused control connection.
-            _output: Unused fixture directory.
-            predicate: Matcher for the current request.
-            _label: Unused checkpoint label.
-            _seconds: Unused checkpoint budget.
+            token: Challenge generated for this unit.
+            _deadline: Bounded read deadline.
         """
-        *stale, current = next(frames)
-        assert all(not predicate(frame) for frame in stale)
-        assert predicate(current)
-        return current
+        key, unit_id = next(requested)
+        prefix = f"ATLASO-SERVICE:{token}:"
+        return [
+            prefix + "READY",
+            prefix + f"{key}:{unit_id}:activating:success:-",
+            prefix + f"{key}:{unit_id}:active:success:0",
+            prefix + "DONE",
+        ]
 
-    monkeypatch.setattr(vm_acceptance, "wait_screen", wait_screen)
-    vm_acceptance.check_installed_services(object(), tmp_path, evidence)
+    qmp = SimpleNamespace(read_service_records=read_service_records)
+    vm_acceptance.check_installed_services(qmp, tmp_path, evidence)
 
     assert evidence.service_states == {
-        "atlaso.service": ["activating", "ambiguous", "active"],
-        "atlaso-worker.service": ["active"],
+        "atlaso.service": ["activating", "active"],
+        "atlaso-worker.service": ["activating", "active"],
     }
-    assert "WORKER 1 %s" in commands[-1]
+    assert len(commands) == 3
+    assert any("systemctl show" in command and "service_probe" in command for command in commands)
+    assert any("service_probe APP atlaso.service" in command for command in commands)
+    assert any("service_probe WORKER atlaso-worker.service" in command for command in commands)
 
 
 def test_service_timeout_keeps_gate_closed_and_collects_evidence(monkeypatch, tmp_path):
-    """Collect diagnostics after the deadline without admitting a success receipt.
+    """Report a responsive but failed unit with its bounded systemd status.
 
     Args:
-        monkeypatch: Fixture that controls the clock and mimics unrecognized console replies.
+        monkeypatch: Fixture that supplies a confirmed unit failure.
         tmp_path: Directory representing the VM fixture.
     """
     evidence = vm_acceptance.FailureEvidence()
-    clock = iter([0, 0, 15, 150, 150])
     collected = []
-    monkeypatch.setattr(vm_acceptance, "time", SimpleNamespace(monotonic=lambda: next(clock), sleep=lambda _: None))
     monkeypatch.setattr(vm_acceptance, "run_console_command", lambda *_: None)
 
-    def wait_screen(*_):
-        """Simulate a console reply that OCR cannot recognize.
+    def read_service_records(token, _deadline):
+        """Supply a fixed failed-unit result.
 
         Args:
-            *_: Unused console wait arguments.
+            token: Challenge generated for the service.
+            _deadline: Bounded read deadline.
         """
-        raise vm_acceptance.ScreenTimeout("unrecognized")
+        prefix = f"ATLASO-SERVICE:{token}:"
+        return [prefix + "READY", prefix + "APP:atlaso.service:failed:exit-code:203", prefix + "DONE"]
 
-    monkeypatch.setattr(vm_acceptance, "wait_screen", wait_screen)
     monkeypatch.setattr(vm_acceptance, "collect_service_failure", lambda _vm, _out, unit, _: collected.append(unit))
-    with pytest.raises(vm_acceptance.AcceptanceError, match="atlaso.service did not become active"):
-        vm_acceptance.check_installed_services(object(), tmp_path, evidence)
+    with pytest.raises(vm_acceptance.AcceptanceError, match="atlaso.service remained failed"):
+        vm_acceptance.check_installed_services(
+            SimpleNamespace(read_service_records=read_service_records),
+            tmp_path,
+            evidence,
+        )
+
+    assert evidence.service_states == {"atlaso.service": ["failed"]}
+    assert evidence.unit_result == "exit-code"
+    assert evidence.exec_main_status == 203
+    assert collected == ["atlaso.service"]
+
+
+def test_missing_service_records_are_distinct_from_a_confirmed_nonactive_unit(monkeypatch, tmp_path):
+    """Report a missing reply separately from a responsive service failure.
+
+    Args:
+        monkeypatch: Fixture that simulates a missing terminal service record.
+        tmp_path: Directory representing the VM fixture.
+    """
+    evidence = vm_acceptance.FailureEvidence()
+    collected = []
+    monkeypatch.setattr(vm_acceptance, "run_console_command", lambda *_: None)
+    monkeypatch.setattr(vm_acceptance, "collect_service_failure", lambda _vm, _out, unit, _: collected.append(unit))
+
+    def read_service_records(_token, _deadline):
+        """Simulate a serial read that expires before a complete transaction.
+
+        Args:
+            _token: Per-unit challenge.
+            _deadline: Bounded read deadline.
+        """
+        raise vm_acceptance.ScreenTimeout("incomplete service state records")
+
+    qmp = SimpleNamespace(read_service_records=read_service_records)
+    with pytest.raises(vm_acceptance.AcceptanceError, match="atlaso.service state could not be read"):
+        vm_acceptance.check_installed_services(qmp, tmp_path, evidence)
 
     assert evidence.service_states == {"atlaso.service": ["unrecognized"]}
+    assert evidence.unit_result is None
+    assert evidence.exec_main_status is None
     assert collected == ["atlaso.service"]
+
+
+def test_temporary_systemd_query_timeout_does_not_hide_later_active_state(monkeypatch, tmp_path):
+    """Accept a later verified active reply after one unavailable systemd query.
+
+    Args:
+        monkeypatch: Fixture that supplies an unavailable query followed by active.
+        tmp_path: Directory representing the VM fixture.
+    """
+    evidence = vm_acceptance.FailureEvidence()
+    monkeypatch.setattr(vm_acceptance, "run_console_command", lambda *_: None)
+    requested = iter((("APP", "atlaso.service"), ("WORKER", "atlaso-worker.service")))
+
+    def read_service_records(token, _deadline):
+        """Supply one bounded unavailable result and a successful later snapshot.
+
+        Args:
+            token: Per-unit challenge.
+            _deadline: Bounded read deadline.
+        """
+        key, service = next(requested)
+        prefix = f"ATLASO-SERVICE:{token}:"
+        observations = [prefix + f"{key}:-:unrecognized:-:-"] if key == "APP" else []
+        observations.append(prefix + f"{key}:{service}:active:success:0")
+        return [prefix + "READY", *observations, prefix + "DONE"]
+
+    qmp = SimpleNamespace(read_service_records=read_service_records)
+    vm_acceptance.check_installed_services(qmp, tmp_path, evidence)
+    assert evidence.service_states == {
+        "atlaso.service": ["unrecognized", "active"],
+        "atlaso-worker.service": ["active"],
+    }
+
+
+@pytest.mark.parametrize("fields", [
+    ["READY", "APP:atlaso.service:active:-:0", "DONE"],
+    ["READY", "APP:atlaso.service:active:success:-", "DONE"],
+    ["READY", "APP:atlaso.service:active:success:256", "DONE"],
+    ["READY", "WORKER:atlaso-worker.service:active:success:0", "DONE"],
+    ["READY", "APP:atlaso-worker.service:active:success:0", "DONE"],
+    ["READY", "APP:atlaso.service:active:success:0"],
+    ["READY", "APP:atlaso.service:active:success:0", "APP:atlaso.service:failed:exit-code:1", "DONE"],
+])
+def test_incomplete_or_out_of_order_service_evidence_is_rejected(fields):
+    """Reject contradictory states and incomplete or mismatched systemd snapshots.
+
+    Args:
+        fields: Ordered record suffixes for an invalid guest reply.
+    """
+    records = ["ATLASO-SERVICE:token:" + field for field in fields]
+    with pytest.raises(vm_acceptance.AcceptanceError):
+        vm_acceptance.service_observations(records, "token", "APP", "atlaso.service")
 
 
 @pytest.mark.parametrize(("version", "probes_required"), [("0.9.522", False), ("0.9.523", True), ("1.0.0", True)])
 def test_acceptance_exercises_network_diagnostics_from_the_first_shipping_version(
-    monkeypatch, tmp_path, version, probes_required,
+    monkeypatch, tmp_path, version, probes_required, capsys,
 ):
     """Apply the network probe requirement only to versions that ship it.
 
@@ -516,6 +602,7 @@ def test_acceptance_exercises_network_diagnostics_from_the_first_shipping_versio
         tmp_path: Directory representing the VM fixture.
         version: Installed version to verify.
         probes_required: Whether this version must exercise the network probes.
+        capsys: Fixture used to verify that only the discarded byte count is logged.
     """
     observed = []
     monkeypatch.setattr(vm_acceptance, "run_console_command", lambda *_: None)
@@ -523,6 +610,13 @@ def test_acceptance_exercises_network_diagnostics_from_the_first_shipping_versio
 
     monkeypatch.setattr(vm_acceptance, "check_installed_network_diagnostics",
                         lambda *_: observed.append("installed network diagnostics"))
+
+    def discard_serial_boot_output():
+        """Record that the one-time serial backlog drain occurs at this point."""
+        observed.append("discard serial boot output")
+        return 37
+
+    qmp = SimpleNamespace(discard_serial_boot_output=discard_serial_boot_output)
 
     def wait_screen(_qmp, _output, predicate, label, _seconds):
         """Supply the correct recognized frame for the current checkpoint.
@@ -539,12 +633,20 @@ def test_acceptance_exercises_network_diagnostics_from_the_first_shipping_versio
         return "True"
 
     monkeypatch.setattr(vm_acceptance, "wait_screen", wait_screen)
-    vm_acceptance.check_installed_application(object(), tmp_path, version, "a" * 40, vm_acceptance.FailureEvidence())
+    vm_acceptance.check_installed_application(qmp, tmp_path, version, "a" * 40, vm_acceptance.FailureEvidence())
 
-    expected = ["installed Atlaso version", "installed Atlaso source commit", "services"]
+    expected = [
+        "installed Atlaso version",
+        "installed Atlaso source commit",
+        "discard serial boot output",
+        "services",
+    ]
     if probes_required:
         expected.append("installed network diagnostics")
     assert observed == expected
+    output = capsys.readouterr().out
+    assert "Discarded 37 serial boot bytes" in output
+    assert "ATLASO-PROBE" not in output
 
 
 @pytest.mark.parametrize("installing", [True, False])
@@ -591,6 +693,176 @@ def test_serial_reader_reassembles_fragmented_guest_records(monkeypatch):
     assert vm.read_network_records("abc", vm_acceptance.time.monotonic() + 5, "EXIT") == [
         "ATLASO-PROBE:abc:DONE", "ATLASO-PROBE:abc:EXIT:0",
     ]
+
+
+@pytest.mark.parametrize("payload", [
+    b"",
+    b"\x00partial ATLASO-PROBE:old:REA\xff",
+    bytes(range(256)) * 16,
+])
+def test_serial_boot_drain_reads_one_bounded_ring_buffer(monkeypatch, capsys, payload):
+    """Discard arbitrary startup bytes in one full-capacity QMP read.
+
+    Args:
+        monkeypatch: Supply one encoded ring-buffer response.
+        capsys: Fixture that verifies no guest bytes are logged.
+        payload: Empty, partial, binary, or full-capacity startup data.
+    """
+    vm = object.__new__(vm_acceptance.Qmp)
+    calls = []
+
+    def execute(command, arguments):
+        """Capture the request and return the queued buffer contents.
+
+        Args:
+            command: QMP operation.
+            arguments: Character device, read size, and encoding.
+        """
+        calls.append((command, arguments))
+        return base64.b64encode(payload).decode("ascii")
+
+    monkeypatch.setattr(vm, "execute", execute)
+
+    assert vm.discard_serial_boot_output() == len(payload)
+    assert calls == [(
+        "ringbuf-read",
+        {"device": "atlaso-probes", "size": vm_acceptance.NETWORK_RINGBUF_BYTES, "format": "base64"},
+    )]
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert output.err == ""
+
+
+@pytest.mark.parametrize("response", [
+    None,
+    b"not a string",
+    "@@@",
+    base64.b64encode(b"x" * (vm_acceptance.NETWORK_RINGBUF_BYTES + 1)).decode("ascii"),
+])
+def test_serial_boot_drain_rejects_invalid_qmp_buffers(monkeypatch, response):
+    """Reject invalid or oversized QMP data without exposing its contents.
+
+    Args:
+        monkeypatch: Supply an invalid QMP ring-buffer response.
+        response: Wrong type, malformed base64, or payload larger than the ring.
+    """
+    vm = object.__new__(vm_acceptance.Qmp)
+    monkeypatch.setattr(vm, "execute", lambda *_: response)
+
+    with pytest.raises(vm_acceptance.AcceptanceError) as error:
+        vm.discard_serial_boot_output()
+
+    assert "not a string" not in str(error.value)
+    assert "@@@" not in str(error.value)
+
+
+def test_serial_boot_drain_discards_partial_preamble_before_fresh_challenge(monkeypatch):
+    """Ignore arbitrary boot bytes and accept a subsequent fresh challenge record.
+
+    Args:
+        monkeypatch: Supply startup bytes followed by one fresh token-bound record.
+    """
+    vm = object.__new__(vm_acceptance.Qmp)
+    preamble = b"\x00\xffATLASO-PROBE:stale:REA"
+    fresh_record = b"ATLASO-PROBE:fresh:READY\n"
+    chunks = iter((preamble, fresh_record))
+    reads = []
+
+    def execute(command, arguments):
+        """Return the next ring-buffer chunk and retain request sizes.
+
+        Args:
+            command: QMP operation.
+            arguments: Character device, read size, and encoding.
+        """
+        assert command == "ringbuf-read"
+        reads.append(arguments["size"])
+        return base64.b64encode(next(chunks)).decode("ascii")
+
+    monkeypatch.setattr(vm, "execute", execute)
+
+    assert vm.discard_serial_boot_output() == len(preamble)
+    assert vm.read_network_records("fresh", vm_acceptance.time.monotonic() + 5, "READY") == [
+        "ATLASO-PROBE:fresh:READY",
+    ]
+    assert reads == [vm_acceptance.NETWORK_RINGBUF_BYTES, vm_acceptance.NETWORK_RINGBUF_READ_BYTES]
+
+
+@pytest.mark.parametrize("post_challenge", [
+    b"ATLASO-PROBE:stale:READY\n",
+    b"ATLASO-PROBE:fresh:READY\nATLASO-PROBE:stale:DONE\n",
+    b"ATLASO-PROBE:fresh:REA\xff\n",
+])
+def test_serial_boot_drain_does_not_weaken_post_challenge_token_checks(monkeypatch, post_challenge):
+    """Reject stale or extra serial records that arrive after the drain boundary.
+
+    Args:
+        monkeypatch: Supply startup bytes and invalid post-challenge data.
+        post_challenge: Stale-token reply or extra record after a valid READY.
+    """
+    vm = object.__new__(vm_acceptance.Qmp)
+    chunks = iter((b"old partial preamble", post_challenge))
+    monkeypatch.setattr(
+        vm,
+        "execute",
+        lambda *_: base64.b64encode(next(chunks)).decode("ascii"),
+    )
+
+    vm.discard_serial_boot_output()
+    with pytest.raises(vm_acceptance.AcceptanceError):
+        vm.read_network_records("fresh", vm_acceptance.time.monotonic() + 5, "READY")
+
+
+def test_service_serial_reader_reassembles_fragmented_status_records(monkeypatch):
+    """Read startup state records independently of console text recognition.
+
+    Args:
+        monkeypatch: Supply fragmented service replies from the simulated QEMU ring buffer.
+    """
+    vm = object.__new__(vm_acceptance.Qmp)
+    chunks = iter([
+        b"ATLASO-SERVICE:abc:READY\nATLASO-SERVICE:abc:APP:atlaso.service:activating:success:-\n",
+        b"ATLASO-SERVICE:abc:APP:atlaso.service:act", b"ive:success:0\r", b"\nATLASO-SERVICE:abc:DONE\n",
+    ])
+
+    def execute(command, arguments):
+        """Return the next fixed ring-buffer fragment.
+
+        Args:
+            command: QMP operation.
+            arguments: Character device and encoding.
+        """
+        assert command == "ringbuf-read"
+        assert arguments["device"] == "atlaso-probes" and arguments["format"] == "base64"
+        return base64.b64encode(next(chunks)).decode("ascii")
+
+    monkeypatch.setattr(vm, "execute", execute)
+    assert vm.read_service_records("abc", vm_acceptance.time.monotonic() + 5) == [
+        "ATLASO-SERVICE:abc:READY",
+        "ATLASO-SERVICE:abc:APP:atlaso.service:activating:success:-",
+        "ATLASO-SERVICE:abc:APP:atlaso.service:active:success:0",
+        "ATLASO-SERVICE:abc:DONE",
+    ]
+
+
+@pytest.mark.parametrize("payload", [
+    b"ATLASO-SERVICE:stale:READY\n",
+    b"ATLASO-SERVICE:abc:APP:atlaso.service:untrusted:success:0\n",
+    b"ATLASO-SERVICE:abc:APP:atlaso.service:failed:unexpected:1\n",
+    b"ATLASO-SERVICE:abc:DONE\nATLASO-SERVICE:abc:APP:atlaso.service:active:success:0\n",
+])
+def test_service_serial_reader_rejects_stale_or_invalid_records(monkeypatch, payload):
+    """Fail closed on stale, malformed, or late startup evidence.
+
+    Args:
+        monkeypatch: Supply a simulated QEMU ring-buffer reply.
+        payload: Bytes that must not be accepted as service evidence.
+    """
+    vm = object.__new__(vm_acceptance.Qmp)
+    monkeypatch.setattr(vm, "execute", lambda *_: base64.b64encode(payload).decode("ascii"))
+
+    with pytest.raises(vm_acceptance.AcceptanceError):
+        vm.read_service_records("abc", vm_acceptance.time.monotonic() + 5)
 
 
 @pytest.mark.parametrize("payload", [
