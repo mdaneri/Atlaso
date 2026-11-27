@@ -1089,7 +1089,14 @@ def collect_service_failure(qmp: Qmp, output: Path, service: str, evidence: Fail
 
 
 def service_observations(records: list[str], token: str, key: str, service: str) -> list[tuple[str, str, str]]:
-    """Validate a complete reply before retaining any observation from it."""
+    """Validate a complete reply before retaining any observation from it.
+
+    Args:
+        records: Serial reply lines in the order received.
+        token: Challenge sent for this service check.
+        key: Service label used by the guest probe, APP or WORKER.
+        service: Expected systemd unit name.
+    """
     prefix = f"ATLASO-SERVICE:{token}:"
     if len(records) < 3 or records[0] != prefix + "READY" or records[-1] != prefix + "DONE":
         raise AcceptanceError("the guest returned incomplete service state evidence")

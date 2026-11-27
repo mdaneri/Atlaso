@@ -433,7 +433,12 @@ def test_final_receipt_is_new_and_contains_only_public_acceptance_fields(tmp_pat
 
 
 def test_service_checks_require_current_unambiguous_replies(monkeypatch, tmp_path):
-    """Require fresh serial observations and a delayed active state for both units."""
+    """Require fresh serial observations and a delayed active state for both units.
+
+    Args:
+        monkeypatch: Fixture used to capture guest console commands.
+        tmp_path: Temporary VM output directory.
+    """
     evidence = vm_acceptance.FailureEvidence()
     commands = []
     requested = iter((("APP", "atlaso.service"), ("WORKER", "atlaso-worker.service")))
@@ -576,7 +581,11 @@ def test_temporary_systemd_query_timeout_does_not_hide_later_active_state(monkey
     ["READY", "APP:atlaso.service:active:success:0", "APP:atlaso.service:failed:exit-code:1", "DONE"],
 ])
 def test_incomplete_or_out_of_order_service_evidence_is_rejected(fields):
-    """Reject contradictory states and incomplete or mismatched systemd snapshots."""
+    """Reject contradictory states and incomplete or mismatched systemd snapshots.
+
+    Args:
+        fields: Ordered record suffixes for an invalid guest reply.
+    """
     records = ["ATLASO-SERVICE:token:" + field for field in fields]
     with pytest.raises(vm_acceptance.AcceptanceError):
         vm_acceptance.service_observations(records, "token", "APP", "atlaso.service")
